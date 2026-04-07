@@ -496,7 +496,11 @@ public:
     return this;
   }
 
-  void OnBeforeCommandLineProcessing(const CefString&, CefRefPtr<CefCommandLine>) override {}
+  void OnBeforeCommandLineProcessing(const CefString&, CefRefPtr<CefCommandLine> command_line) override {
+    // Bunite cancels popup creation in OnBeforePopup and surfaces it as a Bun event.
+    // Disable Chromium's popup blocker so scripted window.open() attempts still reach that hook.
+    command_line->AppendSwitch("disable-popup-blocking");
+  }
 
   void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override {
     registrar->AddCustomScheme(

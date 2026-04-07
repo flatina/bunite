@@ -33,6 +33,10 @@ copyFileSync(
   join(distRendererMainDir, "rpc-fail.html")
 );
 copyFileSync(
+  join(projectRoot, "src", "renderer", "popup-target.html"),
+  join(distRendererMainDir, "popup-target.html")
+);
+copyFileSync(
   join(projectRoot, "src", "renderer", "preload.js"),
   join(distRendererMainDir, "preload.js")
 );
