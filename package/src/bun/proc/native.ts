@@ -55,6 +55,7 @@ type NativeSymbols = {
     html: CStringPointer,
     preload: CStringPointer,
     viewsRoot: CStringPointer,
+    navigationRulesJson: CStringPointer,
     x: number,
     y: number,
     width: number,
@@ -125,6 +126,7 @@ const nativeSymbolDefinitions = {
     args: [
       FFIType.u32,
       FFIType.ptr,
+      FFIType.cstring,
       FFIType.cstring,
       FFIType.cstring,
       FFIType.cstring,

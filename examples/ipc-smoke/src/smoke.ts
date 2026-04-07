@@ -5,6 +5,8 @@ setTimeout(() => {
   const ok =
     smokeState.pingCount > 0 &&
     smokeState.lastPing === "ipc-smoke" &&
+    smokeState.blockedAttemptSeen &&
+    !smokeState.blockedNavigationSeen &&
     smokeState.okNavigationSeen &&
     smokeState.popupSeen;
 

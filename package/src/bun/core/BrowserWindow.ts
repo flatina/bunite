@@ -91,10 +91,6 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     this.navigationRules = options.navigationRules ?? defaultOptions.navigationRules;
     this.sandbox = options.sandbox ?? defaultOptions.sandbox;
 
-    if (this.navigationRules?.length) {
-      console.warn("[bunite] navigationRules are not implemented in Bunite Windows Phase 1 yet.");
-    }
-
     const native = getNativeLibrary();
     this.ptr =
       native?.symbols.bunite_window_create(

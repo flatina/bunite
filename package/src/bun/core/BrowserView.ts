@@ -107,6 +107,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
         toCString(this.html ?? ""),
         toCString(preloadScript),
         toCString(this.viewsRoot ?? ""),
+        toCString(this.navigationRules ? JSON.stringify(this.navigationRules) : ""),
         this.frame.x,
         this.frame.y,
         this.frame.width,

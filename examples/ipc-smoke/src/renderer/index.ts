@@ -72,11 +72,14 @@ try {
   `;
 
   if (pong.pong === "pong:ipc-smoke") {
-    window.open("views://main/popup-target.html", "_blank");
-    // Give CEF a brief turn to surface OnBeforePopup before we navigate away.
     setTimeout(() => {
-      location.href = "views://main/rpc-ok.html";
-    }, 50);
+      window.open("views://main/popup-target.html", "_blank");
+      // Give CEF a brief turn to surface OnBeforePopup before we navigate away.
+      setTimeout(() => {
+        location.href = "views://main/rpc-ok.html";
+      }, 50);
+    }, 100);
+    location.href = "views://main/rpc-blocked.html";
   } else {
     location.href = "views://main/rpc-fail.html";
   }
