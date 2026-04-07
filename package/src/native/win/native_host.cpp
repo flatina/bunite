@@ -177,6 +177,35 @@ std::string escapeJsonString(const std::string& value) {
   return escaped;
 }
 
+std::vector<std::string> splitButtonLabels(const std::string& buttons_csv) {
+  std::vector<std::string> labels;
+  if (buttons_csv.empty()) {
+    return labels;
+  }
+
+  std::stringstream stream(buttons_csv);
+  std::string label;
+  while (std::getline(stream, label, '\x1f')) {
+    const size_t first = label.find_first_not_of(" \t");
+    if (first == std::string::npos) {
+      continue;
+    }
+    const size_t last = label.find_last_not_of(" \t");
+    std::string normalized = label.substr(first, last - first + 1);
+    std::transform(
+      normalized.begin(),
+      normalized.end(),
+      normalized.begin(),
+      [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); }
+    );
+    if (!normalized.empty()) {
+      labels.push_back(normalized);
+    }
+  }
+
+  return labels;
+}
+
 bool globMatchCaseInsensitive(const std::string& pattern, const std::string& value) {
   size_t pattern_index = 0;
   size_t value_index = 0;
@@ -1472,6 +1501,74 @@ extern "C" BUNITE_EXPORT void bunite_complete_permission_request(uint32_t reques
       } else {
         request->media_callback->Cancel();
       }
+    }
+  });
+}
+
+extern "C" BUNITE_EXPORT int32_t bunite_show_message_box(
+  const char* type,
+  const char* title,
+  const char* message,
+  const char* detail,
+  const char* buttons,
+  int32_t default_id,
+  int32_t cancel_id
+) {
+  return runOnUiThreadSync<int32_t>([=]() -> int32_t {
+    std::string composed_message = message ? message : "";
+    if (detail && std::strlen(detail) > 0) {
+      if (!composed_message.empty()) {
+        composed_message += "\n\n";
+      }
+      composed_message += detail;
+    }
+
+    UINT flags = MB_OK;
+    const std::string type_name = type ? type : "info";
+    if (type_name == "none") {
+      // Intentionally no icon flag.
+    } else if (type_name == "warning") {
+      flags |= MB_ICONWARNING;
+    } else if (type_name == "error") {
+      flags |= MB_ICONERROR;
+    } else if (type_name == "question") {
+      flags |= MB_ICONQUESTION;
+    } else {
+      flags |= MB_ICONINFORMATION;
+    }
+
+    const std::vector<std::string> labels = splitButtonLabels(buttons ? buttons : "");
+    if (labels.size() == 2) {
+      if (labels[0] == "yes" && labels[1] == "no") {
+        flags = (flags & ~MB_OK) | MB_YESNO;
+      } else {
+        flags = (flags & ~MB_OK) | MB_OKCANCEL;
+      }
+    } else if (labels.size() >= 3 && labels[0] == "yes" && labels[1] == "no" && labels[2] == "cancel") {
+      flags = (flags & ~MB_OK) | MB_YESNOCANCEL;
+    }
+
+    if (default_id == 1) {
+      flags |= MB_DEFBUTTON2;
+    } else if (default_id >= 2) {
+      flags |= MB_DEFBUTTON3;
+    }
+
+    const std::wstring window_title = utf8ToWide(title ? title : "");
+    const std::wstring window_message = utf8ToWide(composed_message);
+    const int result = MessageBoxW(GetActiveWindow(), window_message.c_str(), window_title.c_str(), flags);
+
+    switch (result) {
+      case IDOK:
+      case IDYES:
+        return 0;
+      case IDNO:
+        return 1;
+      case IDCANCEL:
+        // `-1` means the JS side did not provide an explicit cancel target.
+        return cancel_id >= 0 ? cancel_id : (labels.size() > 2 ? 2 : 1);
+      default:
+        return cancel_id >= 0 ? cancel_id : -1;
     }
   });
 }
