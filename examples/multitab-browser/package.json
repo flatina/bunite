@@ -1,7 +1,7 @@
 {
   "name": "bunite-multitab-browser",
   "dependencies": {
-    "bunite": "workspace:*"
+    "bunite-core": "workspace:*"
   },
   "private": true,
   "scripts": {

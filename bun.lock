@@ -12,23 +12,23 @@
     "examples/basic": {
       "name": "bunite-basic-example",
       "dependencies": {
-        "bunite": "workspace:*",
+        "bunite-core": "workspace:*",
       },
     },
     "examples/ipc-smoke": {
       "name": "bunite-ipc-smoke-example",
       "dependencies": {
-        "bunite": "workspace:*",
+        "bunite-core": "workspace:*",
       },
     },
     "examples/multitab-browser": {
       "name": "bunite-multitab-browser",
       "dependencies": {
-        "bunite": "workspace:*",
+        "bunite-core": "workspace:*",
       },
     },
     "package": {
-      "name": "bunite",
+      "name": "bunite-core",
       "version": "0.0.1",
       "dependencies": {
         "msgpackr": "^1.11.9",
@@ -54,9 +54,9 @@
 
     "bun-types": ["bun-types@1.3.11", "", { "dependencies": { "@types/node": "*" } }, "sha512-1KGPpoxQWl9f6wcZh57LvrPIInQMn2TQ7jsgxqpRzg+l0QPOFvJVH7HmvHo/AiPgwXy+/Thf6Ov3EdVn1vOabg=="],
 
-    "bunite": ["bunite@workspace:package"],
-
     "bunite-basic-example": ["bunite-basic-example@workspace:examples/basic"],
+
+    "bunite-core": ["bunite-core@workspace:package"],
 
     "bunite-ipc-smoke-example": ["bunite-ipc-smoke-example@workspace:examples/ipc-smoke"],
 

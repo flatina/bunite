@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { BrowserView, BrowserWindow, app } from "bunite";
+import { BrowserView, BrowserWindow, app } from "bunite-core";
 
 const SHELL_HEIGHT = 64;
 

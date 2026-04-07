@@ -1,4 +1,4 @@
-import { BuniteView } from "bunite/view";
+import { BuniteView } from "bunite-core/view";
 
 type TabInfo = { id: number; url: string; active: boolean };
 

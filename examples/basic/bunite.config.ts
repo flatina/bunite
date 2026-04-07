@@ -1,4 +1,4 @@
-import type { BuniteConfig } from "bunite/config";
+import type { BuniteConfig } from "bunite-core/config";
 
 export default {
   app: {
