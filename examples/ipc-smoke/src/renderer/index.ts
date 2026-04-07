@@ -72,7 +72,11 @@ try {
   `;
 
   if (pong.pong === "pong:ipc-smoke") {
-    location.href = "views://main/rpc-ok.html";
+    window.open("views://main/popup-target.html", "_blank");
+    // Give CEF a brief turn to surface OnBeforePopup before we navigate away.
+    setTimeout(() => {
+      location.href = "views://main/rpc-ok.html";
+    }, 50);
   } else {
     location.href = "views://main/rpc-fail.html";
   }

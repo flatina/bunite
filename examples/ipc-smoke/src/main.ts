@@ -26,7 +26,9 @@ export const smokeState = {
   pingCount: 0,
   lastPing: "",
   lastNavigation: "",
-  okNavigationSeen: false
+  okNavigationSeen: false,
+  popupSeen: false,
+  popupUrl: ""
 };
 
 function resolveRendererRoot() {
@@ -69,6 +71,18 @@ win.webview.on("did-navigate", (event) => {
   if (detail.includes("rpc-ok.html")) {
     smokeState.okNavigationSeen = true;
     console.log("[ipc-smoke] renderer navigation", detail);
+  }
+});
+
+win.webview.on("new-window-open", (event) => {
+  const detail = (event as { data?: { detail?: string | { url?: string } } }).data?.detail;
+  const popupUrl =
+    typeof detail === "string" ? detail : String(detail?.url ?? "");
+
+  smokeState.popupUrl = popupUrl;
+  if (popupUrl.includes("popup-target.html")) {
+    smokeState.popupSeen = true;
+    console.log("[ipc-smoke] popup event", popupUrl);
   }
 });
 
