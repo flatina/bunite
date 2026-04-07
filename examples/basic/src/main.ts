@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { BrowserView, BrowserWindow, app } from "bunite";
+import { BrowserView, BrowserWindow, app } from "bunite-core";
 
 type ExampleSchema = {
   bun: {

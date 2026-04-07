@@ -1,5 +1,5 @@
 {
-  "name": "bunite",
+  "name": "bunite-core",
   "description": "Uniting UI and Bun",
   "version": "0.0.1",
   "type": "module",

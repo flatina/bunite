@@ -25,7 +25,7 @@ export function resolvePackageRoot(packageName: string): string | null {
 }
 
 export function resolveBunitePackageRoot(): string {
-  const packageJsonPath = require.resolve("bunite/package.json");
+  const packageJsonPath = require.resolve("bunite-core/package.json");
   return dirname(packageJsonPath);
 }
 

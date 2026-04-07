@@ -10,6 +10,6 @@
     "start": "bun dist/main.js"
   },
   "dependencies": {
-    "bunite": "workspace:*"
+    "bunite-core": "workspace:*"
   }
 }
