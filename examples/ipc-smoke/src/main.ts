@@ -29,6 +29,10 @@ export const smokeState = {
   blockedAttemptSeen: false,
   blockedNavigationSeen: false,
   okNavigationSeen: false,
+  maximizeResizeSeen: false,
+  maximizeReadbackOk: false,
+  restoreResizeSeen: false,
+  restoreReadbackOk: false,
   popupSeen: false,
   popupUrl: ""
 };
@@ -39,6 +43,17 @@ function resolveRendererRoot() {
     throw new Error("ipc-smoke renderer bundle is missing. Run `bun run prepare:renderer` first.");
   }
   return candidate;
+}
+
+async function waitForCondition(check: () => boolean, timeoutMs = 1_500, intervalMs = 25) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (check()) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return check();
 }
 
 const rpc = BrowserView.defineRPC<IPCSmokeSchema>({
@@ -101,7 +116,45 @@ win.webview.on("new-window-open", (event) => {
   }
 });
 
+win.on("resize", (event) => {
+  const data = (event as {
+    data?: { maximized?: boolean; width?: number; height?: number };
+  }).data;
+  if (!data) {
+    return;
+  }
+
+  if (data.maximized) {
+    smokeState.maximizeResizeSeen = true;
+    console.log("[ipc-smoke] window maximized", {
+      width: data.width ?? 0,
+      height: data.height ?? 0
+    });
+    return;
+  }
+
+  if (smokeState.maximizeResizeSeen) {
+    smokeState.restoreResizeSeen = true;
+    console.log("[ipc-smoke] window restored", {
+      width: data.width ?? 0,
+      height: data.height ?? 0
+    });
+  }
+});
+
 win.show();
+void (async () => {
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  win.maximize();
+  smokeState.maximizeReadbackOk = await waitForCondition(
+    () => smokeState.maximizeResizeSeen && win.isMaximized()
+  );
+  win.unmaximize();
+  smokeState.restoreReadbackOk = await waitForCondition(
+    () => smokeState.restoreResizeSeen && !win.isMaximized()
+  );
+})();
+
 console.log("[ipc-smoke] initialized", {
   usingStub: app.runtime?.usingStub ?? true,
   webviewId: win.webviewId,

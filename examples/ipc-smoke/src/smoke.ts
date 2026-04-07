@@ -8,6 +8,10 @@ setTimeout(() => {
     smokeState.blockedAttemptSeen &&
     !smokeState.blockedNavigationSeen &&
     smokeState.okNavigationSeen &&
+    smokeState.maximizeResizeSeen &&
+    smokeState.maximizeReadbackOk &&
+    smokeState.restoreResizeSeen &&
+    smokeState.restoreReadbackOk &&
     smokeState.popupSeen;
 
   if (!ok) {

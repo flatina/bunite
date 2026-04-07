@@ -86,6 +86,7 @@ struct WindowHost {
   RECT frame{0, 0, 0, 0};
   bool transparent = false;
   bool hidden = false;
+  bool maximized = false;
   std::atomic<bool> closing = false;
   std::vector<ViewHost*> views;
 };
@@ -414,6 +415,17 @@ std::optional<std::string> loadViewsResource(uint32_t view_id, const std::string
 void removeBrowserMapping(int browser_id) {
   std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
   g_runtime.browser_to_view_id.erase(browser_id);
+}
+
+void syncWindowFrame(WindowHost* window) {
+  if (!window || !window->hwnd) {
+    return;
+  }
+
+  RECT rect{};
+  GetWindowRect(window->hwnd, &rect);
+  window->frame = rect;
+  window->maximized = IsZoomed(window->hwnd) != 0;
 }
 
 void resizeViewToFit(ViewHost* view) {
@@ -867,22 +879,20 @@ LRESULT CALLBACK buniteWindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARA
 
     case WM_MOVE:
       if (window) {
-        RECT rect{};
-        GetWindowRect(hwnd, &rect);
-        window->frame = rect;
+        syncWindowFrame(window);
         emitWindowEvent(
           window->id,
           "move",
-          "{\"x\":" + std::to_string(rect.left) + ",\"y\":" + std::to_string(rect.top) + "}"
+          "{\"x\":" + std::to_string(window->frame.left) +
+            ",\"y\":" + std::to_string(window->frame.top) +
+            ",\"maximized\":" + (window->maximized ? "true" : "false") + "}"
         );
       }
       break;
 
     case WM_SIZE:
       if (window) {
-        RECT rect{};
-        GetWindowRect(hwnd, &rect);
-        window->frame = rect;
+        syncWindowFrame(window);
 
         for (auto* view : window->views) {
           resizeViewToFit(view);
@@ -891,10 +901,11 @@ LRESULT CALLBACK buniteWindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARA
         emitWindowEvent(
           window->id,
           "resize",
-          "{\"x\":" + std::to_string(rect.left) +
-            ",\"y\":" + std::to_string(rect.top) +
-            ",\"width\":" + std::to_string(rect.right - rect.left) +
-            ",\"height\":" + std::to_string(rect.bottom - rect.top) + "}"
+          "{\"x\":" + std::to_string(window->frame.left) +
+            ",\"y\":" + std::to_string(window->frame.top) +
+            ",\"width\":" + std::to_string(window->frame.right - window->frame.left) +
+            ",\"height\":" + std::to_string(window->frame.bottom - window->frame.top) +
+            ",\"maximized\":" + (window->maximized ? "true" : "false") + "}"
         );
       }
       break;
@@ -1186,7 +1197,8 @@ extern "C" BUNITE_EXPORT void* bunite_window_create(
   const char* title,
   const char* title_bar_style,
   bool transparent,
-  bool hidden
+  bool hidden,
+  bool maximized
 ) {
   return runOnUiThreadSync<void*>([=]() -> void* {
     auto* window = new WindowHost{
@@ -1201,7 +1213,8 @@ extern "C" BUNITE_EXPORT void* bunite_window_create(
         static_cast<LONG>(y + height)
       },
       transparent,
-      hidden
+      hidden,
+      maximized
     };
 
     window->hwnd = CreateWindowExW(
@@ -1230,7 +1243,7 @@ extern "C" BUNITE_EXPORT void* bunite_window_create(
     }
 
     if (!hidden) {
-      ShowWindow(window->hwnd, SW_SHOW);
+      ShowWindow(window->hwnd, maximized ? SW_SHOWMAXIMIZED : SW_SHOW);
       UpdateWindow(window->hwnd);
     }
 
@@ -1244,7 +1257,7 @@ extern "C" BUNITE_EXPORT void bunite_window_show(void* window_ptr) {
       return;
     }
     window->hidden = false;
-    ShowWindow(window->hwnd, SW_SHOW);
+    ShowWindow(window->hwnd, window->maximized ? SW_SHOWMAXIMIZED : SW_SHOW);
     SetForegroundWindow(window->hwnd);
   });
 }
@@ -1265,6 +1278,50 @@ extern "C" BUNITE_EXPORT void bunite_window_set_title(void* window_ptr, const ch
     }
     window->title = utf8ToWide(value);
     SetWindowTextW(window->hwnd, window->title.c_str());
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_window_maximize(void* window_ptr) {
+  runOnUiThreadSync<void>([window = getWindowHost(window_ptr)]() {
+    if (!window || !window->hwnd) {
+      return;
+    }
+
+    window->maximized = true;
+    if (window->hidden) {
+      return;
+    }
+
+    ShowWindow(window->hwnd, SW_MAXIMIZE);
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_window_unmaximize(void* window_ptr) {
+  runOnUiThreadSync<void>([window = getWindowHost(window_ptr)]() {
+    if (!window || !window->hwnd) {
+      return;
+    }
+
+    window->maximized = false;
+    if (window->hidden) {
+      return;
+    }
+
+    ShowWindow(window->hwnd, SW_RESTORE);
+  });
+}
+
+extern "C" BUNITE_EXPORT bool bunite_window_is_maximized(void* window_ptr) {
+  return runOnUiThreadSync<bool>([window = getWindowHost(window_ptr)]() -> bool {
+    if (!window || !window->hwnd) {
+      return false;
+    }
+    if (window->hidden) {
+      return window->maximized;
+    }
+
+    window->maximized = IsZoomed(window->hwnd) != 0;
+    return window->maximized;
   });
 }
 

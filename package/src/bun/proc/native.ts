@@ -36,11 +36,15 @@ type NativeSymbols = {
     title: CStringPointer,
     titleBarStyle: CStringPointer,
     transparent: boolean,
-    hidden: boolean
+    hidden: boolean,
+    maximized: boolean
   ) => Pointer;
   bunite_window_show: (windowPtr: Pointer) => void;
   bunite_window_close: (windowPtr: Pointer) => void;
   bunite_window_set_title: (windowPtr: Pointer, title: CStringPointer) => void;
+  bunite_window_maximize: (windowPtr: Pointer) => void;
+  bunite_window_unmaximize: (windowPtr: Pointer) => void;
+  bunite_window_is_maximized: (windowPtr: Pointer) => boolean;
   bunite_window_set_frame: (
     windowPtr: Pointer,
     x: number,
@@ -102,6 +106,7 @@ const nativeSymbolDefinitions = {
       FFIType.cstring,
       FFIType.cstring,
       FFIType.bool,
+      FFIType.bool,
       FFIType.bool
     ],
     returns: FFIType.ptr
@@ -117,6 +122,18 @@ const nativeSymbolDefinitions = {
   bunite_window_set_title: {
     args: [FFIType.ptr, FFIType.cstring],
     returns: FFIType.void
+  },
+  bunite_window_maximize: {
+    args: [FFIType.ptr],
+    returns: FFIType.void
+  },
+  bunite_window_unmaximize: {
+    args: [FFIType.ptr],
+    returns: FFIType.void
+  },
+  bunite_window_is_maximized: {
+    args: [FFIType.ptr],
+    returns: FFIType.bool
   },
   bunite_window_set_frame: {
     args: [FFIType.ptr, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64],
@@ -319,23 +336,35 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
             break;
           case "move":
             if (parsedPayload && typeof parsedPayload === "object") {
-              const { x = 0, y = 0 } = parsedPayload as { x?: number; y?: number };
+              const { x = 0, y = 0, maximized = false } = parsedPayload as {
+                x?: number;
+                y?: number;
+                maximized?: boolean;
+              };
               buniteEventEmitter.emitEvent(
-                buniteEventEmitter.events.window.move({ id: windowId, x, y }),
+                buniteEventEmitter.events.window.move({ id: windowId, x, y, maximized }),
                 windowId
               );
             }
             break;
           case "resize":
             if (parsedPayload && typeof parsedPayload === "object") {
-              const { x = 0, y = 0, width = 0, height = 0 } = parsedPayload as {
+              const { x = 0, y = 0, width = 0, height = 0, maximized = false } = parsedPayload as {
                 x?: number;
                 y?: number;
                 width?: number;
                 height?: number;
+                maximized?: boolean;
               };
               buniteEventEmitter.emitEvent(
-                buniteEventEmitter.events.window.resize({ id: windowId, x, y, width, height }),
+                buniteEventEmitter.events.window.resize({
+                  id: windowId,
+                  x,
+                  y,
+                  width,
+                  height,
+                  maximized
+                }),
                 windowId
               );
             }
