@@ -91,7 +91,9 @@ struct WindowHost {
   RECT frame{0, 0, 0, 0};
   bool transparent = false;
   bool hidden = false;
+  bool minimized = false;
   bool maximized = false;
+  bool restore_maximized_after_minimize = false;
   std::atomic<bool> closing = false;
   std::vector<ViewHost*> views;
 };
@@ -805,7 +807,11 @@ void syncWindowFrame(WindowHost* window) {
   RECT rect{};
   GetWindowRect(window->hwnd, &rect);
   window->frame = rect;
+  window->minimized = IsIconic(window->hwnd) != 0;
   window->maximized = IsZoomed(window->hwnd) != 0;
+  if (!window->minimized) {
+    window->restore_maximized_after_minimize = false;
+  }
 }
 
 void resizeViewToFit(ViewHost* view) {
@@ -1339,7 +1345,8 @@ LRESULT CALLBACK buniteWindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARA
           "move",
           "{\"x\":" + std::to_string(window->frame.left) +
             ",\"y\":" + std::to_string(window->frame.top) +
-            ",\"maximized\":" + (window->maximized ? "true" : "false") + "}"
+            ",\"maximized\":" + (window->maximized ? "true" : "false") +
+            ",\"minimized\":" + (window->minimized ? "true" : "false") + "}"
         );
       }
       break;
@@ -1359,7 +1366,8 @@ LRESULT CALLBACK buniteWindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARA
             ",\"y\":" + std::to_string(window->frame.top) +
             ",\"width\":" + std::to_string(window->frame.right - window->frame.left) +
             ",\"height\":" + std::to_string(window->frame.bottom - window->frame.top) +
-            ",\"maximized\":" + (window->maximized ? "true" : "false") + "}"
+            ",\"maximized\":" + (window->maximized ? "true" : "false") +
+            ",\"minimized\":" + (window->minimized ? "true" : "false") + "}"
         );
       }
       break;
@@ -1652,6 +1660,7 @@ extern "C" BUNITE_EXPORT void* bunite_window_create(
   const char* title_bar_style,
   bool transparent,
   bool hidden,
+  bool minimized,
   bool maximized
 ) {
   return runOnUiThreadSync<void*>([=]() -> void* {
@@ -1668,7 +1677,9 @@ extern "C" BUNITE_EXPORT void* bunite_window_create(
       },
       transparent,
       hidden,
-      maximized
+      minimized,
+      maximized,
+      false
     };
 
     window->hwnd = CreateWindowExW(
@@ -1697,7 +1708,7 @@ extern "C" BUNITE_EXPORT void* bunite_window_create(
     }
 
     if (!hidden) {
-      ShowWindow(window->hwnd, maximized ? SW_SHOWMAXIMIZED : SW_SHOW);
+      ShowWindow(window->hwnd, minimized ? SW_SHOWMINIMIZED : (maximized ? SW_SHOWMAXIMIZED : SW_SHOW));
       UpdateWindow(window->hwnd);
     }
 
@@ -1711,7 +1722,10 @@ extern "C" BUNITE_EXPORT void bunite_window_show(void* window_ptr) {
       return;
     }
     window->hidden = false;
-    ShowWindow(window->hwnd, window->maximized ? SW_SHOWMAXIMIZED : SW_SHOW);
+    ShowWindow(
+      window->hwnd,
+      window->minimized ? SW_SHOWMINIMIZED : (window->maximized ? SW_SHOWMAXIMIZED : SW_SHOW)
+    );
     SetForegroundWindow(window->hwnd);
   });
 }
@@ -1735,12 +1749,62 @@ extern "C" BUNITE_EXPORT void bunite_window_set_title(void* window_ptr, const ch
   });
 }
 
+extern "C" BUNITE_EXPORT void bunite_window_minimize(void* window_ptr) {
+  runOnUiThreadSync<void>([window = getWindowHost(window_ptr)]() {
+    if (!window || !window->hwnd) {
+      return;
+    }
+
+    window->restore_maximized_after_minimize = window->maximized;
+    window->minimized = true;
+    window->maximized = false;
+    if (window->hidden) {
+      return;
+    }
+
+    ShowWindow(window->hwnd, SW_MINIMIZE);
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_window_unminimize(void* window_ptr) {
+  runOnUiThreadSync<void>([window = getWindowHost(window_ptr)]() {
+    if (!window || !window->hwnd) {
+      return;
+    }
+
+    window->minimized = false;
+    if (window->hidden) {
+      window->maximized = window->restore_maximized_after_minimize;
+      window->restore_maximized_after_minimize = false;
+      return;
+    }
+
+    ShowWindow(window->hwnd, SW_RESTORE);
+  });
+}
+
+extern "C" BUNITE_EXPORT bool bunite_window_is_minimized(void* window_ptr) {
+  return runOnUiThreadSync<bool>([window = getWindowHost(window_ptr)]() -> bool {
+    if (!window || !window->hwnd) {
+      return false;
+    }
+    if (window->hidden) {
+      return window->minimized;
+    }
+
+    window->minimized = IsIconic(window->hwnd) != 0;
+    return window->minimized;
+  });
+}
+
 extern "C" BUNITE_EXPORT void bunite_window_maximize(void* window_ptr) {
   runOnUiThreadSync<void>([window = getWindowHost(window_ptr)]() {
     if (!window || !window->hwnd) {
       return;
     }
 
+    window->minimized = false;
+    window->restore_maximized_after_minimize = false;
     window->maximized = true;
     if (window->hidden) {
       return;
@@ -1756,6 +1820,8 @@ extern "C" BUNITE_EXPORT void bunite_window_unmaximize(void* window_ptr) {
       return;
     }
 
+    window->minimized = false;
+    window->restore_maximized_after_minimize = false;
     window->maximized = false;
     if (window->hidden) {
       return;
