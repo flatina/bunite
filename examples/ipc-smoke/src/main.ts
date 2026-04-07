@@ -30,6 +30,7 @@ export const smokeState = {
   blockedNavigationSeen: false,
   okNavigationSeen: false,
   messageBoxResponseOk: false,
+  devToolsCycleAttempted: false,
   maximizeResizeSeen: false,
   maximizeReadbackOk: false,
   restoreResizeSeen: false,
@@ -102,6 +103,11 @@ win.webview.on("dom-ready", (event) => {
   }
 
   messageBoxRequested = true;
+  smokeState.devToolsCycleAttempted = true;
+  win.webview.openDevTools();
+  setTimeout(() => {
+    win.webview.closeDevTools();
+  }, 250);
   void Utils.showMessageBox({
     type: "question",
     title: "bunite browser dialog",
