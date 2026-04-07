@@ -80,6 +80,16 @@ type NativeSymbols = {
     defaultId: number,
     cancelId: number
   ) => number;
+  bunite_show_browser_message_box: (
+    type: CStringPointer,
+    title: CStringPointer,
+    message: CStringPointer,
+    detail: CStringPointer,
+    buttons: CStringPointer,
+    defaultId: number,
+    cancelId: number
+  ) => number;
+  bunite_cancel_browser_message_box: (requestId: number) => void;
   bunite_set_webview_event_handler: (handler: JSCallback) => void;
   bunite_set_window_event_handler: (handler: JSCallback) => void;
 };
@@ -196,6 +206,22 @@ const nativeSymbolDefinitions = {
       FFIType.i32
     ],
     returns: FFIType.i32
+  },
+  bunite_show_browser_message_box: {
+    args: [
+      FFIType.cstring,
+      FFIType.cstring,
+      FFIType.cstring,
+      FFIType.cstring,
+      FFIType.cstring,
+      FFIType.i32,
+      FFIType.i32
+    ],
+    returns: FFIType.u32
+  },
+  bunite_cancel_browser_message_box: {
+    args: [FFIType.u32],
+    returns: FFIType.void
   },
   bunite_set_webview_event_handler: {
     args: [FFIType.function],
@@ -316,6 +342,14 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.webview.permissionRequested(
                 maybeParsePayload(payload) as { requestId: number; kind: number; url?: string }
+              ),
+              viewId
+            );
+            break;
+          case "message-box-response":
+            buniteEventEmitter.emitEvent(
+              buniteEventEmitter.events.webview.messageBoxResponse(
+                maybeParsePayload(payload) as { requestId: number; response: number }
               ),
               viewId
             );
@@ -506,4 +540,33 @@ export function showNativeMessageBox(params: {
     params.defaultId ?? 0,
     params.cancelId ?? unsetCancelId
   );
+}
+
+export function requestBrowserMessageBox(params: {
+  type?: string;
+  title?: string;
+  message?: string;
+  detail?: string;
+  buttons?: string[];
+  defaultId?: number;
+  cancelId?: number;
+}): number {
+  const native = getNativeLibrary();
+  if (!native) {
+    return 0;
+  }
+
+  return native.symbols.bunite_show_browser_message_box(
+    toCString(params.type ?? "info"),
+    toCString(params.title ?? ""),
+    toCString(params.message ?? ""),
+    toCString(params.detail ?? ""),
+    toCString((params.buttons ?? ["OK"]).join(messageBoxButtonSeparator)),
+    params.defaultId ?? 0,
+    params.cancelId ?? unsetCancelId
+  );
+}
+
+export function cancelBrowserMessageBoxRequest(requestId: number): void {
+  getNativeLibrary()?.symbols.bunite_cancel_browser_message_box(requestId);
 }

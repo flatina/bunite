@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { BrowserView, BrowserWindow, app } from "bunite";
+import { BrowserView, BrowserWindow, Utils, app } from "bunite";
 
 type IPCSmokeSchema = {
   bun: {
@@ -29,6 +29,7 @@ export const smokeState = {
   blockedAttemptSeen: false,
   blockedNavigationSeen: false,
   okNavigationSeen: false,
+  messageBoxResponseOk: false,
   maximizeResizeSeen: false,
   maximizeReadbackOk: false,
   restoreResizeSeen: false,
@@ -84,12 +85,35 @@ const win = new BrowserWindow({
   navigationRules: ["^*", "views://main/*", "^views://main/rpc-blocked.html*"]
 });
 
+let messageBoxRequested = false;
+
 win.webview.on("will-navigate", (event) => {
   const detail = String((event as { data?: { detail?: string } }).data?.detail ?? "");
   if (detail.includes("rpc-blocked.html")) {
     smokeState.blockedAttemptSeen = true;
     console.log("[ipc-smoke] blocked navigation attempted", detail);
   }
+});
+
+win.webview.on("dom-ready", (event) => {
+  const detail = String((event as { data?: { detail?: string } }).data?.detail ?? "");
+  if (messageBoxRequested || !detail.includes("index.html")) {
+    return;
+  }
+
+  messageBoxRequested = true;
+  void Utils.showMessageBox({
+    type: "question",
+    title: "bunite browser dialog",
+    message: "Confirm browser-side message box wiring",
+    detail: "ipc-smoke should auto-accept this dialog from the renderer.",
+    buttons: ["Proceed", "Cancel"],
+    defaultId: 0,
+    cancelId: 1
+  }).then(({ response }) => {
+    smokeState.messageBoxResponseOk = response === 0;
+    console.log("[ipc-smoke] message box response", response);
+  });
 });
 
 win.webview.on("did-navigate", (event) => {
