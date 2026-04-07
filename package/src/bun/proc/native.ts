@@ -8,6 +8,7 @@ export type NativeBootstrapOptions = {
   allowStub?: boolean;
   hideConsole?: boolean;
   popupBlocking?: boolean;
+  chromiumFlags?: Record<string, string | boolean>;
 };
 
 export type NativeRuntimeState = {
@@ -24,7 +25,8 @@ type NativeSymbols = {
     processHelperPath: CStringPointer,
     cefDir: CStringPointer,
     hideConsole: boolean,
-    popupBlocking: boolean
+    popupBlocking: boolean,
+    chromiumFlagsJson: CStringPointer
   ) => boolean;
   bunite_run_loop: () => void;
   bunite_quit: () => void;
@@ -112,7 +114,7 @@ const unsetCancelId = -1;
 
 const nativeSymbolDefinitions = {
   bunite_init: {
-    args: [FFIType.cstring, FFIType.cstring, FFIType.bool, FFIType.bool],
+    args: [FFIType.cstring, FFIType.cstring, FFIType.bool, FFIType.bool, FFIType.cstring],
     returns: FFIType.bool
   },
   bunite_run_loop: {
@@ -506,11 +508,15 @@ export async function initNativeRuntime(
 
   if (nativeLibrary) {
     registerNativeCallbacks(nativeLibrary);
+    const chromiumFlagsJson = options.chromiumFlags
+      ? JSON.stringify(options.chromiumFlags)
+      : "";
     const initOk = nativeLibrary.symbols.bunite_init(
       toCString(artifacts.processHelperPath ?? ""),
       toCString(artifacts.cefDir ?? ""),
       options.hideConsole ?? false,
-      options.popupBlocking ?? false
+      options.popupBlocking ?? false,
+      toCString(chromiumFlagsJson)
     );
 
     if (!initOk) {

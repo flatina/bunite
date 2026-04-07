@@ -133,6 +133,7 @@ struct RuntimeState {
   std::string process_helper_path;
   std::string cef_dir;
   bool popup_blocking = false;
+  std::map<std::string, std::string> chromium_flags;
   std::thread::id cef_owner_thread;
 };
 
@@ -614,6 +615,41 @@ std::vector<std::string> parseNavigationRulesJson(const std::string& rules_json)
   return rules;
 }
 
+std::map<std::string, std::string> parseChromiumFlagsJson(const std::string& json) {
+  std::map<std::string, std::string> flags;
+  if (json.empty()) {
+    return flags;
+  }
+
+  CefRefPtr<CefValue> parsed = CefParseJSON(json, JSON_PARSER_RFC);
+  if (!parsed || parsed->GetType() != VTYPE_DICTIONARY) {
+    return flags;
+  }
+
+  CefRefPtr<CefDictionaryValue> dict = parsed->GetDictionary();
+  if (!dict) {
+    return flags;
+  }
+
+  CefDictionaryValue::KeyList keys;
+  dict->GetKeys(keys);
+  for (const auto& key : keys) {
+    const std::string k = key.ToString();
+    switch (dict->GetType(key)) {
+      case VTYPE_BOOL:
+        flags[k] = dict->GetBool(key) ? "true" : "false";
+        break;
+      case VTYPE_STRING:
+        flags[k] = dict->GetString(key).ToString();
+        break;
+      default:
+        break;
+    }
+  }
+
+  return flags;
+}
+
 bool shouldAlwaysAllowNavigationUrl(const std::string& url) {
   return url == "about:blank" || url.rfind("views://internal/", 0) == 0;
 }
@@ -1032,6 +1068,29 @@ public:
       // Keep Chromium's popup blocker off by default so scripted window.open()
       // still reaches the runtime-level handler.
       command_line->AppendSwitch("disable-popup-blocking");
+    }
+
+    // Run GPU code inside the browser process instead of a separate
+    // subprocess.  The GPU subprocess crashes on some Windows setups with
+    // "Failed to create shared context for virtualization" regardless of
+    // the ANGLE backend, because the subprocess cannot initialise EGL/D3D11
+    // shared contexts.  In-process GPU avoids this entirely.
+    // Apps can override this by passing { "in-process-gpu": false } in
+    // chromiumFlags to restore the default multi-process GPU model.
+    if (g_runtime.chromium_flags.find("in-process-gpu") == g_runtime.chromium_flags.end()) {
+      command_line->AppendSwitch("in-process-gpu");
+    }
+
+    for (const auto& [key, value] : g_runtime.chromium_flags) {
+      if (value == "false") {
+        // Explicit false: skip the flag entirely (allows overriding defaults).
+        continue;
+      }
+      if (value.empty() || value == "true") {
+        command_line->AppendSwitch(key);
+      } else {
+        command_line->AppendSwitchWithValue(key, value);
+      }
     }
   }
 
@@ -1584,7 +1643,8 @@ extern "C" BUNITE_EXPORT bool bunite_init(
   const char* process_helper_path,
   const char* cef_dir,
   bool hide_console,
-  bool popup_blocking
+  bool popup_blocking,
+  const char* chromium_flags_json
 ) {
   std::lock_guard<std::mutex> lock(g_runtime.lifecycle_mutex);
   if (g_runtime.initialized) {
@@ -1594,6 +1654,8 @@ extern "C" BUNITE_EXPORT bool bunite_init(
   g_runtime.process_helper_path = process_helper_path ? process_helper_path : "";
   g_runtime.cef_dir = cef_dir ? cef_dir : "";
   g_runtime.popup_blocking = popup_blocking;
+  g_runtime.chromium_flags = parseChromiumFlagsJson(
+    chromium_flags_json ? chromium_flags_json : "");
   g_runtime.cef_owner_thread = std::this_thread::get_id();
 
   if (hide_console) {

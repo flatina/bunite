@@ -46,9 +46,8 @@ const win = new BrowserWindow({
 });
 
 win.show();
-console.log("[example] bunite basic initialized", {
-  usingStub: app.runtime?.usingStub ?? true,
-  webviewId: win.webviewId
-});
+console.log(
+  `[example] bunite basic initialized usingStub=${String(app.runtime?.usingStub ?? true)} webviewId=${win.webviewId}`
+);
 
 app.run();
