@@ -3,11 +3,12 @@ export type RPCRequestPacket = {
   id: number;
   method: string;
   params: unknown;
+  scope?: "global";
 };
 
 export type RPCResponsePacket =
-  | { type: "response"; id: number; success: true; payload: unknown }
-  | { type: "response"; id: number; success: false; error?: string };
+  | { type: "response"; id: number; success: true; payload: unknown; scope?: "global" }
+  | { type: "response"; id: number; success: false; error?: string; scope?: "global" };
 
 export type RPCMessagePacket = {
   type: "message";
