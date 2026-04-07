@@ -1,0 +1,11 @@
+{
+  "name": "bunite-multitab-browser",
+  "dependencies": {
+    "bunite": "workspace:*"
+  },
+  "private": true,
+  "scripts": {
+    "dev": "bun src/main.ts"
+  },
+  "type": "module"
+}
