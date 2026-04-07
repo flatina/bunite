@@ -1,4 +1,4 @@
-import { app } from "bunite";
+import { app } from "bunite-core";
 import { smokeState } from "./main";
 
 setTimeout(() => {

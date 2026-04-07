@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { BrowserView, BrowserWindow, Utils, app } from "bunite";
+import { BrowserView, BrowserWindow, Utils, app } from "bunite-core";
 
 type IPCSmokeSchema = {
   bun: {
