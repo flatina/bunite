@@ -37,11 +37,15 @@ type NativeSymbols = {
     titleBarStyle: CStringPointer,
     transparent: boolean,
     hidden: boolean,
+    minimized: boolean,
     maximized: boolean
   ) => Pointer;
   bunite_window_show: (windowPtr: Pointer) => void;
   bunite_window_close: (windowPtr: Pointer) => void;
   bunite_window_set_title: (windowPtr: Pointer, title: CStringPointer) => void;
+  bunite_window_minimize: (windowPtr: Pointer) => void;
+  bunite_window_unminimize: (windowPtr: Pointer) => void;
+  bunite_window_is_minimized: (windowPtr: Pointer) => boolean;
   bunite_window_maximize: (windowPtr: Pointer) => void;
   bunite_window_unmaximize: (windowPtr: Pointer) => void;
   bunite_window_is_maximized: (windowPtr: Pointer) => boolean;
@@ -132,6 +136,7 @@ const nativeSymbolDefinitions = {
       FFIType.cstring,
       FFIType.bool,
       FFIType.bool,
+      FFIType.bool,
       FFIType.bool
     ],
     returns: FFIType.ptr
@@ -147,6 +152,18 @@ const nativeSymbolDefinitions = {
   bunite_window_set_title: {
     args: [FFIType.ptr, FFIType.cstring],
     returns: FFIType.void
+  },
+  bunite_window_minimize: {
+    args: [FFIType.ptr],
+    returns: FFIType.void
+  },
+  bunite_window_unminimize: {
+    args: [FFIType.ptr],
+    returns: FFIType.void
+  },
+  bunite_window_is_minimized: {
+    args: [FFIType.ptr],
+    returns: FFIType.bool
   },
   bunite_window_maximize: {
     args: [FFIType.ptr],
@@ -409,25 +426,27 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
             break;
           case "move":
             if (parsedPayload && typeof parsedPayload === "object") {
-              const { x = 0, y = 0, maximized = false } = parsedPayload as {
+              const { x = 0, y = 0, maximized = false, minimized = false } = parsedPayload as {
                 x?: number;
                 y?: number;
                 maximized?: boolean;
+                minimized?: boolean;
               };
               buniteEventEmitter.emitEvent(
-                buniteEventEmitter.events.window.move({ id: windowId, x, y, maximized }),
+                buniteEventEmitter.events.window.move({ id: windowId, x, y, maximized, minimized }),
                 windowId
               );
             }
             break;
           case "resize":
             if (parsedPayload && typeof parsedPayload === "object") {
-              const { x = 0, y = 0, width = 0, height = 0, maximized = false } = parsedPayload as {
+              const { x = 0, y = 0, width = 0, height = 0, maximized = false, minimized = false } = parsedPayload as {
                 x?: number;
                 y?: number;
                 width?: number;
                 height?: number;
                 maximized?: boolean;
+                minimized?: boolean;
               };
               buniteEventEmitter.emitEvent(
                 buniteEventEmitter.events.window.resize({
@@ -436,7 +455,8 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
                   y,
                   width,
                   height,
-                  maximized
+                  maximized,
+                  minimized
                 }),
                 windowId
               );

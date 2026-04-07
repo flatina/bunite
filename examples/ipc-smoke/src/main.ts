@@ -31,6 +31,10 @@ export const smokeState = {
   okNavigationSeen: false,
   messageBoxResponseOk: false,
   devToolsCycleAttempted: false,
+  minimizeResizeSeen: false,
+  minimizeReadbackOk: false,
+  restoreFromMinimizeSeen: false,
+  restoreFromMinimizeReadbackOk: false,
   maximizeResizeSeen: false,
   maximizeReadbackOk: false,
   restoreResizeSeen: false,
@@ -148,10 +152,24 @@ win.webview.on("new-window-open", (event) => {
 
 win.on("resize", (event) => {
   const data = (event as {
-    data?: { maximized?: boolean; width?: number; height?: number };
+    data?: { maximized?: boolean; minimized?: boolean; width?: number; height?: number };
   }).data;
   if (!data) {
     return;
+  }
+
+  if (data.minimized) {
+    smokeState.minimizeResizeSeen = true;
+    console.log("[ipc-smoke] window minimized");
+    return;
+  }
+
+  if (smokeState.minimizeResizeSeen && !smokeState.restoreFromMinimizeSeen) {
+    smokeState.restoreFromMinimizeSeen = true;
+    console.log("[ipc-smoke] window restored from minimize", {
+      width: data.width ?? 0,
+      height: data.height ?? 0
+    });
   }
 
   if (data.maximized) {
@@ -182,6 +200,14 @@ void (async () => {
   win.unmaximize();
   smokeState.restoreReadbackOk = await waitForCondition(
     () => smokeState.restoreResizeSeen && !win.isMaximized()
+  );
+  win.minimize();
+  smokeState.minimizeReadbackOk = await waitForCondition(
+    () => smokeState.minimizeResizeSeen && win.isMinimized()
+  );
+  win.unminimize();
+  smokeState.restoreFromMinimizeReadbackOk = await waitForCondition(
+    () => smokeState.restoreFromMinimizeSeen && !win.isMinimized()
   );
 })();
 

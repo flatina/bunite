@@ -15,6 +15,7 @@ export type WindowOptionsType<T = undefined> = {
     width: number;
     height: number;
     maximized?: boolean;
+    minimized?: boolean;
   };
   url: string | null;
   html: string | null;
@@ -65,9 +66,10 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
   sandbox: boolean;
   webviewId: number;
   private closed = false;
+  private restoreMaximizedAfterMinimize = false;
   private readonly handleNativeMove = (event: unknown) => {
     const data = (event as {
-      data?: { x?: number; y?: number; maximized?: boolean };
+      data?: { x?: number; y?: number; maximized?: boolean; minimized?: boolean };
     }).data;
     if (!data) {
       return;
@@ -77,12 +79,13 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
       ...this.frame,
       x: data.x ?? this.frame.x,
       y: data.y ?? this.frame.y,
-      maximized: data.maximized ?? this.frame.maximized
+      maximized: data.maximized ?? this.frame.maximized,
+      minimized: data.minimized ?? this.frame.minimized
     };
   };
   private readonly handleNativeResize = (event: unknown) => {
     const data = (event as {
-      data?: { x?: number; y?: number; width?: number; height?: number; maximized?: boolean };
+      data?: { x?: number; y?: number; width?: number; height?: number; maximized?: boolean; minimized?: boolean };
     }).data;
     if (!data) {
       return;
@@ -94,7 +97,8 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
       y: data.y ?? this.frame.y,
       width: data.width ?? this.frame.width,
       height: data.height ?? this.frame.height,
-      maximized: data.maximized ?? this.frame.maximized
+      maximized: data.maximized ?? this.frame.maximized,
+      minimized: data.minimized ?? this.frame.minimized
     };
   };
   private readonly handleNativeClose = () => {
@@ -137,6 +141,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
         toCString(this.titleBarStyle),
         this.transparent,
         this.hidden,
+        Boolean(this.frame.minimized),
         Boolean(this.frame.maximized)
       ) ?? null;
 
@@ -205,6 +210,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
   maximize() {
     if (!this.ptr) {
       this.frame.maximized = true;
+      this.frame.minimized = false;
       return;
     }
 
@@ -214,6 +220,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     }
 
     native.symbols.bunite_window_maximize(this.ptr);
+    this.frame.minimized = native.symbols.bunite_window_is_minimized(this.ptr);
     this.frame.maximized = native.symbols.bunite_window_is_maximized(this.ptr);
   }
 
@@ -229,6 +236,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     }
 
     native.symbols.bunite_window_unmaximize(this.ptr);
+    this.frame.minimized = native.symbols.bunite_window_is_minimized(this.ptr);
     this.frame.maximized = native.symbols.bunite_window_is_maximized(this.ptr);
   }
 
@@ -240,6 +248,52 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     const maximized = getNativeLibrary()?.symbols.bunite_window_is_maximized(this.ptr) ?? false;
     this.frame.maximized = maximized;
     return maximized;
+  }
+
+  minimize() {
+    if (!this.ptr) {
+      this.restoreMaximizedAfterMinimize = Boolean(this.frame.maximized);
+      this.frame.minimized = true;
+      this.frame.maximized = false;
+      return;
+    }
+
+    const native = getNativeLibrary();
+    if (!native) {
+      return;
+    }
+
+    native.symbols.bunite_window_minimize(this.ptr);
+    this.frame.minimized = native.symbols.bunite_window_is_minimized(this.ptr);
+    this.frame.maximized = native.symbols.bunite_window_is_maximized(this.ptr);
+  }
+
+  unminimize() {
+    if (!this.ptr) {
+      this.frame.minimized = false;
+      this.frame.maximized = this.restoreMaximizedAfterMinimize;
+      this.restoreMaximizedAfterMinimize = false;
+      return;
+    }
+
+    const native = getNativeLibrary();
+    if (!native) {
+      return;
+    }
+
+    native.symbols.bunite_window_unminimize(this.ptr);
+    this.frame.minimized = native.symbols.bunite_window_is_minimized(this.ptr);
+    this.frame.maximized = native.symbols.bunite_window_is_maximized(this.ptr);
+  }
+
+  isMinimized() {
+    if (!this.ptr) {
+      return Boolean(this.frame.minimized);
+    }
+
+    const minimized = getNativeLibrary()?.symbols.bunite_window_is_minimized(this.ptr) ?? false;
+    this.frame.minimized = minimized;
+    return minimized;
   }
 
   setTitle(title: string) {
