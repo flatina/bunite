@@ -67,6 +67,11 @@ struct PendingMessageBoxRequest {
   int32_t cancel_id = -1;
 };
 
+// View anchor modes for automatic layout during window resize.
+// 0 = none (manual bounds), 1 = fill client area,
+// 2 = top strip (fixed height), 3 = below top strip.
+enum ViewAnchorMode { ANCHOR_NONE = 0, ANCHOR_FILL = 1, ANCHOR_TOP = 2, ANCHOR_BELOW_TOP = 3 };
+
 struct ViewHost {
   uint32_t id = 0;
   WindowHost* window = nullptr;
@@ -76,7 +81,8 @@ struct ViewHost {
   std::string preload_script;
   std::string views_root;
   std::vector<std::string> navigation_rules;
-  bool auto_resize = true;
+  int anchor_mode = ANCHOR_FILL;
+  double anchor_inset = 0;
   bool sandbox = false;
   std::atomic<bool> closing = false;
   CefRefPtr<CefBrowser> browser;
@@ -615,35 +621,84 @@ std::vector<std::string> parseNavigationRulesJson(const std::string& rules_json)
   return rules;
 }
 
+// Simple flat JSON object parser for chromiumFlags.
+// Input is always a JSON-serialized Record<string, string | boolean> from TS.
+// Does not depend on CEF, so it can run before CefInitialize.
 std::map<std::string, std::string> parseChromiumFlagsJson(const std::string& json) {
   std::map<std::string, std::string> flags;
   if (json.empty()) {
     return flags;
   }
 
-  CefRefPtr<CefValue> parsed = CefParseJSON(json, JSON_PARSER_RFC);
-  if (!parsed || parsed->GetType() != VTYPE_DICTIONARY) {
+  size_t pos = json.find('{');
+  if (pos == std::string::npos) {
     return flags;
   }
+  ++pos;
 
-  CefRefPtr<CefDictionaryValue> dict = parsed->GetDictionary();
-  if (!dict) {
-    return flags;
-  }
+  auto skipWhitespace = [&]() {
+    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t' || json[pos] == '\n' || json[pos] == '\r')) {
+      ++pos;
+    }
+  };
 
-  CefDictionaryValue::KeyList keys;
-  dict->GetKeys(keys);
-  for (const auto& key : keys) {
-    const std::string k = key.ToString();
-    switch (dict->GetType(key)) {
-      case VTYPE_BOOL:
-        flags[k] = dict->GetBool(key) ? "true" : "false";
-        break;
-      case VTYPE_STRING:
-        flags[k] = dict->GetString(key).ToString();
-        break;
-      default:
-        break;
+  auto parseString = [&]() -> std::string {
+    if (pos >= json.size() || json[pos] != '"') {
+      return {};
+    }
+    ++pos;
+    std::string result;
+    while (pos < json.size() && json[pos] != '"') {
+      if (json[pos] == '\\' && pos + 1 < json.size()) {
+        ++pos;
+      }
+      result += json[pos++];
+    }
+    if (pos < json.size()) {
+      ++pos; // closing quote
+    }
+    return result;
+  };
+
+  while (pos < json.size()) {
+    skipWhitespace();
+    if (pos >= json.size() || json[pos] == '}') {
+      break;
+    }
+    if (json[pos] == ',') {
+      ++pos;
+      continue;
+    }
+
+    std::string key = parseString();
+    if (key.empty()) {
+      break;
+    }
+
+    skipWhitespace();
+    if (pos >= json.size() || json[pos] != ':') {
+      break;
+    }
+    ++pos;
+    skipWhitespace();
+
+    if (pos >= json.size()) {
+      break;
+    }
+
+    if (json[pos] == '"') {
+      flags[key] = parseString();
+    } else if (json.compare(pos, 4, "true") == 0) {
+      flags[key] = "true";
+      pos += 4;
+    } else if (json.compare(pos, 5, "false") == 0) {
+      flags[key] = "false";
+      pos += 5;
+    } else {
+      // skip unknown value
+      while (pos < json.size() && json[pos] != ',' && json[pos] != '}') {
+        ++pos;
+      }
     }
   }
 
@@ -862,10 +917,30 @@ void resizeViewToFit(ViewHost* view) {
   }
 
   RECT bounds = view->bounds;
-  if (view->auto_resize) {
-    GetClientRect(view->window->hwnd, &bounds);
-    view->bounds = bounds;
+  switch (view->anchor_mode) {
+    case ANCHOR_FILL: {
+      GetClientRect(view->window->hwnd, &bounds);
+      break;
+    }
+    case ANCHOR_TOP: {
+      RECT client;
+      GetClientRect(view->window->hwnd, &client);
+      bounds = { 0, 0, client.right, static_cast<LONG>(view->anchor_inset) };
+      break;
+    }
+    case ANCHOR_BELOW_TOP: {
+      RECT client;
+      GetClientRect(view->window->hwnd, &client);
+      LONG inset = static_cast<LONG>(view->anchor_inset);
+      LONG h = client.bottom - inset;
+      if (h < 0) h = 0;
+      bounds = { 0, inset, client.right, inset + h };
+      break;
+    }
+    default: // ANCHOR_NONE — use stored bounds
+      break;
   }
+  view->bounds = bounds;
 
   SetWindowPos(
     browser_hwnd,
@@ -1070,17 +1145,31 @@ public:
       command_line->AppendSwitch("disable-popup-blocking");
     }
 
-    // Run GPU code inside the browser process instead of a separate
-    // subprocess.  The GPU subprocess crashes on some Windows setups with
-    // "Failed to create shared context for virtualization" regardless of
-    // the ANGLE backend, because the subprocess cannot initialise EGL/D3D11
-    // shared contexts.  In-process GPU avoids this entirely.
-    // Apps can override this by passing { "in-process-gpu": false } in
-    // chromiumFlags to restore the default multi-process GPU model.
+    // --- Bunite defaults (injected into the flags map so the loop handles them uniformly) ---
+    // Run GPU in-process to avoid EGL/D3D11 shared context failures.
+    // Override with { "in-process-gpu": false }.
     if (g_runtime.chromium_flags.find("in-process-gpu") == g_runtime.chromium_flags.end()) {
-      command_line->AppendSwitch("in-process-gpu");
+      g_runtime.chromium_flags["in-process-gpu"] = "true";
     }
 
+    // Run network service in-process to avoid subprocess crashes when
+    // multiple BrowserViews issue concurrent requests.
+    // Override with { "enable-features": false } to suppress, or pass a
+    // custom value to replace the default entirely.
+    if (g_runtime.chromium_flags.find("enable-features") == g_runtime.chromium_flags.end()) {
+      g_runtime.chromium_flags["enable-features"] = "NetworkServiceInProcess";
+    } else {
+      std::string& existing = g_runtime.chromium_flags["enable-features"];
+      if (existing.find("NetworkServiceInProcess") == std::string::npos && existing != "false") {
+        if (existing.empty()) {
+          existing = "NetworkServiceInProcess";
+        } else {
+          existing += ",NetworkServiceInProcess";
+        }
+      }
+    }
+
+    // --- Apply all flags ---
     for (const auto& [key, value] : g_runtime.chromium_flags) {
       if (value == "false") {
         // Explicit false: skip the flag entirely (allows overriding defaults).
@@ -1972,7 +2061,8 @@ extern "C" BUNITE_EXPORT void* bunite_view_create(
       preload ? preload : "",
       views_root ? views_root : "",
       parseNavigationRulesJson(navigation_rules_json ? navigation_rules_json : ""),
-      auto_resize,
+      auto_resize ? ANCHOR_FILL : ANCHOR_NONE,
+      0.0,
       sandbox
     };
 
@@ -2021,6 +2111,78 @@ extern "C" BUNITE_EXPORT void bunite_view_load_html(void* view_ptr, const char* 
     bunite::WebviewContentStorage::instance().set(view->id, content);
     if (view->browser && view->browser->GetMainFrame()) {
       view->browser->GetMainFrame()->LoadURL("views://internal/index.html");
+    }
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_set_visible(void* view_ptr, bool visible) {
+  runOnUiThreadSync<void>([view = getViewHost(view_ptr), visible]() {
+    if (!view || !view->browser) {
+      return;
+    }
+    HWND browser_hwnd = view->browser->GetHost()->GetWindowHandle();
+    if (browser_hwnd) {
+      ShowWindow(browser_hwnd, visible ? SW_SHOW : SW_HIDE);
+    }
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_set_bounds(
+  void* view_ptr,
+  double x,
+  double y,
+  double width,
+  double height
+) {
+  runOnUiThreadSync<void>([view = getViewHost(view_ptr), x, y, width, height]() {
+    if (!view || !view->browser) {
+      return;
+    }
+    view->anchor_mode = ANCHOR_NONE;
+    view->bounds = RECT{
+      static_cast<LONG>(x),
+      static_cast<LONG>(y),
+      static_cast<LONG>(x + width),
+      static_cast<LONG>(y + height)
+    };
+    HWND browser_hwnd = view->browser->GetHost()->GetWindowHandle();
+    if (browser_hwnd) {
+      SetWindowPos(
+        browser_hwnd,
+        nullptr,
+        view->bounds.left,
+        view->bounds.top,
+        view->bounds.right - view->bounds.left,
+        view->bounds.bottom - view->bounds.top,
+        SWP_NOZORDER | SWP_NOACTIVATE
+      );
+    }
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_set_anchor(void* view_ptr, int mode, double inset) {
+  runOnUiThreadSync<void>([view = getViewHost(view_ptr), mode, inset]() {
+    if (!view) {
+      return;
+    }
+    view->anchor_mode = mode;
+    view->anchor_inset = inset;
+    resizeViewToFit(view);
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_go_back(void* view_ptr) {
+  runOnUiThreadSync<void>([view = getViewHost(view_ptr)]() {
+    if (view && view->browser) {
+      view->browser->GoBack();
+    }
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_reload(void* view_ptr) {
+  runOnUiThreadSync<void>([view = getViewHost(view_ptr)]() {
+    if (view && view->browser) {
+      view->browser->Reload();
     }
   });
 }

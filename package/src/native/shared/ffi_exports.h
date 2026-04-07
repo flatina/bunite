@@ -75,6 +75,17 @@ BUNITE_EXPORT void* bunite_view_create(
 );
 BUNITE_EXPORT void bunite_view_load_url(void* view_ptr, const char* url);
 BUNITE_EXPORT void bunite_view_load_html(void* view_ptr, const char* html);
+BUNITE_EXPORT void bunite_view_set_visible(void* view_ptr, bool visible);
+BUNITE_EXPORT void bunite_view_set_bounds(
+	void* view_ptr,
+	double x,
+	double y,
+	double width,
+	double height
+);
+BUNITE_EXPORT void bunite_view_set_anchor(void* view_ptr, int mode, double inset);
+BUNITE_EXPORT void bunite_view_go_back(void* view_ptr);
+BUNITE_EXPORT void bunite_view_reload(void* view_ptr);
 BUNITE_EXPORT void bunite_view_remove(void* view_ptr);
 BUNITE_EXPORT void bunite_view_open_devtools(void* view_ptr);
 BUNITE_EXPORT void bunite_view_close_devtools(void* view_ptr);

@@ -153,6 +153,38 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
     return getRPCPort();
   }
 
+  setAnchor(mode: "none" | "fill" | "top" | "below-top", inset = 0) {
+    const modeInt = { none: 0, fill: 1, top: 2, "below-top": 3 }[mode];
+    if (this.ptr) {
+      getNativeLibrary()?.symbols.bunite_view_set_anchor(this.ptr, modeInt, inset);
+    }
+  }
+
+  goBack() {
+    if (this.ptr) {
+      getNativeLibrary()?.symbols.bunite_view_go_back(this.ptr);
+    }
+  }
+
+  reload() {
+    if (this.ptr) {
+      getNativeLibrary()?.symbols.bunite_view_reload(this.ptr);
+    }
+  }
+
+  setVisible(visible: boolean) {
+    if (this.ptr) {
+      getNativeLibrary()?.symbols.bunite_view_set_visible(this.ptr, visible);
+    }
+  }
+
+  setBounds(x: number, y: number, width: number, height: number) {
+    this.frame = { x, y, width, height };
+    if (this.ptr) {
+      getNativeLibrary()?.symbols.bunite_view_set_bounds(this.ptr, x, y, width, height);
+    }
+  }
+
   loadURL(url: string) {
     this.url = url;
     if (this.ptr) {
