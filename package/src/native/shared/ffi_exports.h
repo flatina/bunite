@@ -19,7 +19,8 @@ BUNITE_EXPORT bool bunite_init(
 	const char* process_helper_path,
 	const char* cef_dir,
 	bool hide_console,
-	bool popup_blocking
+	bool popup_blocking,
+	const char* chromium_flags_json
 );
 BUNITE_EXPORT void bunite_run_loop(void);
 BUNITE_EXPORT void bunite_quit(void);
