@@ -826,6 +826,10 @@ void resizeViewToFit(ViewHost* view) {
   );
 }
 
+void openDevToolsForView(ViewHost* view);
+void closeDevToolsForView(ViewHost* view);
+void toggleDevToolsForView(ViewHost* view);
+
 void finalizeViewHost(ViewHost* view) {
   if (!view) {
     return;
@@ -852,12 +856,17 @@ void closeViewHost(ViewHost* view) {
   }
 
   if (view->browser) {
+    closeDevToolsForView(view);
     view->browser->GetHost()->CloseBrowser(true);
     return;
   }
 
   finalizeViewHost(view);
 }
+
+void openDevToolsForView(ViewHost* view);
+void closeDevToolsForView(ViewHost* view);
+void toggleDevToolsForView(ViewHost* view);
 
 void finalizeWindowHost(WindowHost* window) {
   if (!window) {
@@ -1237,6 +1246,39 @@ bool BuniteCefClient::OnRequestMediaAccessPermission(
       ",\"url\":\"" + escapeJsonString(requesting_origin.ToString()) + "\"}"
   );
   return true;
+}
+
+void openDevToolsForView(ViewHost* view) {
+  if (!view || view->closing.load() || !view->browser) {
+    return;
+  }
+
+  CefWindowInfo window_info;
+  window_info.SetAsPopup(nullptr, "Bunite DevTools");
+
+  CefBrowserSettings settings;
+  view->browser->GetHost()->ShowDevTools(window_info, nullptr, settings, CefPoint());
+}
+
+void closeDevToolsForView(ViewHost* view) {
+  if (!view || view->closing.load() || !view->browser) {
+    return;
+  }
+
+  view->browser->GetHost()->CloseDevTools();
+}
+
+void toggleDevToolsForView(ViewHost* view) {
+  if (!view || view->closing.load() || !view->browser) {
+    return;
+  }
+
+  if (view->browser->GetHost()->HasDevTools()) {
+    closeDevToolsForView(view);
+    return;
+  }
+
+  openDevToolsForView(view);
 }
 
 LRESULT CALLBACK messageWindowProc(HWND hwnd, UINT message, WPARAM, LPARAM) {
@@ -1828,6 +1870,18 @@ extern "C" BUNITE_EXPORT void bunite_view_load_html(void* view_ptr, const char* 
 
 extern "C" BUNITE_EXPORT void bunite_view_remove(void* view_ptr) {
   runOnUiThreadSync<void>([view = getViewHost(view_ptr)]() { closeViewHost(view); });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_open_devtools(void* view_ptr) {
+  runOnUiThreadSync<void>([view = getViewHost(view_ptr)]() { openDevToolsForView(view); });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_close_devtools(void* view_ptr) {
+  runOnUiThreadSync<void>([view = getViewHost(view_ptr)]() { closeDevToolsForView(view); });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_toggle_devtools(void* view_ptr) {
+  runOnUiThreadSync<void>([view = getViewHost(view_ptr)]() { toggleDevToolsForView(view); });
 }
 
 extern "C" BUNITE_EXPORT void bunite_complete_permission_request(uint32_t request_id, uint32_t state) {

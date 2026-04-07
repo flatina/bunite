@@ -70,6 +70,9 @@ type NativeSymbols = {
   bunite_view_load_url: (viewPtr: Pointer, url: CStringPointer) => void;
   bunite_view_load_html: (viewPtr: Pointer, html: CStringPointer) => void;
   bunite_view_remove: (viewPtr: Pointer) => void;
+  bunite_view_open_devtools: (viewPtr: Pointer) => void;
+  bunite_view_close_devtools: (viewPtr: Pointer) => void;
+  bunite_view_toggle_devtools: (viewPtr: Pointer) => void;
   bunite_complete_permission_request: (requestId: number, state: number) => void;
   bunite_show_message_box: (
     type: CStringPointer,
@@ -188,6 +191,18 @@ const nativeSymbolDefinitions = {
     returns: FFIType.void
   },
   bunite_view_remove: {
+    args: [FFIType.ptr],
+    returns: FFIType.void
+  },
+  bunite_view_open_devtools: {
+    args: [FFIType.ptr],
+    returns: FFIType.void
+  },
+  bunite_view_close_devtools: {
+    args: [FFIType.ptr],
+    returns: FFIType.void
+  },
+  bunite_view_toggle_devtools: {
     args: [FFIType.ptr],
     returns: FFIType.void
   },

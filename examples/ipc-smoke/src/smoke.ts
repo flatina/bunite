@@ -9,6 +9,7 @@ setTimeout(() => {
     !smokeState.blockedNavigationSeen &&
     smokeState.okNavigationSeen &&
     smokeState.messageBoxResponseOk &&
+    smokeState.devToolsCycleAttempted &&
     smokeState.maximizeResizeSeen &&
     smokeState.maximizeReadbackOk &&
     smokeState.restoreResizeSeen &&
