@@ -51,6 +51,7 @@ BUNITE_EXPORT void* bunite_view_create(
 	const char* html,
 	const char* preload,
 	const char* views_root,
+	const char* navigation_rules_json,
 	double x,
 	double y,
 	double width,

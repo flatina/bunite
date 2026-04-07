@@ -29,6 +29,10 @@ copyFileSync(
   join(distRendererMainDir, "rpc-ok.html")
 );
 copyFileSync(
+  join(projectRoot, "src", "renderer", "rpc-blocked.html"),
+  join(distRendererMainDir, "rpc-blocked.html")
+);
+copyFileSync(
   join(projectRoot, "src", "renderer", "rpc-fail.html"),
   join(distRendererMainDir, "rpc-fail.html")
 );
