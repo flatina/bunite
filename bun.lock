@@ -21,6 +21,12 @@
         "bunite": "workspace:*",
       },
     },
+    "examples/multitab-browser": {
+      "name": "bunite-multitab-browser",
+      "dependencies": {
+        "bunite": "workspace:*",
+      },
+    },
     "package": {
       "name": "bunite",
       "version": "0.0.1",
@@ -53,6 +59,8 @@
     "bunite-basic-example": ["bunite-basic-example@workspace:examples/basic"],
 
     "bunite-ipc-smoke-example": ["bunite-ipc-smoke-example@workspace:examples/ipc-smoke"],
+
+    "bunite-multitab-browser": ["bunite-multitab-browser@workspace:examples/multitab-browser"],
 
     "detect-libc": ["detect-libc@2.1.2", "", {}, "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="],
 
