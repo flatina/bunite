@@ -5,7 +5,8 @@ setTimeout(() => {
   const ok =
     smokeState.pingCount > 0 &&
     smokeState.lastPing === "ipc-smoke" &&
-    smokeState.okNavigationSeen;
+    smokeState.okNavigationSeen &&
+    smokeState.popupSeen;
 
   if (!ok) {
     console.error("[ipc-smoke] failed", smokeState);
