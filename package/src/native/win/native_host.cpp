@@ -717,6 +717,10 @@ std::string normalizeViewsPath(const std::string& url) {
     path.erase(path.begin());
   }
 
+  while (!path.empty() && (path.back() == '/' || path.back() == '\\')) {
+    path.pop_back();
+  }
+
   return path.empty() ? "index.html" : path;
 }
 
@@ -735,15 +739,17 @@ std::string getMimeType(const std::filesystem::path& file_path) {
   return "application/octet-stream";
 }
 
-std::optional<std::string> loadViewsResource(uint32_t view_id, const std::string& url, std::string& mime_type) {
-  std::string views_root;
-  {
-    std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
-    const auto it = g_runtime.views_by_id.find(view_id);
-    if (it != g_runtime.views_by_id.end()) {
-      views_root = it->second->views_root;
-    }
+std::string getViewsRootForView(uint32_t view_id) {
+  std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
+  const auto it = g_runtime.views_by_id.find(view_id);
+  if (it == g_runtime.views_by_id.end() || !it->second) {
+    return {};
   }
+  return it->second->views_root;
+}
+
+std::optional<std::string> loadViewsResource(uint32_t view_id, const std::string& url, std::string& mime_type) {
+  const std::string views_root = getViewsRootForView(view_id);
 
   const std::string path = normalizeViewsPath(url);
   if (path == "internal/index.html") {
@@ -760,7 +766,10 @@ std::optional<std::string> loadViewsResource(uint32_t view_id, const std::string
   }
 
   const std::filesystem::path root = std::filesystem::weakly_canonical(std::filesystem::path(views_root));
-  const std::filesystem::path candidate = std::filesystem::weakly_canonical(root / std::filesystem::path(path));
+  std::filesystem::path candidate = std::filesystem::weakly_canonical(root / std::filesystem::path(path));
+  if (std::filesystem::exists(candidate) && std::filesystem::is_directory(candidate)) {
+    candidate = std::filesystem::weakly_canonical(candidate / "index.html");
+  }
   const auto root_string = root.native();
   const auto candidate_string = candidate.native();
   const bool in_root = candidate_string == root_string ||
@@ -914,12 +923,26 @@ public:
     }
 
     std::string mime_type;
-    const auto content = loadViewsResource(view_id_, request->GetURL().ToString(), mime_type);
+    const std::string url = request ? request->GetURL().ToString() : "";
+    const auto content = loadViewsResource(view_id_, url, mime_type);
     if (!content) {
+      const std::string views_root = getViewsRootForView(view_id_);
+      const std::string normalized_path = normalizeViewsPath(url);
+      std::fprintf(
+        stderr,
+        "[bunite/native] views:// resource not found (view=%u, url=%s, normalized=%s, root=%s)\n",
+        view_id_,
+        url.c_str(),
+        normalized_path.c_str(),
+        views_root.c_str()
+      );
       status_code_ = 404;
       status_text_ = "Not Found";
       mime_type_ = "text/plain";
-      data_ = "bunite could not resolve the requested views:// resource.";
+      data_ =
+        "bunite could not resolve the requested views:// resource.\n"
+        "url: " + url + "\n" +
+        "normalized: " + normalized_path;
       return true;
     }
 
