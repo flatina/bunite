@@ -1,9 +1,11 @@
 {
   "name": "bunite",
+  "description": "Uniting UI and Bun",
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "build:native:win": "cmake -S . -B build/win -DBUNITE_TARGET_ARCH=x64 && cmake --build build/win --config Release"
+    "build:native:win": "cmake -S . -B build/win -DBUNITE_TARGET_ARCH=x64 && cmake --build build/win --config Release",
+    "build:preload": "bun build src/preload/runtime.ts --outfile src/preload/runtime.built.js --target browser --minify"
   },
   "exports": {
     ".": "./src/bun/index.ts",

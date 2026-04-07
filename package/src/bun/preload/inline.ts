@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve, sep } from "node:path";
-import { RPC_AUTH_TAG_LENGTH, RPC_FRAME_VERSION, RPC_IV_LENGTH } from "../../shared/rpcWireConstants";
 
 function escapeRootForComparison(path: string) {
   return process.platform === "win32" ? path.toLowerCase() : path;
@@ -53,6 +52,22 @@ function readCustomPreload(preload: string | null, viewsRoot: string | null) {
   }
 }
 
+// Pre-built preload runtime (built via `bun run build:preload` in package/)
+const runtimePath = resolve(import.meta.dirname, "../../preload/runtime.built.js");
+let cachedRuntime: string | null = null;
+
+function getPreloadRuntime(): string {
+  if (cachedRuntime === null) {
+    if (!existsSync(runtimePath)) {
+      throw new Error(
+        `Preload runtime not found at ${runtimePath}. Run "bun run build:preload" in the package directory.`
+      );
+    }
+    cachedRuntime = readFileSync(runtimePath, "utf8");
+  }
+  return cachedRuntime;
+}
+
 export function buildViewPreloadScript(options: {
   preload: string | null;
   viewsRoot: string | null;
@@ -61,61 +76,12 @@ export function buildViewPreloadScript(options: {
   secretKey: Uint8Array;
 }) {
   const secretKeyBase64 = Buffer.from(options.secretKey).toString("base64");
-  const bootstrap = `
-(() => {
-  const buniteWindow = window;
-  const base64ToUint8Array = (base64) => Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
-  const getCryptoKey = (() => {
-    let keyPromise;
-    return () => {
-      if (!keyPromise) {
-        keyPromise = crypto.subtle.importKey(
-          "raw",
-          base64ToUint8Array(${JSON.stringify(secretKeyBase64)}),
-          "AES-GCM",
-          false,
-          ["encrypt", "decrypt"]
-        );
-      }
-      return keyPromise;
-    };
-  })();
 
-  buniteWindow.__bunite ??= {};
-  buniteWindow.__buniteWebviewId = ${options.webviewId};
-  buniteWindow.__buniteRpcSocketPort = ${options.rpcSocketPort};
-  buniteWindow.__bunite_encrypt = async (data) => {
-    const cryptoKey = await getCryptoKey();
-    const iv = crypto.getRandomValues(new Uint8Array(${RPC_IV_LENGTH}));
-    const encrypted = new Uint8Array(
-      await crypto.subtle.encrypt({ name: "AES-GCM", iv }, cryptoKey, data)
-    );
-    const frame = new Uint8Array(1 + iv.length + encrypted.length);
-    frame[0] = ${RPC_FRAME_VERSION};
-    frame.set(iv, 1);
-    frame.set(encrypted, 1 + iv.length);
-    return frame;
-  };
-  buniteWindow.__bunite_decrypt = async (frame) => {
-    if (frame.length < 1 + ${RPC_IV_LENGTH} + ${RPC_AUTH_TAG_LENGTH}) {
-      throw new Error("Invalid bunite RPC frame.");
-    }
-    if (frame[0] !== ${RPC_FRAME_VERSION}) {
-      throw new Error("Unsupported bunite RPC frame version.");
-    }
-    const cryptoKey = await getCryptoKey();
-    const iv = frame.slice(1, 1 + ${RPC_IV_LENGTH});
-    const encrypted = frame.slice(1 + ${RPC_IV_LENGTH});
-    const decrypted = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      cryptoKey,
-      encrypted
-    );
-    return new Uint8Array(decrypted);
-  };
-})();
-`.trim();
+  // Per-view config — these globals are consumed by the pre-built runtime
+  const config = `var __buniteWebviewId=${options.webviewId},__buniteRpcSocketPort=${options.rpcSocketPort},__buniteSecretKeyBase64=${JSON.stringify(secretKeyBase64)};`;
 
+  const runtime = getPreloadRuntime();
   const customPreload = readCustomPreload(options.preload, options.viewsRoot).trim();
-  return [bootstrap, customPreload].filter(Boolean).join("\n\n");
+
+  return [config, runtime, customPreload].filter(Boolean).join("\n");
 }

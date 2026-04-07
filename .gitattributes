@@ -4,6 +4,9 @@
 # Source — force LF (cross-platform dev on Windows + macOS)
 *.ts       text eol=lf
 *.js       text eol=lf
+*.h        text eol=lf
+*.cpp      text eol=lf
+*.cc       text eol=lf
 *.mjs      text eol=lf
 *.css      text eol=lf
 *.html     text eol=lf
@@ -17,8 +20,6 @@
 # Shell scripts — LF
 *.sh       text eol=lf
 *.bash     text eol=lf
-.dev/flmux text eol=lf
-.dev/flweb text eol=lf
 
 # Windows scripts — CRLF
 *.bat      text eol=crlf

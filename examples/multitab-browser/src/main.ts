@@ -8,10 +8,10 @@ const rendererDir = fileURLToPath(new URL("./renderer", import.meta.url));
 const preload = join(rendererDir, "preload.js");
 
 await Bun.build({
-  entrypoints: [join(rendererDir, "shell.ts"), join(rendererDir, "status.ts")],
+  entrypoints: [join(rendererDir, "shell.ts")],
   outdir: rendererDir,
   target: "browser",
-  naming: "[name].js",
+  naming: "[name].built.js",
 });
 
 type TabInfo = { id: number; url: string; active: boolean };
@@ -36,46 +36,6 @@ type ShellSchema = {
     messages: {};
   };
 };
-
-type ContentSchema = {
-  bun: {
-    requests: {
-      getAppInfo: {
-        params: {};
-        response: {
-          buniteVersion: string;
-          nativeLoaded: boolean;
-          usingStub: boolean;
-          tabCount: number;
-          platform: string;
-        };
-      };
-    };
-    messages: {};
-  };
-  webview: {
-    requests: {};
-    messages: {};
-  };
-};
-
-function createContentRpc() {
-  return BrowserView.defineRPC<ContentSchema>({
-    handlers: {
-      requests: {
-        getAppInfo() {
-          return {
-            buniteVersion: "0.0.1",
-            nativeLoaded: app.runtime?.nativeLoaded ?? false,
-            usingStub: app.runtime?.usingStub ?? true,
-            tabCount: tabs.size,
-            platform: process.platform
-          };
-        }
-      }
-    }
-  });
-}
 
 const tabs = new Map<number, { view: BrowserView; url: string }>();
 let activeTabId: number | null = null;
@@ -139,12 +99,20 @@ const shellRpc = BrowserView.defineRPC<ShellSchema>({
   }
 });
 
+// Global IPC — any views:// page can call bunite.invoke("getAppInfo")
+app.handle("getAppInfo", () => ({
+  buniteVersion: "0.0.1",
+  nativeLoaded: app.runtime?.nativeLoaded ?? false,
+  usingStub: app.runtime?.usingStub ?? true,
+  tabCount: tabs.size,
+  platform: process.platform
+}));
+
 function createTab(url: string): number {
   const isViews = !url || url.startsWith("views://");
   const view = new BrowserView({
-    url: !url ? "views://newtab.html" : url,
+    url: !url ? "views://newtab" : url,
     viewsRoot: isViews ? rendererDir : undefined,
-    rpc: isViews ? createContentRpc() : undefined,
     windowPtr: win.ptr,
     autoResize: false,
     windowId: win.id
@@ -207,10 +175,18 @@ function closeTab(tabId: number) {
 
 await app.init();
 
+app.getView("about", () => `
+  <style>body { background: #202124; color: #e8eaed; font-family: system-ui, sans-serif; }</style>
+  <h1>bunite</h1>
+  <p>Uniting UI and Bun</p>
+  <p>v0.0.1 &middot; ${process.platform} &middot; tabs: ${tabs.size}</p>
+  <p><a href="https://github.com/flatina/bunite">GitHub</a></p>
+`);
+
 const win = new BrowserWindow({
   title: "bunite multi-tab browser",
   frame: { x: 80, y: 80, width: 1280, height: 900 },
-  url: "views://shell.html",
+  url: "views://shell",
   viewsRoot: rendererDir,
   preload,
   rpc: shellRpc,

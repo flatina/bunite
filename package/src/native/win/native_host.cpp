@@ -132,6 +132,15 @@ struct RuntimeState {
   std::map<uint32_t, PendingMessageBoxRequest> pending_message_boxes;
   uint32_t next_message_box_request_id = 1;
 
+  std::mutex route_mutex;
+  struct PendingRouteRequest {
+    std::string path;
+    CefRefPtr<CefCallback> callback;
+    CefRefPtr<CefRequest> cef_request;
+  };
+  std::map<uint32_t, PendingRouteRequest> pending_routes;
+  uint32_t next_route_request_id = 1;
+
   BuniteWebviewEventHandler webview_event_handler = nullptr;
   BuniteWindowEventHandler window_event_handler = nullptr;
 
@@ -863,6 +872,8 @@ std::optional<std::string> loadViewsResource(uint32_t view_id, const std::string
   std::filesystem::path candidate = std::filesystem::weakly_canonical(root / std::filesystem::path(path));
   if (std::filesystem::exists(candidate) && std::filesystem::is_directory(candidate)) {
     candidate = std::filesystem::weakly_canonical(candidate / "index.html");
+  } else if (!std::filesystem::exists(candidate) && !candidate.has_extension()) {
+    candidate = std::filesystem::weakly_canonical(std::filesystem::path(candidate.native() + L".html"));
   }
   const auto root_string = root.native();
   const auto candidate_string = candidate.native();
@@ -1020,7 +1031,7 @@ public:
   explicit BuniteSchemeHandler(uint32_t view_id)
     : view_id_(view_id) {}
 
-  bool Open(CefRefPtr<CefRequest> request, bool& handle_request, CefRefPtr<CefCallback>) override {
+  bool Open(CefRefPtr<CefRequest> request, bool& handle_request, CefRefPtr<CefCallback> callback) override {
     CEF_REQUIRE_IO_THREAD();
     handle_request = true;
 
@@ -1040,12 +1051,33 @@ public:
       }
     }
 
-    std::string mime_type;
     const std::string url = request ? request->GetURL().ToString() : "";
+    const std::string normalized_path = normalizeViewsPath(url);
+
+    // Dynamic route: handler lives on the Bun side, request is async
+    if (bunite::ViewsRouteStorage::instance().hasRoute(normalized_path)) {
+      handle_request = false; // async — we'll call callback->Continue() later
+      uint32_t request_id;
+      {
+        std::lock_guard<std::mutex> lock(g_runtime.route_mutex);
+        request_id = g_runtime.next_route_request_id++;
+        g_runtime.pending_routes[request_id] = { normalized_path, callback, request };
+      }
+      pending_route_request_id_ = request_id;
+      if (g_runtime.webview_event_handler) {
+        auto* name = strdup("route-request");
+        auto* payload = strdup(
+          ("{\"requestId\":" + std::to_string(request_id) + ",\"path\":\"" + normalized_path + "\"}").c_str()
+        );
+        g_runtime.webview_event_handler(view_id_, name, payload);
+      }
+      return true;
+    }
+
+    std::string mime_type;
     const auto content = loadViewsResource(view_id_, url, mime_type);
     if (!content) {
       const std::string views_root = getViewsRootForView(view_id_);
-      const std::string normalized_path = normalizeViewsPath(url);
       std::fprintf(
         stderr,
         "[bunite/native] views:// resource not found (view=%u, url=%s, normalized=%s, root=%s)\n",
@@ -1072,6 +1104,21 @@ public:
   }
 
   void GetResponseHeaders(CefRefPtr<CefResponse> response, int64_t& response_length, CefString&) override {
+    if (pending_route_request_id_ != 0) {
+      auto content = bunite::ViewsRouteStorage::instance().takeResponse(pending_route_request_id_);
+      pending_route_request_id_ = 0;
+      if (content) {
+        status_code_ = 200;
+        status_text_ = "OK";
+        mime_type_ = "text/html";
+        data_ = std::move(*content);
+      } else {
+        status_code_ = 500;
+        status_text_ = "Handler Error";
+        mime_type_ = "text/plain";
+        data_ = "Route handler did not produce a response.";
+      }
+    }
     response->SetStatus(status_code_);
     response->SetStatusText(status_text_);
     response->SetMimeType(mime_type_);
@@ -1099,6 +1146,7 @@ public:
 
 private:
   uint32_t view_id_;
+  uint32_t pending_route_request_id_ = 0;
   std::string data_;
   std::string mime_type_ = "text/plain";
   std::string status_text_ = "OK";
@@ -2158,6 +2206,34 @@ extern "C" BUNITE_EXPORT void bunite_view_set_bounds(
       );
     }
   });
+}
+
+extern "C" BUNITE_EXPORT void bunite_register_view_route(const char* path) {
+  bunite::ViewsRouteStorage::instance().registerRoute(path ? path : "");
+}
+
+extern "C" BUNITE_EXPORT void bunite_unregister_view_route(const char* path) {
+  bunite::ViewsRouteStorage::instance().unregisterRoute(path ? path : "");
+}
+
+extern "C" BUNITE_EXPORT void bunite_complete_route_request(uint32_t request_id, const char* html) {
+  std::lock_guard<std::mutex> lock(g_runtime.route_mutex);
+  const auto it = g_runtime.pending_routes.find(request_id);
+  if (it == g_runtime.pending_routes.end()) {
+    return;
+  }
+
+  auto pending = std::move(it->second);
+  g_runtime.pending_routes.erase(it);
+
+  bunite::ViewsRouteStorage::instance().setResponse(request_id, html ? html : "");
+
+  // Store response data on the scheme handler via the request_id.
+  // The scheme handler's GetResponseHeaders/ReadResponse will use it.
+  // We signal the callback on the IO thread.
+  if (pending.callback) {
+    pending.callback->Continue();
+  }
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_set_anchor(void* view_ptr, int mode, double inset) {
