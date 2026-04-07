@@ -132,6 +132,7 @@ struct RuntimeState {
   bool cef_initialized = false;
   std::string process_helper_path;
   std::string cef_dir;
+  bool popup_blocking = false;
   std::thread::id cef_owner_thread;
 };
 
@@ -1026,9 +1027,12 @@ public:
   }
 
   void OnBeforeCommandLineProcessing(const CefString&, CefRefPtr<CefCommandLine> command_line) override {
-    // Bunite cancels popup creation in OnBeforePopup and surfaces it as a Bun event.
-    // Disable Chromium's popup blocker so scripted window.open() attempts still reach that hook.
-    command_line->AppendSwitch("disable-popup-blocking");
+    if (!g_runtime.popup_blocking) {
+      // Bunite handles popup attempts in OnBeforePopup and surfaces them to Bun.
+      // Keep Chromium's popup blocker off by default so scripted window.open()
+      // still reaches the runtime-level handler.
+      command_line->AppendSwitch("disable-popup-blocking");
+    }
   }
 
   void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override {
@@ -1579,7 +1583,8 @@ bool createBrowserForView(ViewHost* view) {
 extern "C" BUNITE_EXPORT bool bunite_init(
   const char* process_helper_path,
   const char* cef_dir,
-  bool hide_console
+  bool hide_console,
+  bool popup_blocking
 ) {
   std::lock_guard<std::mutex> lock(g_runtime.lifecycle_mutex);
   if (g_runtime.initialized) {
@@ -1588,6 +1593,7 @@ extern "C" BUNITE_EXPORT bool bunite_init(
   g_runtime.shutting_down = false;
   g_runtime.process_helper_path = process_helper_path ? process_helper_path : "";
   g_runtime.cef_dir = cef_dir ? cef_dir : "";
+  g_runtime.popup_blocking = popup_blocking;
   g_runtime.cef_owner_thread = std::this_thread::get_id();
 
   if (hide_console) {
