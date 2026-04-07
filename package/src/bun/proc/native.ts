@@ -71,6 +71,15 @@ type NativeSymbols = {
   bunite_view_load_html: (viewPtr: Pointer, html: CStringPointer) => void;
   bunite_view_remove: (viewPtr: Pointer) => void;
   bunite_complete_permission_request: (requestId: number, state: number) => void;
+  bunite_show_message_box: (
+    type: CStringPointer,
+    title: CStringPointer,
+    message: CStringPointer,
+    detail: CStringPointer,
+    buttons: CStringPointer,
+    defaultId: number,
+    cancelId: number
+  ) => number;
   bunite_set_webview_event_handler: (handler: JSCallback) => void;
   bunite_set_window_event_handler: (handler: JSCallback) => void;
 };
@@ -78,6 +87,9 @@ type NativeSymbols = {
 type LoadedNativeLibrary = {
   symbols: NativeSymbols;
 };
+
+const messageBoxButtonSeparator = "\x1f";
+const unsetCancelId = -1;
 
 const nativeSymbolDefinitions = {
   bunite_init: {
@@ -172,6 +184,18 @@ const nativeSymbolDefinitions = {
   bunite_complete_permission_request: {
     args: [FFIType.u32, FFIType.u32],
     returns: FFIType.void
+  },
+  bunite_show_message_box: {
+    args: [
+      FFIType.cstring,
+      FFIType.cstring,
+      FFIType.cstring,
+      FFIType.cstring,
+      FFIType.cstring,
+      FFIType.i32,
+      FFIType.i32
+    ],
+    returns: FFIType.i32
   },
   bunite_set_webview_event_handler: {
     args: [FFIType.function],
@@ -457,4 +481,29 @@ export function getNativeLibrary(): LoadedNativeLibrary | null {
 
 export function completePermissionRequest(requestId: number, stateValue: number): void {
   nativeLibrary?.symbols.bunite_complete_permission_request(requestId, stateValue);
+}
+
+export function showNativeMessageBox(params: {
+  type?: string;
+  title?: string;
+  message?: string;
+  detail?: string;
+  buttons?: string[];
+  defaultId?: number;
+  cancelId?: number;
+}): number {
+  const native = getNativeLibrary();
+  if (!native) {
+    return params.cancelId ?? params.defaultId ?? 0;
+  }
+
+  return native.symbols.bunite_show_message_box(
+    toCString(params.type ?? "info"),
+    toCString(params.title ?? ""),
+    toCString(params.message ?? ""),
+    toCString(params.detail ?? ""),
+    toCString((params.buttons ?? ["OK"]).join(messageBoxButtonSeparator)),
+    params.defaultId ?? 0,
+    params.cancelId ?? unsetCancelId
+  );
 }
