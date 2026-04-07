@@ -28,6 +28,35 @@ function getAppRoot() {
   return app;
 }
 
+function autoAcceptBuniteMessageBox() {
+  const clickDialogButton = () => {
+    const button = document.querySelector<HTMLButtonElement>(
+      '[data-bunite-message-box="true"] [data-bunite-message-box-button-index="0"]'
+    );
+    if (!button) {
+      return false;
+    }
+
+    button.click();
+    return true;
+  };
+
+  if (clickDialogButton()) {
+    return;
+  }
+
+  const observer = new MutationObserver(() => {
+    if (clickDialogButton()) {
+      observer.disconnect();
+    }
+  });
+
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true
+  });
+}
+
 async function waitForSocketOpen(socket: WebSocket | undefined) {
   if (!socket) {
     throw new Error("bunite socket was not initialized.");
@@ -60,6 +89,7 @@ const rpc = BuniteView.defineRPC<IPCSmokeSchema>({
 });
 
 const view = new BuniteView({ rpc });
+autoAcceptBuniteMessageBox();
 
 try {
   await waitForSocketOpen(view.bunSocket);
