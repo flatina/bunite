@@ -26,6 +26,8 @@ export const smokeState = {
   pingCount: 0,
   lastPing: "",
   lastNavigation: "",
+  blockedAttemptSeen: false,
+  blockedNavigationSeen: false,
   okNavigationSeen: false,
   popupSeen: false,
   popupUrl: ""
@@ -62,12 +64,25 @@ const win = new BrowserWindow({
   url: "views://main/index.html",
   viewsRoot,
   preload,
-  rpc
+  rpc,
+  // navigationRules are last-match-wins; prepend ^* when you want an allowlist.
+  navigationRules: ["^*", "views://main/*", "^views://main/rpc-blocked.html*"]
+});
+
+win.webview.on("will-navigate", (event) => {
+  const detail = String((event as { data?: { detail?: string } }).data?.detail ?? "");
+  if (detail.includes("rpc-blocked.html")) {
+    smokeState.blockedAttemptSeen = true;
+    console.log("[ipc-smoke] blocked navigation attempted", detail);
+  }
 });
 
 win.webview.on("did-navigate", (event) => {
   const detail = String((event as { data?: { detail?: string } }).data?.detail ?? "");
   smokeState.lastNavigation = detail;
+  if (detail.includes("rpc-blocked.html")) {
+    smokeState.blockedNavigationSeen = true;
+  }
   if (detail.includes("rpc-ok.html")) {
     smokeState.okNavigationSeen = true;
     console.log("[ipc-smoke] renderer navigation", detail);

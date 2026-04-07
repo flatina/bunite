@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
@@ -28,6 +29,7 @@
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
 #include "include/cef_command_line.h"
+#include "include/cef_parser.h"
 #include "include/cef_permission_handler.h"
 #include "include/cef_resource_handler.h"
 #include "include/cef_resource_request_handler.h"
@@ -68,6 +70,7 @@ struct ViewHost {
   std::string html;
   std::string preload_script;
   std::string views_root;
+  std::vector<std::string> navigation_rules;
   bool auto_resize = true;
   bool sandbox = false;
   std::atomic<bool> closing = false;
@@ -171,6 +174,94 @@ std::string escapeJsonString(const std::string& value) {
   }
 
   return escaped;
+}
+
+bool globMatchCaseInsensitive(const std::string& pattern, const std::string& value) {
+  size_t pattern_index = 0;
+  size_t value_index = 0;
+  size_t star_pattern_index = std::string::npos;
+  size_t star_value_index = 0;
+
+  while (value_index < value.size()) {
+    if (
+      pattern_index < pattern.size() &&
+      std::tolower(static_cast<unsigned char>(pattern[pattern_index])) ==
+        std::tolower(static_cast<unsigned char>(value[value_index]))
+    ) {
+      pattern_index += 1;
+      value_index += 1;
+    } else if (pattern_index < pattern.size() && pattern[pattern_index] == '*') {
+      star_pattern_index = pattern_index++;
+      star_value_index = value_index;
+    } else if (star_pattern_index != std::string::npos) {
+      pattern_index = star_pattern_index + 1;
+      value_index = ++star_value_index;
+    } else {
+      return false;
+    }
+  }
+
+  while (pattern_index < pattern.size() && pattern[pattern_index] == '*') {
+    pattern_index += 1;
+  }
+
+  return pattern_index == pattern.size();
+}
+
+std::vector<std::string> parseNavigationRulesJson(const std::string& rules_json) {
+  std::vector<std::string> rules;
+  if (rules_json.empty()) {
+    return rules;
+  }
+
+  CefRefPtr<CefValue> parsed = CefParseJSON(rules_json, JSON_PARSER_RFC);
+  if (!parsed || parsed->GetType() != VTYPE_LIST) {
+    return rules;
+  }
+
+  CefRefPtr<CefListValue> list = parsed->GetList();
+  if (!list) {
+    return rules;
+  }
+
+  rules.reserve(list->GetSize());
+  for (size_t index = 0; index < list->GetSize(); index += 1) {
+    if (list->GetType(index) != VTYPE_STRING) {
+      continue;
+    }
+
+    const std::string rule = list->GetString(index).ToString();
+    if (!rule.empty()) {
+      rules.push_back(rule);
+    }
+  }
+
+  return rules;
+}
+
+bool shouldAlwaysAllowNavigationUrl(const std::string& url) {
+  return url == "about:blank" || url.rfind("views://internal/", 0) == 0;
+}
+
+bool shouldAllowNavigation(const ViewHost* view, const std::string& url) {
+  if (!view || shouldAlwaysAllowNavigationUrl(url) || view->navigation_rules.empty()) {
+    return true;
+  }
+
+  bool allowed = true; // Match electrobun's last-match-wins, default-allow semantics.
+  for (const std::string& raw_rule : view->navigation_rules) {
+    const bool is_block_rule = !raw_rule.empty() && raw_rule.front() == '^';
+    const std::string pattern = is_block_rule ? raw_rule.substr(1) : raw_rule;
+
+    if (pattern.empty()) {
+      continue;
+    }
+    if (globMatchCaseInsensitive(pattern, url)) {
+      allowed = !is_block_rule;
+    }
+  }
+
+  return allowed;
 }
 
 void emitWindowEvent(uint32_t window_id, const char* event_name, const std::string& payload = {}) {
@@ -601,10 +692,15 @@ public:
     bool
   ) override {
     CEF_REQUIRE_UI_THREAD();
-    if (frame->IsMain()) {
-      emitWebviewEvent(view_->id, "will-navigate", request->GetURL().ToString());
+    const bool is_main_frame = frame && frame->IsMain();
+    const std::string url = request ? request->GetURL().ToString() : "";
+    const bool should_allow = !is_main_frame || shouldAllowNavigation(view_, url);
+
+    if (is_main_frame) {
+      emitWebviewEvent(view_->id, "will-navigate", url);
     }
-    return false;
+
+    return !should_allow;
   }
 
   bool OnOpenURLFromTab(
@@ -1203,6 +1299,7 @@ extern "C" BUNITE_EXPORT void* bunite_view_create(
   const char* html,
   const char* preload,
   const char* views_root,
+  const char* navigation_rules_json,
   double x,
   double y,
   double width,
@@ -1229,6 +1326,7 @@ extern "C" BUNITE_EXPORT void* bunite_view_create(
       html ? html : "",
       preload ? preload : "",
       views_root ? views_root : "",
+      parseNavigationRulesJson(navigation_rules_json ? navigation_rules_json : ""),
       auto_resize,
       sandbox
     };
