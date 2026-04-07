@@ -75,6 +75,11 @@ type NativeSymbols = {
     autoResize: boolean,
     sandbox: boolean
   ) => Pointer;
+  bunite_view_set_visible: (viewPtr: Pointer, visible: boolean) => void;
+  bunite_view_set_bounds: (viewPtr: Pointer, x: number, y: number, width: number, height: number) => void;
+  bunite_view_set_anchor: (viewPtr: Pointer, mode: number, inset: number) => void;
+  bunite_view_go_back: (viewPtr: Pointer) => void;
+  bunite_view_reload: (viewPtr: Pointer) => void;
   bunite_view_load_url: (viewPtr: Pointer, url: CStringPointer) => void;
   bunite_view_load_html: (viewPtr: Pointer, html: CStringPointer) => void;
   bunite_view_remove: (viewPtr: Pointer) => void;
@@ -202,6 +207,26 @@ const nativeSymbolDefinitions = {
       FFIType.bool
     ],
     returns: FFIType.ptr
+  },
+  bunite_view_set_visible: {
+    args: [FFIType.ptr, FFIType.bool],
+    returns: FFIType.void
+  },
+  bunite_view_set_bounds: {
+    args: [FFIType.ptr, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64],
+    returns: FFIType.void
+  },
+  bunite_view_set_anchor: {
+    args: [FFIType.ptr, FFIType.i32, FFIType.f64],
+    returns: FFIType.void
+  },
+  bunite_view_go_back: {
+    args: [FFIType.ptr],
+    returns: FFIType.void
+  },
+  bunite_view_reload: {
+    args: [FFIType.ptr],
+    returns: FFIType.void
   },
   bunite_view_load_url: {
     args: [FFIType.ptr, FFIType.cstring],
