@@ -53,13 +53,24 @@ export class BuniteView<T extends RPCWithTransport> {
       return;
     }
 
-    const socket = new WebSocket(
-      `ws://localhost:${RPC_SOCKET_PORT}/socket?webviewId=${WEBVIEW_ID}`
-    );
-    socket.binaryType = "arraybuffer";
-    this.bunSocket = socket;
+    // Share a single WebSocket with the preload's bunite.invoke.
+    // Whichever side (BuniteView or bunite.invoke) opens the socket first,
+    // the other reuses it via __bunite._socket.
+    const globals = buniteWindow as any;
+    globals.__bunite ??= {};
+    const existing = globals.__bunite._socket;
+    if (existing && existing.readyState <= WebSocket.OPEN) {
+      this.bunSocket = existing;
+    } else {
+      const socket = new WebSocket(
+        `ws://localhost:${RPC_SOCKET_PORT}/socket?webviewId=${WEBVIEW_ID}`
+      );
+      socket.binaryType = "arraybuffer";
+      this.bunSocket = socket;
+      globals.__bunite._socket = socket;
+    }
 
-    socket.addEventListener("message", async (event) => {
+    this.bunSocket!.addEventListener("message", async (event) => {
       const binaryMessage = await this.messageToUint8Array(event.data);
       if (!binaryMessage) {
         return;
@@ -72,7 +83,12 @@ export class BuniteView<T extends RPCWithTransport> {
           return;
         }
         const decrypted = await decrypt(binaryMessage);
-        this.rpcHandler?.(decodeRPCPacket(decrypted));
+        const packet = decodeRPCPacket(decrypted);
+        // Skip global IPC responses — those are handled by bunite.invoke in the preload
+        if ((packet as any).scope === "global") {
+          return;
+        }
+        this.rpcHandler?.(packet);
       } catch (error) {
         console.error("[bunite] Failed to parse message from Bun", error);
       }

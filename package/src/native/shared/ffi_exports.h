@@ -75,6 +75,9 @@ BUNITE_EXPORT void* bunite_view_create(
 );
 BUNITE_EXPORT void bunite_view_load_url(void* view_ptr, const char* url);
 BUNITE_EXPORT void bunite_view_load_html(void* view_ptr, const char* html);
+BUNITE_EXPORT void bunite_register_view_route(const char* path);
+BUNITE_EXPORT void bunite_unregister_view_route(const char* path);
+BUNITE_EXPORT void bunite_complete_route_request(uint32_t request_id, const char* html);
 BUNITE_EXPORT void bunite_view_set_visible(void* view_ptr, bool visible);
 BUNITE_EXPORT void bunite_view_set_bounds(
 	void* view_ptr,

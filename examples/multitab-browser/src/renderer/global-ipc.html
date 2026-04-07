@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { margin: 0; background: #202124; color: #e8eaed; font-family: system-ui, sans-serif; padding: 32px; }
+    h1 { font-size: 20px; font-weight: 400; margin: 0 0 8px; }
+    h2 { font-size: 14px; font-weight: 400; color: #9aa0a6; margin: 24px 0 8px; }
+    table { border-collapse: collapse; width: 100%; max-width: 560px; margin-bottom: 8px; }
+    td { padding: 6px 12px; font-size: 13px; border-bottom: 1px solid #35363a; word-break: break-all; }
+    td:first-child { color: #9aa0a6; width: 160px; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <h1>Status</h1>
+  <h2>App (via bunite.invoke)</h2>
+  <table id="app-info"></table>
+  <h2>Browser</h2>
+  <table id="browser-info"></table>
+  <script>
+    // No imports needed — bunite.invoke is injected by preload
+    function addRows(tableId, rows) {
+      var table = document.getElementById(tableId);
+      rows.forEach(function(row) {
+        var tr = document.createElement("tr");
+        tr.innerHTML = "<td>" + row[0] + "</td><td>" + row[1] + "</td>";
+        table.appendChild(tr);
+      });
+    }
+
+    addRows("browser-info", [
+      ["User Agent", navigator.userAgent],
+      ["Platform", navigator.platform],
+      ["Language", navigator.language],
+      ["Screen", screen.width + " x " + screen.height],
+      ["Window", window.innerWidth + " x " + window.innerHeight],
+      ["Device Pixel Ratio", String(window.devicePixelRatio)],
+      ["Cookies Enabled", String(navigator.cookieEnabled)],
+      ["Online", String(navigator.onLine)],
+      ["Webview ID", String(window.__buniteWebviewId || "N/A")],
+    ]);
+
+    bunite.invoke("getAppInfo").then(function(info) {
+      addRows("app-info", [
+        ["Bunite Version", info.buniteVersion],
+        ["Native Loaded", String(info.nativeLoaded)],
+        ["Using Stub", String(info.usingStub)],
+        ["Open Tabs", String(info.tabCount)],
+        ["OS Platform", info.platform],
+      ]);
+    }).catch(function(e) {
+      document.getElementById("app-info").innerHTML =
+        '<tr><td colspan="2" style="color:#f28b82">Failed: ' + e.message + '</td></tr>';
+    });
+  </script>
+</body>
+</html>

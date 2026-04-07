@@ -75,6 +75,9 @@ type NativeSymbols = {
     autoResize: boolean,
     sandbox: boolean
   ) => Pointer;
+  bunite_register_view_route: (path: CStringPointer) => void;
+  bunite_unregister_view_route: (path: CStringPointer) => void;
+  bunite_complete_route_request: (requestId: number, html: CStringPointer) => void;
   bunite_view_set_visible: (viewPtr: Pointer, visible: boolean) => void;
   bunite_view_set_bounds: (viewPtr: Pointer, x: number, y: number, width: number, height: number) => void;
   bunite_view_set_anchor: (viewPtr: Pointer, mode: number, inset: number) => void;
@@ -208,6 +211,18 @@ const nativeSymbolDefinitions = {
     ],
     returns: FFIType.ptr
   },
+  bunite_register_view_route: {
+    args: [FFIType.cstring],
+    returns: FFIType.void
+  },
+  bunite_unregister_view_route: {
+    args: [FFIType.cstring],
+    returns: FFIType.void
+  },
+  bunite_complete_route_request: {
+    args: [FFIType.u32, FFIType.cstring],
+    returns: FFIType.void
+  },
   bunite_view_set_visible: {
     args: [FFIType.ptr, FFIType.bool],
     returns: FFIType.void
@@ -299,6 +314,11 @@ let nativeLibrary: LoadedNativeLibrary | null = null;
 const retainedCStringBuffers: Buffer[] = [];
 let webviewEventCallback: JSCallback | null = null;
 let windowEventCallback: JSCallback | null = null;
+let routeRequestHandler: ((requestId: number, path: string) => void) | null = null;
+
+export function setRouteRequestHandler(handler: (requestId: number, path: string) => void) {
+  routeRequestHandler = handler;
+}
 
 export function toCString(value: string): CStringPointer {
   const normalized = value.endsWith("\0") ? value : `${value}\0`;
@@ -415,6 +435,11 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
               viewId
             );
             break;
+          case "route-request": {
+            const parsed = maybeParsePayload(payload) as { requestId: number; path: string };
+            routeRequestHandler?.(parsed.requestId, parsed.path);
+            break;
+          }
         }
       },
       {

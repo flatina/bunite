@@ -1,7 +1,8 @@
 import type { Server, ServerWebSocket } from "bun";
 import type { BrowserView } from "./BrowserView";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import type { RPCPacket } from "../../shared/rpc";
+import type { RPCPacket, RPCRequestPacket } from "../../shared/rpc";
+import type { GlobalIPCHandler } from "./App";
 import {
   asUint8Array,
   createEncryptedRPCFrame,
@@ -24,6 +25,11 @@ let rpcPort = 0;
 
 const socketMap: Record<number, ServerWebSocket<WebSocketData> | null> = {};
 let registry: ViewRegistry | null = null;
+let globalIPCResolver: ((channel: string) => GlobalIPCHandler | undefined) | null = null;
+
+export function attachGlobalIPCResolver(resolver: (channel: string) => GlobalIPCHandler | undefined) {
+  globalIPCResolver = resolver;
+}
 
 function encrypt(secretKey: Uint8Array, payload: Uint8Array) {
   const iv = new Uint8Array(randomBytes(12));
@@ -99,7 +105,14 @@ export function ensureRPCServer() {
             }
             try {
               const decryptedMessage = decrypt(view.secretKey, binaryMessage);
-              view.handleIncomingRPC(decodeRPCPacket(decryptedMessage));
+              const packet = decodeRPCPacket(decryptedMessage);
+
+              if (packet.type === "request" && (packet as RPCRequestPacket).scope === "global") {
+                void handleGlobalIPC(packet as RPCRequestPacket, ws.data.webviewId);
+                return;
+              }
+
+              view.handleIncomingRPC(packet);
             } catch (error) {
               console.error("[bunite] Failed to parse RPC payload", error);
             }
@@ -126,6 +139,38 @@ export function ensureRPCServer() {
 
 export function getRPCPort(): number {
   return rpcPort;
+}
+
+async function handleGlobalIPC(packet: RPCRequestPacket, viewId: number) {
+  const handler = globalIPCResolver?.(packet.method);
+  if (!handler) {
+    sendMessageToView(viewId, {
+      type: "response",
+      id: packet.id,
+      success: false,
+      error: `No handler registered for: ${packet.method}`,
+      scope: "global"
+    });
+    return;
+  }
+  try {
+    const result = await handler(packet.params, { viewId });
+    sendMessageToView(viewId, {
+      type: "response",
+      id: packet.id,
+      success: true,
+      payload: result,
+      scope: "global"
+    });
+  } catch (error) {
+    sendMessageToView(viewId, {
+      type: "response",
+      id: packet.id,
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+      scope: "global"
+    });
+  }
 }
 
 export function sendMessageToView(viewId: number, message: RPCPacket): boolean {
