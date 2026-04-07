@@ -1,0 +1,13 @@
+{
+  "name": "bunite-basic-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun src/main.ts",
+    "build": "bun build src/main.ts --target bun --outdir dist",
+    "start": "bun dist/main.js"
+  },
+  "dependencies": {
+    "bunite": "workspace:*"
+  }
+}

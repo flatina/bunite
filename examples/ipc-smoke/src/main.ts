@@ -1,0 +1,82 @@
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { BrowserView, BrowserWindow, app } from "bunite";
+
+type IPCSmokeSchema = {
+  bun: {
+    requests: {
+      ping: {
+        params: {
+          value: string;
+        };
+        response: {
+          pong: string;
+        };
+      };
+    };
+    messages: {};
+  };
+  webview: {
+    requests: {};
+    messages: {};
+  };
+};
+
+export const smokeState = {
+  pingCount: 0,
+  lastPing: "",
+  lastNavigation: "",
+  okNavigationSeen: false
+};
+
+function resolveRendererRoot() {
+  const candidate = fileURLToPath(new URL("../dist/renderer", import.meta.url));
+  if (!existsSync(candidate)) {
+    throw new Error("ipc-smoke renderer bundle is missing. Run `bun run prepare:renderer` first.");
+  }
+  return candidate;
+}
+
+const rpc = BrowserView.defineRPC<IPCSmokeSchema>({
+  handlers: {
+    requests: {
+      ping({ value }) {
+        smokeState.pingCount += 1;
+        smokeState.lastPing = value;
+        return { pong: `pong:${value}` };
+      }
+    }
+  }
+});
+
+await app.init();
+
+const viewsRoot = resolveRendererRoot();
+const preload = fileURLToPath(new URL("../dist/renderer/main/preload.js", import.meta.url));
+
+const win = new BrowserWindow({
+  title: "bunite ipc smoke",
+  titleBarStyle: "hidden",
+  url: "views://main/index.html",
+  viewsRoot,
+  preload,
+  rpc
+});
+
+win.webview.on("did-navigate", (event) => {
+  const detail = String((event as { data?: { detail?: string } }).data?.detail ?? "");
+  smokeState.lastNavigation = detail;
+  if (detail.includes("rpc-ok.html")) {
+    smokeState.okNavigationSeen = true;
+    console.log("[ipc-smoke] renderer navigation", detail);
+  }
+});
+
+win.show();
+console.log("[ipc-smoke] initialized", {
+  usingStub: app.runtime?.usingStub ?? true,
+  webviewId: win.webviewId,
+  viewsRoot
+});
+
+app.run();

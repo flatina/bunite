@@ -1,0 +1,22 @@
+{
+  "name": "bunite",
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "build:native:win": "cmake -S . -B build/win -DBUNITE_TARGET_ARCH=x64 && cmake --build build/win --config Release"
+  },
+  "exports": {
+    ".": "./src/bun/index.ts",
+    "./bun": "./src/bun/index.ts",
+    "./view": "./src/view/index.ts",
+    "./config": "./src/types/config.ts",
+    "./shared/rpc": "./src/shared/rpc.ts",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "msgpackr": "^1.11.9"
+  }
+}
