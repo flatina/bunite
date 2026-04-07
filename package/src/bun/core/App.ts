@@ -28,7 +28,8 @@ class AppRuntime {
 
         const runtime = await initNativeRuntime({
           allowStub: options.allowStub,
-          hideConsole: options.hideConsole
+          hideConsole: options.hideConsole,
+          popupBlocking: options.popupBlocking
         });
 
         ensureRPCServer();

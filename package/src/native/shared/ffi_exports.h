@@ -15,7 +15,12 @@
 extern "C" {
 #endif
 
-BUNITE_EXPORT bool bunite_init(const char* process_helper_path, const char* cef_dir, bool hide_console);
+BUNITE_EXPORT bool bunite_init(
+	const char* process_helper_path,
+	const char* cef_dir,
+	bool hide_console,
+	bool popup_blocking
+);
 BUNITE_EXPORT void bunite_run_loop(void);
 BUNITE_EXPORT void bunite_quit(void);
 BUNITE_EXPORT void bunite_free_cstring(const char* value);

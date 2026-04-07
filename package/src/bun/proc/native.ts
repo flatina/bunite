@@ -7,6 +7,7 @@ import { resolveNativeArtifacts, type ResolvedNativeArtifacts } from "../../shar
 export type NativeBootstrapOptions = {
   allowStub?: boolean;
   hideConsole?: boolean;
+  popupBlocking?: boolean;
 };
 
 export type NativeRuntimeState = {
@@ -22,7 +23,8 @@ type NativeSymbols = {
   bunite_init: (
     processHelperPath: CStringPointer,
     cefDir: CStringPointer,
-    hideConsole: boolean
+    hideConsole: boolean,
+    popupBlocking: boolean
   ) => boolean;
   bunite_run_loop: () => void;
   bunite_quit: () => void;
@@ -110,7 +112,7 @@ const unsetCancelId = -1;
 
 const nativeSymbolDefinitions = {
   bunite_init: {
-    args: [FFIType.cstring, FFIType.cstring, FFIType.bool],
+    args: [FFIType.cstring, FFIType.cstring, FFIType.bool, FFIType.bool],
     returns: FFIType.bool
   },
   bunite_run_loop: {
@@ -507,7 +509,8 @@ export async function initNativeRuntime(
     const initOk = nativeLibrary.symbols.bunite_init(
       toCString(artifacts.processHelperPath ?? ""),
       toCString(artifacts.cefDir ?? ""),
-      options.hideConsole ?? false
+      options.hideConsole ?? false,
+      options.popupBlocking ?? false
     );
 
     if (!initOk) {
