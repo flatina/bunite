@@ -181,7 +181,8 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
       "did-navigate",
       "dom-ready",
       "new-window-open",
-      "permission-requested"
+      "permission-requested",
+      "message-box-response"
     ]) {
       buniteEventEmitter.removeAllListeners(`${eventName}-${this.id}`);
     }
@@ -194,7 +195,8 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
       | "did-navigate"
       | "dom-ready"
       | "new-window-open"
-      | "permission-requested",
+      | "permission-requested"
+      | "message-box-response",
     handler: (event: unknown) => void
   ) {
     const specificName = `${name}-${this.id}`;

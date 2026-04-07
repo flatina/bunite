@@ -76,6 +76,16 @@ BUNITE_EXPORT int32_t bunite_show_message_box(
 	int32_t default_id,
 	int32_t cancel_id
 );
+BUNITE_EXPORT uint32_t bunite_show_browser_message_box(
+	const char* type,
+	const char* title,
+	const char* message,
+	const char* detail,
+	const char* buttons,
+	int32_t default_id,
+	int32_t cancel_id
+);
+BUNITE_EXPORT void bunite_cancel_browser_message_box(uint32_t request_id);
 
 #ifdef __cplusplus
 }
