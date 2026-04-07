@@ -174,6 +174,24 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
     this.detachFromNative();
   }
 
+  openDevTools() {
+    if (this.ptr) {
+      getNativeLibrary()?.symbols.bunite_view_open_devtools(this.ptr);
+    }
+  }
+
+  closeDevTools() {
+    if (this.ptr) {
+      getNativeLibrary()?.symbols.bunite_view_close_devtools(this.ptr);
+    }
+  }
+
+  toggleDevTools() {
+    if (this.ptr) {
+      getNativeLibrary()?.symbols.bunite_view_toggle_devtools(this.ptr);
+    }
+  }
+
   detachFromNative() {
     this.ptr = null;
     for (const eventName of [
