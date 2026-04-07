@@ -31,11 +31,15 @@ BUNITE_EXPORT void* bunite_window_create(
 	const char* title,
 	const char* title_bar_style,
 	bool transparent,
-	bool hidden
+	bool hidden,
+	bool maximized
 );
 BUNITE_EXPORT void bunite_window_show(void* window_ptr);
 BUNITE_EXPORT void bunite_window_close(void* window_ptr);
 BUNITE_EXPORT void bunite_window_set_title(void* window_ptr, const char* title);
+BUNITE_EXPORT void bunite_window_maximize(void* window_ptr);
+BUNITE_EXPORT void bunite_window_unmaximize(void* window_ptr);
+BUNITE_EXPORT bool bunite_window_is_maximized(void* window_ptr);
 BUNITE_EXPORT void bunite_window_set_frame(
 	void* window_ptr,
 	double x,

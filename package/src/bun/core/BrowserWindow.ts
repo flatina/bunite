@@ -65,6 +65,38 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
   sandbox: boolean;
   webviewId: number;
   private closed = false;
+  private readonly handleNativeMove = (event: unknown) => {
+    const data = (event as {
+      data?: { x?: number; y?: number; maximized?: boolean };
+    }).data;
+    if (!data) {
+      return;
+    }
+
+    this.frame = {
+      ...this.frame,
+      x: data.x ?? this.frame.x,
+      y: data.y ?? this.frame.y,
+      maximized: data.maximized ?? this.frame.maximized
+    };
+  };
+  private readonly handleNativeResize = (event: unknown) => {
+    const data = (event as {
+      data?: { x?: number; y?: number; width?: number; height?: number; maximized?: boolean };
+    }).data;
+    if (!data) {
+      return;
+    }
+
+    this.frame = {
+      ...this.frame,
+      x: data.x ?? this.frame.x,
+      y: data.y ?? this.frame.y,
+      width: data.width ?? this.frame.width,
+      height: data.height ?? this.frame.height,
+      maximized: data.maximized ?? this.frame.maximized
+    };
+  };
   private readonly handleNativeClose = () => {
     if (this.closed) {
       return;
@@ -73,6 +105,8 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     this.ptr = null;
     BrowserView.getById(this.webviewId)?.detachFromNative();
     delete BrowserWindowMap[this.id];
+    buniteEventEmitter.off(`move-${this.id}`, this.handleNativeMove);
+    buniteEventEmitter.off(`resize-${this.id}`, this.handleNativeResize);
     buniteEventEmitter.off(`close-${this.id}`, this.handleNativeClose);
   };
 
@@ -102,10 +136,13 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
         toCString(this.title),
         toCString(this.titleBarStyle),
         this.transparent,
-        this.hidden
+        this.hidden,
+        Boolean(this.frame.maximized)
       ) ?? null;
 
     BrowserWindowMap[this.id] = this;
+    buniteEventEmitter.on(`move-${this.id}`, this.handleNativeMove);
+    buniteEventEmitter.on(`resize-${this.id}`, this.handleNativeResize);
     buniteEventEmitter.on(`close-${this.id}`, this.handleNativeClose);
 
     const webview = new BrowserView({
@@ -157,6 +194,8 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
       BrowserView.getById(this.webviewId)?.remove();
     }
     delete BrowserWindowMap[this.id];
+    buniteEventEmitter.off(`move-${this.id}`, this.handleNativeMove);
+    buniteEventEmitter.off(`resize-${this.id}`, this.handleNativeResize);
     buniteEventEmitter.off(`close-${this.id}`, this.handleNativeClose);
     if (!hadNativePtr) {
       buniteEventEmitter.emitEvent(buniteEventEmitter.events.window.close({ id: this.id }), this.id);
@@ -164,17 +203,43 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
   }
 
   maximize() {
-    console.warn("[bunite] BrowserWindow.maximize() is not implemented in Bunite Windows Phase 1 yet.");
-    this.frame.maximized = true;
+    if (!this.ptr) {
+      this.frame.maximized = true;
+      return;
+    }
+
+    const native = getNativeLibrary();
+    if (!native) {
+      return;
+    }
+
+    native.symbols.bunite_window_maximize(this.ptr);
+    this.frame.maximized = native.symbols.bunite_window_is_maximized(this.ptr);
   }
 
   unmaximize() {
-    console.warn("[bunite] BrowserWindow.unmaximize() is not implemented in Bunite Windows Phase 1 yet.");
-    this.frame.maximized = false;
+    if (!this.ptr) {
+      this.frame.maximized = false;
+      return;
+    }
+
+    const native = getNativeLibrary();
+    if (!native) {
+      return;
+    }
+
+    native.symbols.bunite_window_unmaximize(this.ptr);
+    this.frame.maximized = native.symbols.bunite_window_is_maximized(this.ptr);
   }
 
   isMaximized() {
-    return Boolean(this.frame.maximized);
+    if (!this.ptr) {
+      return Boolean(this.frame.maximized);
+    }
+
+    const maximized = getNativeLibrary()?.symbols.bunite_window_is_maximized(this.ptr) ?? false;
+    this.frame.maximized = maximized;
+    return maximized;
   }
 
   setTitle(title: string) {
