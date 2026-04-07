@@ -10,6 +10,10 @@ setTimeout(() => {
     smokeState.okNavigationSeen &&
     smokeState.messageBoxResponseOk &&
     smokeState.devToolsCycleAttempted &&
+    smokeState.minimizeResizeSeen &&
+    smokeState.minimizeReadbackOk &&
+    smokeState.restoreFromMinimizeSeen &&
+    smokeState.restoreFromMinimizeReadbackOk &&
     smokeState.maximizeResizeSeen &&
     smokeState.maximizeReadbackOk &&
     smokeState.restoreResizeSeen &&
