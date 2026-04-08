@@ -1806,6 +1806,32 @@ bool initializeCefOnUiThread() {
         ? cef_root / "Resources" / "locales"
         : (std::filesystem::exists(cef_root / "locales") ? cef_root / "locales" : resource_dir / "locales"));
 
+  // Pre-flight: verify critical CEF files exist
+  const std::filesystem::path libcef_path = dll_dir / "libcef.dll";
+  const std::filesystem::path icudtl_path = resource_dir / "icudtl.dat";
+  const std::filesystem::path resources_pak_path = resource_dir / "resources.pak";
+  if (!std::filesystem::exists(libcef_path)) {
+    BUNITE_ERROR("libcef.dll not found at: %s", libcef_path.string().c_str());
+    return false;
+  }
+  if (!std::filesystem::exists(icudtl_path)) {
+    BUNITE_ERROR("icudtl.dat not found at: %s", icudtl_path.string().c_str());
+    return false;
+  }
+  if (!std::filesystem::exists(resources_pak_path)) {
+    BUNITE_ERROR("resources.pak not found at: %s", resources_pak_path.string().c_str());
+    return false;
+  }
+
+  // Pre-flight: check for cache lock from another instance
+  const char* user_data_dir = std::getenv("BUNITE_USER_DATA_DIR");
+  if (user_data_dir) {
+    const std::filesystem::path lock_path = std::filesystem::path(user_data_dir) / "lockfile";
+    if (std::filesystem::exists(lock_path)) {
+      BUNITE_WARN("Cache directory may be locked by another process: %s", user_data_dir);
+    }
+  }
+
   SetDllDirectoryW(dll_dir.native().c_str());
 
   CefMainArgs main_args(GetModuleHandleW(nullptr));
@@ -1824,7 +1850,7 @@ bool initializeCefOnUiThread() {
   CefString(&settings.browser_subprocess_path) = g_runtime.process_helper_path;
   CefString(&settings.resources_dir_path) = resource_dir.wstring();
   CefString(&settings.locales_dir_path) = locales_dir.wstring();
-  if (const char* user_data_dir = std::getenv("BUNITE_USER_DATA_DIR")) {
+  if (user_data_dir) {
     CefString(&settings.cache_path) = user_data_dir;
   }
   if (const char* remote_debug_port = std::getenv("BUNITE_REMOTE_DEBUGGING_PORT")) {
@@ -1838,7 +1864,24 @@ bool initializeCefOnUiThread() {
   CefString(&settings.log_file) = "";
 
   if (!CefInitialize(main_args, settings, app, nullptr)) {
-    BUNITE_ERROR("CefInitialize returned false.");
+    const int exit_code = CefGetExitCode();
+    switch (exit_code) {
+      case CEF_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED:
+        BUNITE_ERROR("CefInitialize failed: another instance is using the cache directory (%s).",
+                     user_data_dir ? user_data_dir : "<default>");
+        break;
+      case CEF_RESULT_CODE_PROFILE_IN_USE:
+        BUNITE_ERROR("CefInitialize failed: cache profile is in use (%s).",
+                     user_data_dir ? user_data_dir : "<default>");
+        break;
+      case CEF_RESULT_CODE_MISSING_DATA:
+        BUNITE_ERROR("CefInitialize failed: critical data files missing (resources_dir=%s).",
+                     resource_dir.string().c_str());
+        break;
+      default:
+        BUNITE_ERROR("CefInitialize failed with exit code %d.", exit_code);
+        break;
+    }
     return false;
   }
 
