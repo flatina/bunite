@@ -10,9 +10,11 @@ import {
   type NativeBootstrapOptions
 } from "../proc/native";
 import { attachGlobalIPCResolver, ensureRPCServer } from "./Socket";
+import { BrowserWindow } from "./BrowserWindow";
 
 type AppInitOptions = NativeBootstrapOptions & {
   userDataDir?: string;
+  exitOnLastWindowClosed?: boolean;
 };
 
 export type GlobalIPCHandler = (params: unknown, ctx: { viewId: number }) => unknown | Promise<unknown>;
@@ -21,10 +23,16 @@ class AppRuntime {
   private initPromise: Promise<void> | null = null;
   private stubKeepAliveTimer: ReturnType<typeof setInterval> | null = null;
   private readonly globalIPCHandlers = new Map<string, GlobalIPCHandler>();
+  private exitOnLastWindowClosed = true;
+  private quitting = false;
 
   async init(options: AppInitOptions = {}) {
     if (!this.initPromise) {
       this.initPromise = (async () => {
+        if (options.exitOnLastWindowClosed !== undefined) {
+          this.exitOnLastWindowClosed = options.exitOnLastWindowClosed;
+        }
+
         if (options.userDataDir) {
           process.env.BUNITE_USER_DATA_DIR = options.userDataDir;
         } else if (!process.env.BUNITE_USER_DATA_DIR) {
@@ -44,6 +52,23 @@ class AppRuntime {
         // Replay view routes registered before init
         for (const path of this.viewHandlers.keys()) {
           getNativeLibrary()?.symbols.bunite_register_view_route(toCString(path));
+        }
+
+        if (this.exitOnLastWindowClosed && runtime.nativeLoaded) {
+          buniteEventEmitter.on("all-windows-closed", () => {
+            if (this.quitting) {
+              return;
+            }
+            queueMicrotask(() => {
+              if (this.quitting) {
+                return;
+              }
+              // Recheck: a new window may have been created since the event
+              if (BrowserWindow.getAll().length === 0) {
+                this.quit();
+              }
+            });
+          });
         }
 
         ensureRPCServer();
@@ -82,13 +107,18 @@ class AppRuntime {
   }
 
   quit(code = 0) {
+    if (this.quitting) {
+      return;
+    }
+    this.quitting = true;
     if (this.stubKeepAliveTimer) {
       clearInterval(this.stubKeepAliveTimer);
       this.stubKeepAliveTimer = null;
     }
+    // bunite_quit() blocks until native shutdown completes or times out
     getNativeLibrary()?.symbols.bunite_quit();
     process.exitCode = code;
-    setTimeout(() => process.exit(code), 50);
+    process.exit(code);
   }
 
   handle(channel: string, handler: GlobalIPCHandler) {
