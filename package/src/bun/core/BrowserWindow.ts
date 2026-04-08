@@ -173,6 +173,10 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     return BrowserWindowMap[id];
   }
 
+  static getAll() {
+    return Object.values(BrowserWindowMap);
+  }
+
   get webview() {
     return BrowserView.getById(this.webviewId) as BrowserView<T>;
   }
@@ -189,12 +193,11 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
       return;
     }
     this.closed = true;
+    BrowserView.getById(this.webviewId)?.detachFromNative();
     const hadNative = this.nativeAttached;
     if (this.nativeAttached) {
       getNativeLibrary()?.symbols.bunite_window_close(this.id);
       this.nativeAttached = false;
-    } else {
-      BrowserView.getById(this.webviewId)?.remove();
     }
     delete BrowserWindowMap[this.id];
     buniteEventEmitter.off(`move-${this.id}`, this.handleNativeMove);
