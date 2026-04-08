@@ -87,7 +87,8 @@ class AppRuntime {
       this.stubKeepAliveTimer = null;
     }
     getNativeLibrary()?.symbols.bunite_quit();
-    setTimeout(() => process.exit(code), 0);
+    process.exitCode = code;
+    setTimeout(() => process.exit(code), 50);
   }
 
   handle(channel: string, handler: GlobalIPCHandler) {
