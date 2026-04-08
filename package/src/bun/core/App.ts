@@ -98,6 +98,11 @@ class AppRuntime {
   }
 
   on(name: string, handler: (payload: unknown) => void) {
+    if (name === "before-quit") {
+      // before-quit listeners receive the BuniteEvent directly so they can set event.response
+      buniteEventEmitter.on(name, handler);
+      return () => buniteEventEmitter.off(name, handler);
+    }
     const wrapped = (event: { data: unknown }) => handler(event.data);
     buniteEventEmitter.on(name, wrapped);
     return () => buniteEventEmitter.off(name, wrapped);
@@ -124,6 +129,13 @@ class AppRuntime {
       return;
     }
     this.quitting = true;
+
+    const event = buniteEventEmitter.events.app.beforeQuit({});
+    buniteEventEmitter.emitEvent(event);
+    if (event.responseWasSet && event.response?.allow === false) {
+      this.quitting = false;
+      return;
+    }
     if (this.stubKeepAliveTimer) {
       clearInterval(this.stubKeepAliveTimer);
       this.stubKeepAliveTimer = null;

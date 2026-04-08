@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { BrowserView, BrowserWindow, app } from "bunite-core";
+import { BrowserView, BrowserWindow, Utils, app } from "bunite-core";
 
 process.env.BUNITE_REMOTE_DEBUGGING_PORT ??= "9222";
 
@@ -302,9 +302,32 @@ const win = new BrowserWindow({
 });
 
 win.webview.setAnchor("top", SHELL_HEIGHT);
+// Vetoable close: confirm before closing the window
+let closeDialogOpen = false;
+win.on("close-requested", (event: any) => {
+  if (closeDialogOpen) {
+    event.response = { allow: false };
+    return;
+  }
+  event.response = { allow: false };
+  closeDialogOpen = true;
+  void Utils.showMessageBox({
+    type: "question",
+    title: "Quit",
+    message: "Are you sure you want to quit?",
+    buttons: ["Quit", "Cancel"],
+    defaultId: 0,
+    cancelId: 1
+  }).then(({ response }) => {
+    closeDialogOpen = false;
+    if (response === 0) {
+      win.destroy();
+    }
+  });
+});
+
 win.on("close", () => {
   localServer.stop();
-  app.quit();
 });
 
 win.show();

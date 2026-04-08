@@ -108,6 +108,7 @@ struct WindowHost {
   bool minimized = false;
   bool maximized = false;
   bool restore_maximized_after_minimize = false;
+  std::atomic<bool> close_pending = false;
   std::atomic<bool> closing = false;
   std::vector<ViewHost*> views;
 };
@@ -1088,6 +1089,20 @@ void openDevToolsForView(ViewHost* view);
 void closeDevToolsForView(ViewHost* view);
 void toggleDevToolsForView(ViewHost* view);
 
+void destroyWindowHost(WindowHost* window) {
+  if (!window || !window->hwnd) {
+    return;
+  }
+  if (!window->closing.exchange(true)) {
+    emitWindowEvent(window->id, "close");
+    const auto views = window->views;
+    for (auto* view : views) {
+      closeViewHost(view);
+    }
+  }
+  DestroyWindow(window->hwnd);
+}
+
 void finalizeWindowHost(WindowHost* window) {
   if (!window) {
     return;
@@ -1724,14 +1739,16 @@ LRESULT CALLBACK buniteWindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARA
       break;
 
     case WM_CLOSE:
-      if (window && !window->closing.exchange(true)) {
-        emitWindowEvent(window->id, "close");
-        const auto views = window->views;
-        for (auto* view : views) {
-          closeViewHost(view);
-        }
+      if (window && !window->close_pending.exchange(true)) {
+        emitWindowEvent(window->id, "close-requested");
       }
-      DestroyWindow(hwnd);
+      return 0;
+
+    case WM_ENDSESSION:
+      if (w_param && window) {
+        g_runtime.shutting_down.store(true);
+        destroyWindowHost(window);
+      }
       return 0;
 
     case WM_NCDESTROY:
@@ -1918,9 +1935,7 @@ void closeAllWindowsForShutdown() {
   }
 
   for (auto* window : windows) {
-    if (window && window->hwnd) {
-      PostMessageW(window->hwnd, WM_CLOSE, 0, 0);
-    }
+    destroyWindowHost(window);
   }
 
   for (auto* view : orphan_views) {
@@ -2261,6 +2276,22 @@ extern "C" BUNITE_EXPORT bool bunite_window_create(
     }
 
     return true;
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_window_destroy(uint32_t window_id) {
+  runOnUiThreadSync<void>([window_id]() {
+    auto* window = getWindowHostById(window_id);
+    destroyWindowHost(window);
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_window_reset_close_pending(uint32_t window_id) {
+  runOnUiThreadSync<void>([window_id]() {
+    auto* window = getWindowHostById(window_id);
+    if (window) {
+      window->close_pending.store(false);
+    }
   });
 }
 
