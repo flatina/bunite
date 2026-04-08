@@ -176,6 +176,12 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
     }
   }
 
+  bringToFront() {
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_view_bring_to_front(this.id);
+    }
+  }
+
   setBounds(x: number, y: number, width: number, height: number) {
     this.frame = { x, y, width, height };
     if (this.nativeAttached) {

@@ -303,27 +303,60 @@ const win = new BrowserWindow({
 
 win.webview.setAnchor("top", SHELL_HEIGHT);
 // Vetoable close: confirm before closing the window
-let closeDialogOpen = false;
+let quitConfirmOpen = false;
+const DIALOG_W = 360;
+const DIALOG_H = 160;
+let quitDialogView: BrowserView | null = null;
+
+app.handle("quitDialogResponse", (params: unknown) => {
+  const { action } = params as { action: string };
+  quitConfirmOpen = false;
+  if (quitDialogView) {
+    quitDialogView.remove();
+    quitDialogView = null;
+  }
+  if (action === "quit") {
+    win.destroy();
+  }
+  return {};
+});
+
 win.on("close-requested", (event: any) => {
-  if (closeDialogOpen) {
+  if (quitConfirmOpen) {
     event.response = { allow: false };
     return;
   }
   event.response = { allow: false };
-  closeDialogOpen = true;
-  void Utils.showMessageBox({
-    type: "question",
-    title: "Quit",
-    message: "Are you sure you want to quit?",
-    buttons: ["Quit", "Cancel"],
-    defaultId: 0,
-    cancelId: 1
-  }).then(({ response }) => {
-    closeDialogOpen = false;
-    if (response === 0) {
-      win.destroy();
-    }
+  quitConfirmOpen = true;
+
+  const { width } = win.getFrame();
+  const dialogX = Math.round((width - DIALOG_W) / 2);
+  const dialogY = 20;
+
+  quitDialogView = new BrowserView({
+    html: `<!doctype html>
+<html><head><style>
+  body { margin:0; background:#fff; font:14px/1.4 system-ui,sans-serif; color:#1a1a2e; display:flex; flex-direction:column; justify-content:center; align-items:center; height:100vh; gap:12px; border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.3); }
+  h2 { margin:0; font-size:18px; }
+  p { margin:0; color:#555; }
+  .btns { display:flex; gap:8px; margin-top:8px; }
+  button { padding:8px 24px; border:none; border-radius:6px; font:14px system-ui; cursor:pointer; }
+  .quit { background:#3b82f6; color:#fff; }
+  .cancel { background:#e5e7eb; color:#333; }
+</style></head><body>
+  <h2>Quit</h2>
+  <p>Are you sure you want to quit?</p>
+  <div class="btns">
+    <button class="quit" onclick="bunite.invoke('quitDialogResponse',{action:'quit'})">Quit</button>
+    <button class="cancel" onclick="bunite.invoke('quitDialogResponse',{action:'cancel'})">Cancel</button>
+  </div>
+</body></html>`,
+    windowId: win.id,
+    autoResize: false,
+    viewsRoot: rendererDir,
   });
+  quitDialogView.setBounds(dialogX, dialogY, DIALOG_W, DIALOG_H);
+  quitDialogView.bringToFront();
 });
 
 win.on("close", () => {

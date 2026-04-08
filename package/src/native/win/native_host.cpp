@@ -2562,6 +2562,20 @@ extern "C" BUNITE_EXPORT void bunite_view_set_visible(uint32_t view_id, bool vis
   });
 }
 
+extern "C" BUNITE_EXPORT void bunite_view_bring_to_front(uint32_t view_id) {
+  runOnUiThreadSync<void>([view_id]() {
+    auto* view = getViewHostById(view_id);
+    if (!view || !view->browser) {
+      return;
+    }
+    HWND browser_hwnd = view->browser->GetHost()->GetWindowHandle();
+    if (browser_hwnd) {
+      SetWindowPos(browser_hwnd, HWND_TOP, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+  });
+}
+
 extern "C" BUNITE_EXPORT void bunite_view_set_bounds(
   uint32_t view_id,
   double x,
