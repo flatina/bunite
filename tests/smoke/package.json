@@ -1,0 +1,12 @@
+{
+  "name": "bunite-smoke-test",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare:renderer": "bun scripts/build-renderer.ts",
+    "smoke": "bun run prepare:renderer && bun src/run.ts"
+  },
+  "dependencies": {
+    "bunite-core": "workspace:*"
+  }
+}

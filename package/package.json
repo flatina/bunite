@@ -11,7 +11,6 @@
     ".": "./src/bun/index.ts",
     "./bun": "./src/bun/index.ts",
     "./view": "./src/view/index.ts",
-    "./config": "./src/types/config.ts",
     "./shared/rpc": "./src/shared/rpc.ts",
     "./package.json": "./package.json"
   },

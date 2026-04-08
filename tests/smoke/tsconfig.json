@@ -1,13 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "composite": true,
     "rootDir": ".",
-    "lib": [
-      "ES2022"
-    ]
+    "lib": ["ES2022"]
   },
   "include": [
-    "src/main.ts",
-    "src/smoke.ts"
+    "src/run.ts",
+    "src/ipc.ts",
+    "src/window.ts"
   ]
 }
