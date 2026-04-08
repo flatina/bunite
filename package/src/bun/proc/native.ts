@@ -79,8 +79,8 @@ type NativeSymbols = {
     autoResize: boolean,
     sandbox: boolean
   ) => boolean;
-  bunite_register_view_route: (path: CStringPointer) => void;
-  bunite_unregister_view_route: (path: CStringPointer) => void;
+  bunite_register_appres_route: (path: CStringPointer) => void;
+  bunite_unregister_appres_route: (path: CStringPointer) => void;
   bunite_complete_route_request: (requestId: number, html: CStringPointer) => void;
   bunite_view_set_visible: (viewId: number, visible: boolean) => void;
   bunite_view_bring_to_front: (viewId: number) => void;
@@ -228,11 +228,11 @@ const nativeSymbolDefinitions = {
     ],
     returns: FFIType.bool
   },
-  bunite_register_view_route: {
+  bunite_register_appres_route: {
     args: [FFIType.cstring],
     returns: FFIType.void
   },
-  bunite_unregister_view_route: {
+  bunite_unregister_appres_route: {
     args: [FFIType.cstring],
     returns: FFIType.void
   },

@@ -33,14 +33,14 @@ const rpc = BrowserView.defineRPC<ExampleSchema>({
 
 await app.init();
 
-const viewsRoot = fileURLToPath(new URL("./renderer", import.meta.url));
+const appresRoot = fileURLToPath(new URL("./renderer", import.meta.url));
 const preload = fileURLToPath(new URL("./renderer/preload.js", import.meta.url));
 
 const win = new BrowserWindow({
   title: "bunite basic example",
   titleBarStyle: "hidden",
-  url: "views://index.html",
-  viewsRoot,
+  url: "appres://index.html",
+  appresRoot,
   preload,
   rpc
 });

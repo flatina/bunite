@@ -49,8 +49,8 @@ export function resolveFallbackCefDir(): string | null {
   return null;
 }
 
-export function resolveDefaultViewsRoot(): string | null {
-  const candidate = join(process.cwd(), "views");
+export function resolveDefaultAppResRoot(): string | null {
+  const candidate = join(process.cwd(), "appres");
   return existsSync(candidate) ? candidate : null;
 }
 

@@ -4,7 +4,7 @@ import { ensureNativeRuntime, getNativeLibrary, toCString } from "../proc/native
 import { BrowserView, type BrowserViewOptions } from "./BrowserView";
 import type { RPCWithTransport } from "../../shared/rpc";
 import { getNextWindowId } from "./windowIds";
-import { resolveDefaultViewsRoot } from "../../shared/paths";
+import { resolveDefaultAppResRoot } from "../../shared/paths";
 
 export type WindowOptionsType<T = undefined> = {
   title: string;
@@ -19,7 +19,7 @@ export type WindowOptionsType<T = undefined> = {
   url: string | null;
   html: string | null;
   preload: string | null;
-  viewsRoot: string | null;
+  appresRoot: string | null;
   rpc?: T;
   titleBarStyle: "hidden" | "hiddenInset" | "default";
   transparent: boolean;
@@ -39,7 +39,7 @@ const defaultOptions: WindowOptionsType = {
   url: null,
   html: null,
   preload: null,
-  viewsRoot: null,
+  appresRoot: null,
   titleBarStyle: "default",
   transparent: false,
   hidden: false,
@@ -57,7 +57,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
   url: string | null;
   html: string | null;
   preload: string | null;
-  viewsRoot: string | null;
+  appresRoot: string | null;
   titleBarStyle: WindowOptionsType["titleBarStyle"];
   transparent: boolean;
   hidden: boolean;
@@ -122,7 +122,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     this.url = options.url ?? defaultOptions.url;
     this.html = options.html ?? defaultOptions.html;
     this.preload = options.preload ?? defaultOptions.preload;
-    this.viewsRoot = options.viewsRoot ?? defaultOptions.viewsRoot ?? resolveDefaultViewsRoot();
+    this.appresRoot = options.appresRoot ?? defaultOptions.appresRoot ?? resolveDefaultAppResRoot();
     this.titleBarStyle = options.titleBarStyle ?? defaultOptions.titleBarStyle;
     this.transparent = options.transparent ?? defaultOptions.transparent;
     this.hidden = options.hidden ?? defaultOptions.hidden!;
@@ -154,7 +154,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
       url: this.url,
       html: this.html,
       preload: this.preload,
-      viewsRoot: this.viewsRoot,
+      appresRoot: this.appresRoot,
       frame: {
         x: 0,
         y: 0,

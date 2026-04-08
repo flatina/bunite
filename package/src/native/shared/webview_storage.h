@@ -39,13 +39,13 @@ private:
   std::map<uint32_t, std::string> content_;
 };
 
-// Tracks which views:// paths have registered dynamic handlers on the Bun side.
+// Tracks which appres:// paths have registered dynamic handlers on the Bun side.
 // The actual handler function lives in JS; this only stores the set of registered paths
 // and completed route responses.
-class ViewsRouteStorage {
+class AppResRouteStorage {
 public:
-  static ViewsRouteStorage& instance() {
-    static ViewsRouteStorage storage;
+  static AppResRouteStorage& instance() {
+    static AppResRouteStorage storage;
     return storage;
   }
 
@@ -79,7 +79,7 @@ public:
   }
 
 private:
-  ViewsRouteStorage() = default;
+  AppResRouteStorage() = default;
 
   mutable std::mutex mutex_;
   std::set<std::string> registered_;
