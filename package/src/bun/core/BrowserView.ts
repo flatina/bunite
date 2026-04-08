@@ -5,7 +5,7 @@ import { defineBuniteRPC, type BuniteRPCConfig, type BuniteRPCSchema, type RPCWi
 import { ensureNativeRuntime, getNativeLibrary, toCString } from "../proc/native";
 import { attachBrowserViewRegistry, getRPCPort, sendMessageToView } from "./Socket";
 import { randomBytes } from "node:crypto";
-import { resolveDefaultViewsRoot } from "../../shared/paths";
+import { resolveDefaultAppResRoot } from "../../shared/paths";
 
 const BrowserViewMap: Record<number, BrowserView<any>> = {};
 let nextWebviewId = 1;
@@ -14,7 +14,7 @@ export type BrowserViewOptions<T = undefined> = {
   url: string | null;
   html: string | null;
   preload: string | null;
-  viewsRoot: string | null;
+  appresRoot: string | null;
   partition: string | null;
   frame: {
     x: number;
@@ -33,7 +33,7 @@ const defaultOptions: BrowserViewOptions = {
   url: null,
   html: null,
   preload: null,
-  viewsRoot: null,
+  appresRoot: null,
   partition: null,
   frame: {
     x: 0,
@@ -54,7 +54,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
   url: string | null;
   html: string | null;
   preload: string | null;
-  viewsRoot: string | null;
+  appresRoot: string | null;
   partition: string | null;
   frame: BrowserViewOptions["frame"];
   rpc?: T;
@@ -71,7 +71,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
     this.url = options.url ?? defaultOptions.url;
     this.html = options.html ?? defaultOptions.html;
     this.preload = options.preload ?? defaultOptions.preload;
-    this.viewsRoot = options.viewsRoot ?? defaultOptions.viewsRoot ?? resolveDefaultViewsRoot();
+    this.appresRoot = options.appresRoot ?? defaultOptions.appresRoot ?? resolveDefaultAppResRoot();
     this.partition = options.partition ?? defaultOptions.partition;
     this.frame = options.frame ?? defaultOptions.frame;
     this.rpc = options.rpc;
@@ -89,7 +89,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
 
     const preloadScript = buildViewPreloadScript({
       preload: this.preload,
-      viewsRoot: this.viewsRoot,
+      appresRoot: this.appresRoot,
       webviewId: this.id,
       rpcSocketPort: getRPCPort(),
       secretKey: this.secretKey
@@ -104,7 +104,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
         toCString(this.url ?? ""),
         toCString(this.html ?? ""),
         toCString(preloadScript),
-        toCString(this.viewsRoot ?? ""),
+        toCString(this.appresRoot ?? ""),
         toCString(this.navigationRules ? JSON.stringify(this.navigationRules) : ""),
         this.frame.x,
         this.frame.y,

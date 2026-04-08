@@ -6,9 +6,9 @@ function escapeRootForComparison(path: string) {
   return process.platform === "win32" ? path.toLowerCase() : path;
 }
 
-function resolveViewsFile(viewsRoot: string, url: string) {
+function resolveAppResFile(appresRoot: string, url: string) {
   const relativePath = url.replace(/^views:\/\//, "").replace(/^[\\/]+/, "");
-  const normalizedRoot = resolve(viewsRoot);
+  const normalizedRoot = resolve(appresRoot);
   const candidate = resolve(normalizedRoot, relativePath.split("/").join(sep));
   const comparableRoot = escapeRootForComparison(normalizedRoot);
   const comparableCandidate = escapeRootForComparison(candidate);
@@ -17,28 +17,28 @@ function resolveViewsFile(viewsRoot: string, url: string) {
     comparableCandidate !== comparableRoot &&
     !comparableCandidate.startsWith(`${comparableRoot}${sep}`)
   ) {
-    throw new Error(`preload path escapes viewsRoot: ${url}`);
+    throw new Error(`preload path escapes appresRoot: ${url}`);
   }
 
   return candidate;
 }
 
-function readCustomPreload(preload: string | null, viewsRoot: string | null) {
+function readCustomPreload(preload: string | null, appresRoot: string | null) {
   if (!preload) {
     return "";
   }
 
   try {
-    const resolvedPath = preload.startsWith("views://")
-      ? viewsRoot
-        ? resolveViewsFile(viewsRoot, preload)
+    const resolvedPath = preload.startsWith("appres://")
+      ? appresRoot
+        ? resolveAppResFile(appresRoot, preload)
         : null
       : isAbsolute(preload)
         ? preload
         : resolve(preload);
 
     if (!resolvedPath) {
-      log.warn(`Cannot resolve preload without viewsRoot: ${preload}`);
+      log.warn(`Cannot resolve preload without appresRoot: ${preload}`);
       return "";
     }
     if (!existsSync(resolvedPath)) {
@@ -71,7 +71,7 @@ function getPreloadRuntime(): string {
 
 export function buildViewPreloadScript(options: {
   preload: string | null;
-  viewsRoot: string | null;
+  appresRoot: string | null;
   webviewId: number;
   rpcSocketPort: number;
   secretKey: Uint8Array;
@@ -82,7 +82,7 @@ export function buildViewPreloadScript(options: {
   const config = `var __buniteWebviewId=${options.webviewId},__buniteRpcSocketPort=${options.rpcSocketPort},__buniteSecretKeyBase64=${JSON.stringify(secretKeyBase64)};`;
 
   const runtime = getPreloadRuntime();
-  const customPreload = readCustomPreload(options.preload, options.viewsRoot).trim();
+  const customPreload = readCustomPreload(options.preload, options.appresRoot).trim();
 
   return [config, runtime, customPreload].filter(Boolean).join("\n");
 }

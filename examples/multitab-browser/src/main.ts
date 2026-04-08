@@ -102,7 +102,7 @@ const shellRpc = BrowserView.defineRPC<ShellSchema>({
   }
 });
 
-// Global IPC — any views:// page can call bunite.invoke("getAppInfo")
+// Global IPC — any appres:// page can call bunite.invoke("getAppInfo")
 app.handle("getAppInfo", () => ({
   buniteVersion: "0.0.1",
   nativeLoaded: app.runtime?.nativeLoaded ?? false,
@@ -113,10 +113,10 @@ app.handle("getAppInfo", () => ({
 }));
 
 function createTab(url: string): number {
-  const isViews = !url || url.startsWith("views://");
+  const isViews = !url || url.startsWith("appres://");
   const view = new BrowserView({
-    url: !url ? "views://newtab" : url,
-    viewsRoot: isViews ? rendererDir : undefined,
+    url: !url ? "appres://newtab" : url,
+    appresRoot: isViews ? rendererDir : undefined,
     autoResize: false,
     windowId: win.id
   });
@@ -178,7 +178,7 @@ function closeTab(tabId: number) {
 
 await app.init();
 
-app.getView("newtab", () => `
+app.getAppRes("newtab", () => `
   <!doctype html>
   <html lang="en">
   <head>
@@ -198,15 +198,15 @@ app.getView("newtab", () => `
     <div class="links">
       <a href="${localOrigin}/fast">Local Fast</a>
       <a href="${localOrigin}/slow?delay=2000">Local 2000ms</a>
-      <a href="views://about">About</a>
-      <a href="views://global-ipc">Global IPC</a>
+      <a href="appres://about">About</a>
+      <a href="appres://global-ipc">Global IPC</a>
       <a href="https://google.com">Google</a>
     </div>
   </body>
   </html>
 `);
 
-app.getView("about", () => `
+app.getAppRes("about", () => `
   <style>body { background: #202124; color: #e8eaed; font-family: system-ui, sans-serif; }</style>
   <h1>bunite</h1>
   <p>Uniting UI and Bun</p>
@@ -218,8 +218,8 @@ app.getView("about", () => `
 const win = new BrowserWindow({
   title: "bunite multi-tab browser",
   frame: { x: 80, y: 80, width: 1280, height: 900 },
-  url: "views://shell",
-  viewsRoot: rendererDir,
+  url: "appres://shell",
+  appresRoot: rendererDir,
   preload,
   rpc: shellRpc,
   hidden: true
@@ -265,7 +265,7 @@ win.on("close-requested", (event: any) => {
     html: quitDialogHtml,
     windowId: win.id,
     autoResize: false,
-    viewsRoot: rendererDir,
+    appresRoot: rendererDir,
   });
   quitDialogView.setBounds(dialogX, dialogY, DIALOG_W, DIALOG_H);
   quitDialogView.bringToFront();

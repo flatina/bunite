@@ -67,7 +67,7 @@ BUNITE_EXPORT bool bunite_view_create(
 	const char* url,
 	const char* html,
 	const char* preload,
-	const char* views_root,
+	const char* appres_root,
 	const char* navigation_rules_json,
 	double x,
 	double y,
@@ -78,8 +78,8 @@ BUNITE_EXPORT bool bunite_view_create(
 );
 BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char* url);
 BUNITE_EXPORT void bunite_view_load_html(uint32_t view_id, const char* html);
-BUNITE_EXPORT void bunite_register_view_route(const char* path);
-BUNITE_EXPORT void bunite_unregister_view_route(const char* path);
+BUNITE_EXPORT void bunite_register_appres_route(const char* path);
+BUNITE_EXPORT void bunite_unregister_appres_route(const char* path);
 BUNITE_EXPORT void bunite_complete_route_request(uint32_t request_id, const char* html);
 BUNITE_EXPORT void bunite_view_set_visible(uint32_t view_id, bool visible);
 BUNITE_EXPORT void bunite_view_bring_to_front(uint32_t view_id);

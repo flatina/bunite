@@ -87,7 +87,7 @@ struct ViewHost {
   std::string url;
   std::string html;
   std::string preload_script;
-  std::string views_root;
+  std::string appres_root;
   std::vector<std::string> navigation_rules;
   int anchor_mode = ANCHOR_FILL;
   double anchor_inset = 0;
@@ -295,7 +295,7 @@ std::string buildButtonLabelsJson(const std::vector<std::string>& labels) {
 }
 
 std::optional<std::pair<uint32_t, int32_t>> parseMessageBoxResponseUrl(const std::string& url) {
-  constexpr std::string_view prefix = "views://internal/__bunite/message-box-response";
+  constexpr std::string_view prefix = "appres://internal/__bunite/message-box-response";
   if (url.rfind(prefix.data(), 0) != 0) {
     return std::nullopt;
   }
@@ -465,7 +465,7 @@ std::string buildBrowserMessageBoxScript(
       requestId: String(spec.requestId),
       response: String(response)
     });
-    fetch(`views://internal/__bunite/message-box-response?${params.toString()}`, {
+    fetch(`appres://internal/__bunite/message-box-response?${params.toString()}`, {
       method: "GET",
       cache: "no-store"
     }).catch(() => {});
@@ -739,7 +739,7 @@ std::map<std::string, std::string> parseChromiumFlagsJson(const std::string& jso
 }
 
 bool shouldAlwaysAllowNavigationUrl(const std::string& url) {
-  return url == "about:blank" || url.rfind("views://internal/", 0) == 0;
+  return url == "about:blank" || url.rfind("appres://internal/", 0) == 0;
 }
 
 bool shouldAllowNavigation(const ViewHost* view, const std::string& url) {
@@ -883,9 +883,9 @@ void scheduleCefMessageLoopWorkOnUiThread(int64_t delay_ms) {
   g_runtime.cef_timer_delay_ms = clamped_delay;
 }
 
-std::string normalizeViewsPath(const std::string& url) {
+std::string normalizeAppResPath(const std::string& url) {
   std::string path = url;
-  if (path.rfind("views://", 0) == 0) {
+  if (path.rfind("appres://", 0) == 0) {
     path = path.substr(8);
   }
 
@@ -920,33 +920,33 @@ std::string getMimeType(const std::filesystem::path& file_path) {
   return "application/octet-stream";
 }
 
-std::string getViewsRootForView(uint32_t view_id) {
+std::string getAppResRootForView(uint32_t view_id) {
   std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
   const auto it = g_runtime.views_by_id.find(view_id);
   if (it == g_runtime.views_by_id.end() || !it->second) {
     return {};
   }
-  return it->second->views_root;
+  return it->second->appres_root;
 }
 
-std::optional<std::string> loadViewsResource(uint32_t view_id, const std::string& url, std::string& mime_type) {
-  const std::string views_root = getViewsRootForView(view_id);
+std::optional<std::string> loadAppResResource(uint32_t view_id, const std::string& url, std::string& mime_type) {
+  const std::string appres_root = getAppResRootForView(view_id);
 
-  const std::string path = normalizeViewsPath(url);
+  const std::string path = normalizeAppResPath(url);
   if (path == "internal/index.html") {
     mime_type = "text/html";
     return bunite::WebviewContentStorage::instance().get(view_id);
   }
 
-  if (views_root.empty()) {
+  if (appres_root.empty()) {
     return std::nullopt;
   }
 
-  if (!std::filesystem::exists(views_root)) {
+  if (!std::filesystem::exists(appres_root)) {
     return std::nullopt;
   }
 
-  const std::filesystem::path root = std::filesystem::weakly_canonical(std::filesystem::path(views_root));
+  const std::filesystem::path root = std::filesystem::weakly_canonical(std::filesystem::path(appres_root));
   std::filesystem::path candidate = std::filesystem::weakly_canonical(root / std::filesystem::path(path));
   if (std::filesystem::exists(candidate) && std::filesystem::is_directory(candidate)) {
     candidate = std::filesystem::weakly_canonical(candidate / "index.html");
@@ -1155,10 +1155,10 @@ public:
     }
 
     const std::string url = request ? request->GetURL().ToString() : "";
-    const std::string normalized_path = normalizeViewsPath(url);
+    const std::string normalized_path = normalizeAppResPath(url);
 
     // Dynamic route: handler lives on the Bun side, request is async
-    if (bunite::ViewsRouteStorage::instance().hasRoute(normalized_path)) {
+    if (bunite::AppResRouteStorage::instance().hasRoute(normalized_path)) {
       handle_request = false; // async - we'll call callback->Continue() later
       uint32_t request_id;
       {
@@ -1178,16 +1178,16 @@ public:
     }
 
     std::string mime_type;
-    const auto content = loadViewsResource(view_id_, url, mime_type);
+    const auto content = loadAppResResource(view_id_, url, mime_type);
     if (!content) {
-      const std::string views_root = getViewsRootForView(view_id_);
-      BUNITE_WARN("views:// resource not found (view=%u, url=%s, normalized=%s, root=%s)",
-        view_id_, url.c_str(), normalized_path.c_str(), views_root.c_str());
+      const std::string appres_root = getAppResRootForView(view_id_);
+      BUNITE_WARN("appres:// resource not found (view=%u, url=%s, normalized=%s, root=%s)",
+        view_id_, url.c_str(), normalized_path.c_str(), appres_root.c_str());
       status_code_ = 404;
       status_text_ = "Not Found";
       mime_type_ = "text/plain";
       data_ =
-        "bunite could not resolve the requested views:// resource.\n"
+        "bunite could not resolve the requested appres:// resource.\n"
         "url: " + url + "\n" +
         "normalized: " + normalized_path;
       return true;
@@ -1202,7 +1202,7 @@ public:
 
   void GetResponseHeaders(CefRefPtr<CefResponse> response, int64_t& response_length, CefString&) override {
     if (pending_route_request_id_ != 0) {
-      auto content = bunite::ViewsRouteStorage::instance().takeResponse(pending_route_request_id_);
+      auto content = bunite::AppResRouteStorage::instance().takeResponse(pending_route_request_id_);
       pending_route_request_id_ = 0;
       if (content) {
         status_code_ = 200;
@@ -1336,7 +1336,7 @@ public:
 
   void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override {
     registrar->AddCustomScheme(
-      "views",
+      "appres",
       CEF_SCHEME_OPTION_STANDARD |
         CEF_SCHEME_OPTION_CORS_ENABLED |
         CEF_SCHEME_OPTION_SECURE |
@@ -1393,7 +1393,7 @@ public:
     if (
       mime_type.find("html") == std::string::npos ||
       preload_script_.empty() ||
-      url.rfind("views://", 0) != 0
+      url.rfind("appres://", 0) != 0
     ) {
       return nullptr;
     }
@@ -1843,7 +1843,7 @@ bool initializeCefOnUiThread() {
   }
 
   g_runtime.cef_initialized = true;
-  CefRegisterSchemeHandlerFactory("views", "", new BuniteSchemeHandlerFactory());
+  CefRegisterSchemeHandlerFactory("appres", "", new BuniteSchemeHandlerFactory());
   return true;
 }
 
@@ -1975,7 +1975,7 @@ bool createBrowserForView(ViewHost* view) {
   }
 
   const std::string initial_url = !view->html.empty()
-    ? "views://internal/index.html"
+    ? "appres://internal/index.html"
     : (!view->url.empty() ? view->url : "about:blank");
 
   CefWindowInfo window_info;
@@ -2464,7 +2464,7 @@ extern "C" BUNITE_EXPORT bool bunite_view_create(
   const char* url,
   const char* html,
   const char* preload,
-  const char* views_root,
+  const char* appres_root,
   const char* navigation_rules_json,
   double x,
   double y,
@@ -2491,7 +2491,7 @@ extern "C" BUNITE_EXPORT bool bunite_view_create(
       url ? url : "",
       html ? html : "",
       preload ? preload : "",
-      views_root ? views_root : "",
+      appres_root ? appres_root : "",
       parseNavigationRulesJson(navigation_rules_json ? navigation_rules_json : ""),
       auto_resize ? ANCHOR_FILL : ANCHOR_NONE,
       0.0,
@@ -2544,7 +2544,7 @@ extern "C" BUNITE_EXPORT void bunite_view_load_html(uint32_t view_id, const char
     view->html = content;
     bunite::WebviewContentStorage::instance().set(view->id, content);
     if (view->browser && view->browser->GetMainFrame()) {
-      view->browser->GetMainFrame()->LoadURL("views://internal/index.html");
+      view->browser->GetMainFrame()->LoadURL("appres://internal/index.html");
     }
   });
 }
@@ -2610,12 +2610,12 @@ extern "C" BUNITE_EXPORT void bunite_view_set_bounds(
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_register_view_route(const char* path) {
-  bunite::ViewsRouteStorage::instance().registerRoute(path ? path : "");
+extern "C" BUNITE_EXPORT void bunite_register_appres_route(const char* path) {
+  bunite::AppResRouteStorage::instance().registerRoute(path ? path : "");
 }
 
-extern "C" BUNITE_EXPORT void bunite_unregister_view_route(const char* path) {
-  bunite::ViewsRouteStorage::instance().unregisterRoute(path ? path : "");
+extern "C" BUNITE_EXPORT void bunite_unregister_appres_route(const char* path) {
+  bunite::AppResRouteStorage::instance().unregisterRoute(path ? path : "");
 }
 
 extern "C" BUNITE_EXPORT void bunite_complete_route_request(uint32_t request_id, const char* html) {
@@ -2628,7 +2628,7 @@ extern "C" BUNITE_EXPORT void bunite_complete_route_request(uint32_t request_id,
   auto pending = std::move(it->second);
   g_runtime.pending_routes.erase(it);
 
-  bunite::ViewsRouteStorage::instance().setResponse(request_id, html ? html : "");
+  bunite::AppResRouteStorage::instance().setResponse(request_id, html ? html : "");
 
   // Store response data on the scheme handler via the request_id.
   // The scheme handler's GetResponseHeaders/ReadResponse will use it.
