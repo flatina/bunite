@@ -46,6 +46,8 @@ type NativeSymbols = {
     minimized: boolean,
     maximized: boolean
   ) => boolean;
+  bunite_window_destroy: (windowId: number) => void;
+  bunite_window_reset_close_pending: (windowId: number) => void;
   bunite_window_show: (windowId: number) => void;
   bunite_window_close: (windowId: number) => void;
   bunite_window_set_title: (windowId: number, title: CStringPointer) => void;
@@ -158,6 +160,14 @@ const nativeSymbolDefinitions = {
       FFIType.bool
     ],
     returns: FFIType.bool
+  },
+  bunite_window_destroy: {
+    args: [FFIType.u32],
+    returns: FFIType.void
+  },
+  bunite_window_reset_close_pending: {
+    args: [FFIType.u32],
+    returns: FFIType.void
   },
   bunite_window_show: {
     args: [FFIType.u32],
@@ -471,6 +481,18 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
               buniteEventEmitter.events.app.allWindowsClosed()
             );
             break;
+          case "close-requested": {
+            const crEvent = buniteEventEmitter.events.window.closeRequested({ id: windowId });
+            buniteEventEmitter.emitEvent(crEvent, windowId);
+            if (crEvent.responseWasSet && crEvent.response?.allow === false) {
+              nativeLibrary?.symbols.bunite_window_reset_close_pending(windowId);
+            } else {
+              queueMicrotask(() => {
+                nativeLibrary?.symbols.bunite_window_destroy(windowId);
+              });
+            }
+            break;
+          }
           case "close":
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.window.close({ id: windowId }),
