@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { BrowserView, BrowserWindow, Utils, app } from "bunite-core";
+import { BrowserView, BrowserWindow, app } from "bunite-core";
+import { localServer, localOrigin } from "./localServer";
 
 process.env.BUNITE_REMOTE_DEBUGGING_PORT ??= "9222";
 
@@ -8,83 +9,6 @@ const SHELL_HEIGHT = 64;
 
 const rendererDir = fileURLToPath(new URL("./renderer", import.meta.url));
 const preload = join(rendererDir, "preload.js");
-
-// for real web page navigation test
-const localServer = Bun.serve({
-  port: 0,
-  hostname: "127.0.0.1",
-  fetch(request) {
-    const url = new URL(request.url);
-    const startedAt = Date.now();
-    const sendPage = (title: string, body: string) =>
-      new Response(
-        `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <title>${title}</title>
-  <style>
-    body { margin: 0; padding: 32px; background: #111827; color: #e5e7eb; font: 14px/1.6 system-ui, sans-serif; }
-    h1 { margin: 0 0 8px; font-size: 24px; }
-    .meta { color: #93c5fd; margin-bottom: 20px; }
-    a { color: #fbbf24; }
-    code { color: #c4b5fd; }
-  </style>
-</head>
-<body>
-  ${body}
-</body>
-</html>`,
-        {
-          headers: {
-            "content-type": "text/html; charset=utf-8",
-            "cache-control": "no-store"
-          }
-        }
-      );
-
-    if (url.pathname === "/fast") {
-      return sendPage(
-        "Local Fast",
-        `<h1>Local Fast</h1>
-        <div class="meta">served in ${Date.now() - startedAt}ms</div>
-        <p>Deterministic localhost page for navigation latency testing.</p>
-        <p><a href="/echo?from=fast">Open another local page</a></p>`
-      );
-    }
-
-    if (url.pathname === "/slow") {
-      const delay = Math.max(0, Math.min(Number(url.searchParams.get("delay") ?? "1000"), 5000));
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          resolve(
-            sendPage(
-              `Local Slow ${delay}`,
-              `<h1>Local Slow</h1>
-              <div class="meta">delay ${delay}ms, total ${Date.now() - startedAt}ms</div>
-              <p>This response intentionally waits before returning.</p>
-              <p><a href="/fast">Go to local fast</a></p>`
-            )
-          );
-        }, delay);
-      });
-    }
-
-    if (url.pathname === "/echo") {
-      const from = url.searchParams.get("from") ?? "unknown";
-      return sendPage(
-        "Local Echo",
-        `<h1>Local Echo</h1>
-        <div class="meta">from=${from}, served in ${Date.now() - startedAt}ms</div>
-        <p><a href="/fast">Fast</a></p>
-        <p><a href="/slow?delay=1500">Slow 1500ms</a></p>`
-      );
-    }
-
-    return new Response("Not found", { status: 404 });
-  }
-});
-const localOrigin = `http://${localServer.hostname}:${localServer.port}`;
 
 await Bun.build({
   entrypoints: [join(rendererDir, "shell.ts")],
@@ -302,11 +226,15 @@ const win = new BrowserWindow({
 });
 
 win.webview.setAnchor("top", SHELL_HEIGHT);
-// Vetoable close: confirm before closing the window
-let quitConfirmOpen = false;
+
+// --- Quit confirmation overlay dialog ---
 const DIALOG_W = 360;
 const DIALOG_H = 160;
+let quitConfirmOpen = false;
 let quitDialogView: BrowserView | null = null;
+
+const resDir = fileURLToPath(new URL("./res", import.meta.url));
+const quitDialogHtml = await Bun.file(join(resDir, "quit-dialog.html")).text();
 
 app.handle("quitDialogResponse", (params: unknown) => {
   const { action } = params as { action: string };
@@ -334,23 +262,7 @@ win.on("close-requested", (event: any) => {
   const dialogY = 20;
 
   quitDialogView = new BrowserView({
-    html: `<!doctype html>
-<html><head><style>
-  body { margin:0; background:#fff; font:14px/1.4 system-ui,sans-serif; color:#1a1a2e; display:flex; flex-direction:column; justify-content:center; align-items:center; height:100vh; gap:12px; border-radius:12px; box-shadow:0 8px 32px rgba(0,0,0,0.3); }
-  h2 { margin:0; font-size:18px; }
-  p { margin:0; color:#555; }
-  .btns { display:flex; gap:8px; margin-top:8px; }
-  button { padding:8px 24px; border:none; border-radius:6px; font:14px system-ui; cursor:pointer; }
-  .quit { background:#3b82f6; color:#fff; }
-  .cancel { background:#e5e7eb; color:#333; }
-</style></head><body>
-  <h2>Quit</h2>
-  <p>Are you sure you want to quit?</p>
-  <div class="btns">
-    <button class="quit" onclick="bunite.invoke('quitDialogResponse',{action:'quit'})">Quit</button>
-    <button class="cancel" onclick="bunite.invoke('quitDialogResponse',{action:'cancel'})">Cancel</button>
-  </div>
-</body></html>`,
+    html: quitDialogHtml,
     windowId: win.id,
     autoResize: false,
     viewsRoot: rendererDir,
