@@ -460,6 +460,11 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
         const parsedPayload = maybeParsePayload(payload);
 
         switch (eventName) {
+          case "all-windows-closed":
+            buniteEventEmitter.emitEvent(
+              buniteEventEmitter.events.app.allWindowsClosed()
+            );
+            break;
           case "close":
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.window.close({ id: windowId }),

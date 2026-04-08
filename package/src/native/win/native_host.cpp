@@ -117,7 +117,7 @@ struct RuntimeState {
   bool init_finished = false;
   bool init_success = false;
   bool initialized = false;
-  bool shutting_down = false;
+  std::atomic<bool> shutting_down{false};
   bool shutdown_complete = false;
   bool shutdown_finalize_posted = false;
 
@@ -1099,12 +1099,18 @@ void finalizeWindowHost(WindowHost* window) {
   }
   window->views.clear();
 
+  bool all_closed = false;
   {
     std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
     g_runtime.windows_by_id.erase(window->id);
+    all_closed = g_runtime.windows_by_id.empty();
   }
 
   delete window;
+
+  if (all_closed && !g_runtime.shutting_down.load()) {
+    emitWindowEvent(0, "all-windows-closed");
+  }
 }
 
 class BuniteSchemeHandler : public CefResourceHandler {
@@ -1876,7 +1882,7 @@ void cancelPendingRouteRequestsOnUiThread() {
 }
 
 void maybeCompleteShutdownOnUiThread() {
-  if (!g_runtime.shutting_down) {
+  if (!g_runtime.shutting_down.load()) {
     return;
   }
 
@@ -2082,7 +2088,7 @@ extern "C" BUNITE_EXPORT bool bunite_init(
     g_runtime.init_success = false;
     g_runtime.shutdown_complete = false;
     g_runtime.shutdown_finalize_posted = false;
-    g_runtime.shutting_down = false;
+    g_runtime.shutting_down.store(false);
     g_runtime.process_helper_path = process_helper_path ? process_helper_path : "";
     g_runtime.cef_dir = cef_dir ? cef_dir : "";
     g_runtime.popup_blocking = popup_blocking;
@@ -2124,10 +2130,10 @@ extern "C" BUNITE_EXPORT void bunite_quit(void) {
     if (!g_runtime.initialized) {
       return;
     }
-    if (g_runtime.shutting_down) {
+    if (g_runtime.shutting_down.load()) {
       return;
     }
-    g_runtime.shutting_down = true;
+    g_runtime.shutting_down.store(true);
   }
 
   runOnUiThreadSync<void>([]() {
@@ -2145,14 +2151,31 @@ extern "C" BUNITE_EXPORT void bunite_quit(void) {
       std::chrono::seconds(5),
       []() { return g_runtime.shutdown_complete; }
     );
-  }
 
-  if (!shutdown_completed) {
-    std::fprintf(stderr, "[bunite/native] Shutdown timed out, forcing UI thread exit.\n");
-    if (g_runtime.message_window) {
-      PostMessageW(g_runtime.message_window, kFinalizeShutdownMessage, 0, 0);
-    } else if (g_runtime.ui_thread_id != 0) {
-      PostThreadMessageW(g_runtime.ui_thread_id, WM_QUIT, 0, 0);
+    if (!shutdown_completed) {
+      std::fprintf(stderr, "[bunite/native] Shutdown timed out, posting finalize.\n");
+      if (g_runtime.message_window) {
+        PostMessageW(g_runtime.message_window, kFinalizeShutdownMessage, 0, 0);
+      }
+
+      shutdown_completed = g_runtime.lifecycle_cv.wait_for(
+        lock,
+        std::chrono::milliseconds(500),
+        []() { return g_runtime.shutdown_complete; }
+      );
+    }
+
+    if (!shutdown_completed) {
+      std::fprintf(stderr, "[bunite/native] Finalize timed out, forcing message loop exit.\n");
+      if (g_runtime.ui_thread_id != 0) {
+        PostThreadMessageW(g_runtime.ui_thread_id, WM_QUIT, 0, 0);
+      }
+
+      shutdown_completed = g_runtime.lifecycle_cv.wait_for(
+        lock,
+        std::chrono::milliseconds(1000),
+        []() { return g_runtime.shutdown_complete; }
+      );
     }
   }
 
@@ -2160,6 +2183,7 @@ extern "C" BUNITE_EXPORT void bunite_quit(void) {
     if (shutdown_completed) {
       g_runtime.ui_thread.join();
     } else {
+      std::fprintf(stderr, "[bunite/native] UI thread did not exit, detaching.\n");
       g_runtime.ui_thread.detach();
     }
   }
