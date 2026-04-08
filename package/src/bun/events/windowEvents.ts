@@ -1,6 +1,8 @@
 import { BuniteEvent } from "./event";
 
 export default {
+  closeRequested: (data: { id: number }) =>
+    new BuniteEvent<{ id: number }, { allow?: boolean }>("close-requested", data),
   close: (data: { id: number }) => new BuniteEvent("close", data),
   focus: (data: { id: number }) => new BuniteEvent("focus", data),
   blur: (data: { id: number }) => new BuniteEvent("blur", data),

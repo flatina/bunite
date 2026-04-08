@@ -42,6 +42,8 @@ BUNITE_EXPORT bool bunite_window_create(
 	bool minimized,
 	bool maximized
 );
+BUNITE_EXPORT void bunite_window_destroy(uint32_t window_id);
+BUNITE_EXPORT void bunite_window_reset_close_pending(uint32_t window_id);
 BUNITE_EXPORT void bunite_window_show(uint32_t window_id);
 BUNITE_EXPORT void bunite_window_close(uint32_t window_id);
 BUNITE_EXPORT void bunite_window_set_title(uint32_t window_id, const char* title);

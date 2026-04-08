@@ -111,6 +111,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     buniteEventEmitter.off(`move-${this.id}`, this.handleNativeMove);
     buniteEventEmitter.off(`resize-${this.id}`, this.handleNativeResize);
     buniteEventEmitter.off(`close-${this.id}`, this.handleNativeClose);
+    buniteEventEmitter.removeAllListeners(`close-requested-${this.id}`);
   };
 
   constructor(options: Partial<WindowOptionsType<T>> = {}) {
@@ -192,17 +193,30 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     if (this.closed) {
       return;
     }
+    if (this.nativeAttached) {
+      // Triggers WM_CLOSE → "close-requested" event → vetoable
+      getNativeLibrary()?.symbols.bunite_window_close(this.id);
+    } else {
+      this.destroy();
+    }
+  }
+
+  destroy() {
+    if (this.closed) {
+      return;
+    }
     this.closed = true;
     BrowserView.getById(this.webviewId)?.detachFromNative();
     const hadNative = this.nativeAttached;
     if (this.nativeAttached) {
-      getNativeLibrary()?.symbols.bunite_window_close(this.id);
+      getNativeLibrary()?.symbols.bunite_window_destroy(this.id);
       this.nativeAttached = false;
     }
     delete BrowserWindowMap[this.id];
     buniteEventEmitter.off(`move-${this.id}`, this.handleNativeMove);
     buniteEventEmitter.off(`resize-${this.id}`, this.handleNativeResize);
     buniteEventEmitter.off(`close-${this.id}`, this.handleNativeClose);
+    buniteEventEmitter.removeAllListeners(`close-requested-${this.id}`);
     if (!hadNative) {
       buniteEventEmitter.emitEvent(buniteEventEmitter.events.window.close({ id: this.id }), this.id);
     }
@@ -315,7 +329,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     return this.frame;
   }
 
-  on(name: "close" | "focus" | "blur" | "move" | "resize", handler: (event: unknown) => void) {
+  on(name: "close-requested" | "close" | "focus" | "blur" | "move" | "resize", handler: (event: unknown) => void) {
     const specificName = `${name}-${this.id}`;
     buniteEventEmitter.on(specificName, handler);
     return () => buniteEventEmitter.off(specificName, handler);
