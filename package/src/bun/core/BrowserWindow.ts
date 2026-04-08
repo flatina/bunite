@@ -1,3 +1,4 @@
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { BuniteEvent } from "../events/event";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import { ensureNativeRuntime, getNativeLibrary, toCString } from "../proc/native";
@@ -119,10 +120,23 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
 
     this.title = options.title ?? defaultOptions.title;
     this.frame = { ...defaultOptions.frame, ...options.frame };
-    this.url = options.url ?? defaultOptions.url;
     this.html = options.html ?? defaultOptions.html;
     this.preload = options.preload ?? defaultOptions.preload;
-    this.appresRoot = options.appresRoot ?? defaultOptions.appresRoot ?? resolveDefaultAppResRoot();
+
+    // Resolve relative URL against entry script directory
+    let url = options.url ?? defaultOptions.url;
+    let appresRoot = options.appresRoot ?? defaultOptions.appresRoot;
+    if (url && !url.includes("://")) {
+      const baseDir = dirname(Bun.main);
+      const resolved = isAbsolute(url) ? url : resolve(baseDir, url);
+      if (!appresRoot) {
+        appresRoot = dirname(resolved);
+      }
+      const rel = relative(appresRoot, resolved).replaceAll(sep, "/");
+      url = `appres://${rel}`;
+    }
+    this.url = url;
+    this.appresRoot = appresRoot ?? resolveDefaultAppResRoot();
     this.titleBarStyle = options.titleBarStyle ?? defaultOptions.titleBarStyle;
     this.transparent = options.transparent ?? defaultOptions.transparent;
     this.hidden = options.hidden ?? defaultOptions.hidden!;

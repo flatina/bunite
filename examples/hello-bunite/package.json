@@ -1,0 +1,11 @@
+{
+  "name": "hello-bunite",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun src/main.ts"
+  },
+  "dependencies": {
+    "bunite-core": "workspace:*"
+  }
+}
