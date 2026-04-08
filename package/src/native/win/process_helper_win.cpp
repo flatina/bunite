@@ -6,7 +6,7 @@ class BuniteHelperApp : public CefApp {
 public:
   void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override {
     registrar->AddCustomScheme(
-      "views",
+      "appres",
       CEF_SCHEME_OPTION_STANDARD |
         CEF_SCHEME_OPTION_CORS_ENABLED |
         CEF_SCHEME_OPTION_SECURE |

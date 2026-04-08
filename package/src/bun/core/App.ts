@@ -62,9 +62,9 @@ class AppRuntime {
         attachGlobalIPCResolver((channel) => this.getGlobalIPCHandler(channel));
         setRouteRequestHandler((requestId, path) => this.handleRouteRequest(requestId, path));
 
-        // Replay view routes registered before init
-        for (const path of this.viewHandlers.keys()) {
-          getNativeLibrary()?.symbols.bunite_register_view_route(toCString(path));
+        // Replay appres routes registered before init
+        for (const path of this.appresHandlers.keys()) {
+          getNativeLibrary()?.symbols.bunite_register_appres_route(toCString(path));
         }
 
         if (this.exitOnLastWindowClosed && runtime.nativeLoaded) {
@@ -166,23 +166,23 @@ class AppRuntime {
     return this.globalIPCHandlers.get(channel);
   }
 
-  private readonly viewHandlers = new Map<string, () => string>();
+  private readonly appresHandlers = new Map<string, () => string>();
 
-  getView(path: string, handler: () => string) {
-    this.viewHandlers.set(path, handler);
-    getNativeLibrary()?.symbols.bunite_register_view_route(toCString(path));
+  getAppRes(path: string, handler: () => string) {
+    this.appresHandlers.set(path, handler);
+    getNativeLibrary()?.symbols.bunite_register_appres_route(toCString(path));
   }
 
-  removeView(path: string) {
-    this.viewHandlers.delete(path);
-    getNativeLibrary()?.symbols.bunite_unregister_view_route(toCString(path));
+  removeAppRes(path: string) {
+    this.appresHandlers.delete(path);
+    getNativeLibrary()?.symbols.bunite_unregister_appres_route(toCString(path));
   }
 
   /** @internal */
   handleRouteRequest(requestId: number, path: string) {
     let html: string;
     try {
-      const handler = this.viewHandlers.get(path);
+      const handler = this.appresHandlers.get(path);
       html = handler ? handler() : "<html><body>No handler for: " + path + "</body></html>";
     } catch (error) {
       html = "<html><body>Route handler error: " + (error instanceof Error ? error.message : String(error)) + "</body></html>";

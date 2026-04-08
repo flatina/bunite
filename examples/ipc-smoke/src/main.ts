@@ -76,18 +76,18 @@ const rpc = BrowserView.defineRPC<IPCSmokeSchema>({
 
 await app.init();
 
-const viewsRoot = resolveRendererRoot();
+const appresRoot = resolveRendererRoot();
 const preload = fileURLToPath(new URL("../dist/renderer/main/preload.js", import.meta.url));
 
 const win = new BrowserWindow({
   title: "bunite ipc smoke",
   titleBarStyle: "hidden",
-  url: "views://main/index.html",
-  viewsRoot,
+  url: "appres://main/index.html",
+  appresRoot,
   preload,
   rpc,
   // navigationRules are last-match-wins; prepend ^* when you want an allowlist.
-  navigationRules: ["^*", "views://main/*", "^views://main/rpc-blocked.html*"]
+  navigationRules: ["^*", "appres://main/*", "^appres://main/rpc-blocked.html*"]
 });
 
 let messageBoxRequested = false;
@@ -214,7 +214,7 @@ void (async () => {
 console.log("[ipc-smoke] initialized", {
   usingStub: app.runtime?.usingStub ?? true,
   webviewId: win.webviewId,
-  viewsRoot
+  appresRoot
 });
 
 app.run();
