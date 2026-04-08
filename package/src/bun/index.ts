@@ -13,7 +13,6 @@ import {
   type RPCSchema,
   type RPCWithTransport
 } from "../shared/rpc";
-import type { BuniteConfig } from "../types/config";
 import type { MessageBoxOptions, MessageBoxResponse } from "./core/Utils";
 import { log, type LogLevel } from "../shared/log";
 
@@ -32,7 +31,6 @@ export {
 export type {
   LogLevel,
   BuniteEvent,
-  BuniteConfig,
   BuniteRPCConfig,
   BuniteRPCSchema,
   BrowserViewOptions,

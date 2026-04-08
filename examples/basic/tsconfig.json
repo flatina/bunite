@@ -7,7 +7,6 @@
     ]
   },
   "include": [
-    "src/main.ts",
-    "bunite.config.ts"
+    "src/main.ts"
   ]
 }
