@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, resolve, sep } from "node:path";
+import { log } from "../../shared/log";
 
 function escapeRootForComparison(path: string) {
   return process.platform === "win32" ? path.toLowerCase() : path;
@@ -37,17 +38,17 @@ function readCustomPreload(preload: string | null, viewsRoot: string | null) {
         : resolve(preload);
 
     if (!resolvedPath) {
-      console.warn(`[bunite] Cannot resolve preload without viewsRoot: ${preload}`);
+      log.warn(`Cannot resolve preload without viewsRoot: ${preload}`);
       return "";
     }
     if (!existsSync(resolvedPath)) {
-      console.warn(`[bunite] Preload file was not found: ${resolvedPath}`);
+      log.warn(`Preload file was not found: ${resolvedPath}`);
       return "";
     }
 
     return readFileSync(resolvedPath, "utf8");
   } catch (error) {
-    console.warn("[bunite] Failed to resolve preload script.", error);
+    log.warn("Failed to resolve preload script.", error);
     return "";
   }
 }

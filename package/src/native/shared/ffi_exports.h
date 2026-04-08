@@ -15,6 +15,7 @@
 extern "C" {
 #endif
 
+BUNITE_EXPORT void bunite_set_log_level(int32_t level);
 BUNITE_EXPORT bool bunite_init(
 	const char* process_helper_path,
 	const char* cef_dir,

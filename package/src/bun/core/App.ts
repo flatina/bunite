@@ -6,15 +6,20 @@ import {
   initNativeRuntime,
   getNativeRuntimeState,
   setRouteRequestHandler,
+  setNativeLogLevel,
   toCString,
   type NativeBootstrapOptions
 } from "../proc/native";
 import { attachGlobalIPCResolver, ensureRPCServer } from "./Socket";
 import { BrowserWindow } from "./BrowserWindow";
+import { log, logLevelToInt } from "../../shared/log";
+
+import type { LogLevel } from "../../shared/log";
 
 type AppInitOptions = NativeBootstrapOptions & {
   userDataDir?: string;
   exitOnLastWindowClosed?: boolean;
+  logLevel?: LogLevel;
 };
 
 export type GlobalIPCHandler = (params: unknown, ctx: { viewId: number }) => unknown | Promise<unknown>;
@@ -33,6 +38,10 @@ class AppRuntime {
           this.exitOnLastWindowClosed = options.exitOnLastWindowClosed;
         }
 
+        if (options.logLevel) {
+          log.setLevel(options.logLevel);
+        }
+
         if (options.userDataDir) {
           process.env.BUNITE_USER_DATA_DIR = options.userDataDir;
         } else if (!process.env.BUNITE_USER_DATA_DIR) {
@@ -45,6 +54,10 @@ class AppRuntime {
           popupBlocking: options.popupBlocking,
           chromiumFlags: options.chromiumFlags
         });
+
+        if (options.logLevel && runtime.nativeLoaded) {
+          setNativeLogLevel(logLevelToInt(options.logLevel));
+        }
 
         attachGlobalIPCResolver((channel) => this.getGlobalIPCHandler(channel));
         setRouteRequestHandler((requestId, path) => this.handleRouteRequest(requestId, path));
@@ -101,7 +114,7 @@ class AppRuntime {
     }
 
     if (!this.stubKeepAliveTimer) {
-      console.warn("[bunite] Running without a native event loop. Keeping the process alive in stub mode.");
+      log.warn("Running without a native event loop. Keeping the process alive in stub mode.");
       this.stubKeepAliveTimer = setInterval(() => {}, 60_000);
     }
   }

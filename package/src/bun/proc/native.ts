@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import { resolveNativeArtifacts, type ResolvedNativeArtifacts } from "../../shared/paths";
+import { log } from "../../shared/log";
 
 export type NativeBootstrapOptions = {
   allowStub?: boolean;
@@ -21,6 +22,7 @@ export type NativeRuntimeState = {
 type CStringPointer = Pointer;
 
 type NativeSymbols = {
+  bunite_set_log_level: (level: number) => void;
   bunite_init: (
     processHelperPath: CStringPointer,
     cefDir: CStringPointer,
@@ -121,6 +123,10 @@ const messageBoxButtonSeparator = "\x1f";
 const unsetCancelId = -1;
 
 const nativeSymbolDefinitions = {
+  bunite_set_log_level: {
+    args: [FFIType.i32],
+    returns: FFIType.void
+  },
   bunite_init: {
     args: [FFIType.cstring, FFIType.cstring, FFIType.bool, FFIType.bool, FFIType.cstring],
     returns: FFIType.bool
@@ -365,7 +371,7 @@ function tryLoadNativeLibrary(artifacts: ResolvedNativeArtifacts) {
       symbols: library.symbols as unknown as NativeSymbols
     } satisfies LoadedNativeLibrary;
   } catch (error) {
-    console.warn("[bunite] Failed to load native library via FFI.", error);
+    log.warn("Failed to load native library via FFI.", error);
     return null;
   }
 }
@@ -583,9 +589,7 @@ export async function initNativeRuntime(
   }
 
   if (!nativeLibrary) {
-    console.warn(
-      "[bunite] Native runtime packages were not found or could not be loaded. Initializing in stub mode."
-    );
+    log.warn("Native runtime packages were not found or could not be loaded. Initializing in stub mode.");
   }
 
   state = {
@@ -610,6 +614,10 @@ export function ensureNativeRuntime(): NativeRuntimeState {
 
 export function getNativeLibrary(): LoadedNativeLibrary | null {
   return nativeLibrary;
+}
+
+export function setNativeLogLevel(level: number): void {
+  nativeLibrary?.symbols.bunite_set_log_level(level);
 }
 
 export function completePermissionRequest(requestId: number, stateValue: number): void {

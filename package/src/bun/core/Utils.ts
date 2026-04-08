@@ -1,3 +1,4 @@
+import { log } from "../../shared/log";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import {
   cancelBrowserMessageBoxRequest,
@@ -27,8 +28,8 @@ export async function showMessageBox(
   ensureNativeRuntime();
 
   if (!getNativeLibrary()) {
-    console.warn(
-      "[bunite] Utils.showMessageBox() requires the native runtime. Returning a stub response."
+    log.warn(
+      "Utils.showMessageBox() requires the native runtime. Returning a stub response."
     );
     return {
       response: options.cancelId ?? options.defaultId ?? 0

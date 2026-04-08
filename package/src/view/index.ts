@@ -8,6 +8,7 @@ import {
   type RPCWithTransport
 } from "../shared/rpc";
 import { decodeRPCPacket, encodeRPCPacket } from "../shared/rpcWire";
+import { log } from "../shared/log";
 
 type BuniteWindowGlobals = Window &
   typeof globalThis & {
@@ -49,7 +50,7 @@ export class BuniteView<T extends RPCWithTransport> {
 
   initSocketToBun() {
     if (WEBVIEW_ID == null || RPC_SOCKET_PORT == null) {
-      console.warn("[bunite] Preload globals are missing. BuniteView will stay disconnected until native preload wiring is implemented.");
+      log.warn("Preload globals are missing. BuniteView will stay disconnected until native preload wiring is implemented.");
       return;
     }
 
@@ -79,7 +80,7 @@ export class BuniteView<T extends RPCWithTransport> {
       try {
         const decrypt = buniteWindow.__bunite_decrypt;
         if (!decrypt) {
-          console.error("[bunite] No decrypt function available in preload globals");
+          log.error("No decrypt function available in preload globals");
           return;
         }
         const decrypted = await decrypt(binaryMessage);
@@ -90,7 +91,7 @@ export class BuniteView<T extends RPCWithTransport> {
         }
         this.rpcHandler?.(packet);
       } catch (error) {
-        console.error("[bunite] Failed to parse message from Bun", error);
+        log.error("Failed to parse message from Bun", error);
       }
     });
   }
@@ -113,7 +114,7 @@ export class BuniteView<T extends RPCWithTransport> {
       send: (message) => {
         if (this.bunSocket?.readyState === WebSocket.OPEN) {
           void this.bunBridge(message).catch((error) => {
-            console.error("[bunite] Failed to send RPC packet", error);
+            log.error("Failed to send RPC packet", error);
           });
         }
       },
@@ -137,7 +138,7 @@ export class BuniteView<T extends RPCWithTransport> {
 
     const encrypt = buniteWindow.__bunite_encrypt;
     if (!encrypt) {
-      console.error("[bunite] No encrypt function available in preload globals");
+      log.error("No encrypt function available in preload globals");
       return;
     }
 
@@ -151,6 +152,8 @@ export class BuniteView<T extends RPCWithTransport> {
     return defineBuniteRPC("webview", config);
   }
 }
+
+export { log, type LogLevel } from "../shared/log";
 
 export type {
   BuniteRPCConfig,
