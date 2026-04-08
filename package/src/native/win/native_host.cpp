@@ -42,13 +42,20 @@
 
 namespace {
 
-constexpr wchar_t kMessageWindowClass[] = L"BuniteMessageWindow";
 constexpr wchar_t kWindowClass[] = L"BuniteWindowClass";
 constexpr UINT kRunQueuedTaskMessage = WM_APP + 1;
+constexpr UINT kScheduleMessagePumpMessage = WM_APP + 2;
+constexpr UINT kDoMessagePumpWorkMessage = WM_APP + 3;
+constexpr UINT kFinalizeShutdownMessage = WM_APP + 4;
+constexpr UINT_PTR kScheduledPumpTimerId = 1;
+constexpr UINT_PTR kFallbackPumpTimerId = 2;
+constexpr UINT kMaxPumpDelayMs = 1000 / 30;
+constexpr UINT kFallbackPumpDelayMs = 16;
 
 struct WindowHost;
 struct ViewHost;
 class BuniteCefClient;
+class BuniteDevToolsClient;
 
 enum class PermissionRequestKind {
   Prompt,
@@ -111,6 +118,8 @@ struct RuntimeState {
   bool init_success = false;
   bool initialized = false;
   bool shutting_down = false;
+  bool shutdown_complete = false;
+  bool shutdown_finalize_posted = false;
 
   std::thread ui_thread;
   DWORD ui_thread_id = 0;
@@ -149,13 +158,26 @@ struct RuntimeState {
   std::string cef_dir;
   bool popup_blocking = false;
   std::map<std::string, std::string> chromium_flags;
-  std::thread::id cef_owner_thread;
+  bool cef_timer_pending = false;
+  UINT cef_timer_delay_ms = 0;
+  bool cef_work_in_progress = false;
+  std::atomic<int> devtools_browser_count = 0;
 };
 
 RuntimeState g_runtime;
 
 void emitWindowEvent(uint32_t window_id, const char* event_name, const std::string& payload = {});
 void emitWebviewEvent(uint32_t view_id, const char* event_name, const std::string& payload = {});
+
+HINSTANCE getCurrentModuleHandle() {
+  HMODULE module = nullptr;
+  GetModuleHandleExW(
+    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+    reinterpret_cast<LPCWSTR>(&getCurrentModuleHandle),
+    &module
+  );
+  return module;
+}
 
 std::wstring utf8ToWide(const std::string& value) {
   if (value.empty()) {
@@ -761,48 +783,102 @@ void emitWebviewEvent(uint32_t view_id, const char* event_name, const std::strin
   }
 }
 
-class DeferredCefTask : public CefTask {
-public:
-  explicit DeferredCefTask(std::function<void()> task)
-    : task_(std::move(task)) {}
+bool isOnUiThread() {
+  return g_runtime.ui_thread_id != 0 && GetCurrentThreadId() == g_runtime.ui_thread_id;
+}
 
-  void Execute() override {
-    task_();
+void postUiTask(std::function<void()> task) {
+  {
+    std::lock_guard<std::mutex> lock(g_runtime.task_mutex);
+    g_runtime.queued_tasks.push(std::move(task));
   }
 
-private:
-  std::function<void()> task_;
-
-  IMPLEMENT_REFCOUNTING(DeferredCefTask);
-};
-
-void postTask(std::function<void()> task) {
-  CefPostTask(TID_UI, new DeferredCefTask(std::move(task)));
+  if (g_runtime.message_window) {
+    PostMessageW(g_runtime.message_window, kRunQueuedTaskMessage, 0, 0);
+  }
 }
 
 template <typename Result>
 Result runOnUiThreadSync(std::function<Result()> task) {
-  if (CefCurrentlyOn(TID_UI)) {
+  if (isOnUiThread()) {
     return task();
   }
 
   auto packaged = std::make_shared<std::packaged_task<Result()>>(std::move(task));
   auto future = packaged->get_future();
-  postTask([packaged]() { (*packaged)(); });
+  postUiTask([packaged]() { (*packaged)(); });
   return future.get();
 }
 
 template <>
 void runOnUiThreadSync<void>(std::function<void()> task) {
-  if (CefCurrentlyOn(TID_UI)) {
+  if (isOnUiThread()) {
     task();
     return;
   }
 
   auto packaged = std::make_shared<std::packaged_task<void()>>(std::move(task));
   auto future = packaged->get_future();
-  postTask([packaged]() { (*packaged)(); });
+  postUiTask([packaged]() { (*packaged)(); });
   future.get();
+}
+
+void executeQueuedUiTasks() {
+  for (;;) {
+    std::queue<std::function<void()>> tasks;
+    {
+      std::lock_guard<std::mutex> lock(g_runtime.task_mutex);
+      if (g_runtime.queued_tasks.empty()) {
+        break;
+      }
+      tasks.swap(g_runtime.queued_tasks);
+    }
+
+    while (!tasks.empty()) {
+      auto task = std::move(tasks.front());
+      tasks.pop();
+      task();
+    }
+  }
+}
+
+void doCefMessageLoopWorkOnUiThread() {
+  if (!g_runtime.cef_initialized || g_runtime.cef_work_in_progress) {
+    return;
+  }
+
+  g_runtime.cef_work_in_progress = true;
+  CefDoMessageLoopWork();
+  g_runtime.cef_work_in_progress = false;
+}
+
+void scheduleCefMessageLoopWorkOnUiThread(int64_t delay_ms) {
+  if (!g_runtime.message_window) {
+    return;
+  }
+
+  if (delay_ms <= 0) {
+    if (g_runtime.cef_timer_pending) {
+      KillTimer(g_runtime.message_window, kScheduledPumpTimerId);
+      g_runtime.cef_timer_pending = false;
+      g_runtime.cef_timer_delay_ms = 0;
+    }
+    PostMessageW(g_runtime.message_window, kDoMessagePumpWorkMessage, 0, 0);
+    return;
+  }
+
+  const UINT clamped_delay = static_cast<UINT>(std::min<int64_t>(delay_ms, kMaxPumpDelayMs));
+  if (g_runtime.cef_timer_pending && g_runtime.cef_timer_delay_ms <= clamped_delay) {
+    return;
+  }
+
+  if (g_runtime.cef_timer_pending) {
+    KillTimer(g_runtime.message_window, kScheduledPumpTimerId);
+  }
+
+  SetTimer(g_runtime.message_window, kScheduledPumpTimerId, clamped_delay, nullptr);
+  g_runtime.cef_timer_pending = true;
+  g_runtime.cef_timer_delay_ms = clamped_delay;
 }
 
 std::string normalizeViewsPath(const std::string& url) {
@@ -948,7 +1024,7 @@ void resizeViewToFit(ViewHost* view) {
       bounds = { 0, inset, client.right, inset + h };
       break;
     }
-    default: // ANCHOR_NONE — use stored bounds
+    default: // ANCHOR_NONE - use stored bounds
       break;
   }
   view->bounds = bounds;
@@ -967,6 +1043,10 @@ void resizeViewToFit(ViewHost* view) {
 void openDevToolsForView(ViewHost* view);
 void closeDevToolsForView(ViewHost* view);
 void toggleDevToolsForView(ViewHost* view);
+void maybeCompleteShutdownOnUiThread();
+void cancelPendingPermissionRequestsOnUiThread();
+void cancelPendingRouteRequestsOnUiThread();
+void shutdownCefOnUiThread();
 
 void finalizeViewHost(ViewHost* view) {
   if (!view) {
@@ -986,6 +1066,7 @@ void finalizeViewHost(ViewHost* view) {
   }
 
   delete view;
+  maybeCompleteShutdownOnUiThread();
 }
 
 void closeViewHost(ViewHost* view) {
@@ -1056,7 +1137,7 @@ public:
 
     // Dynamic route: handler lives on the Bun side, request is async
     if (bunite::ViewsRouteStorage::instance().hasRoute(normalized_path)) {
-      handle_request = false; // async — we'll call callback->Continue() later
+      handle_request = false; // async - we'll call callback->Continue() later
       uint32_t request_id;
       {
         std::lock_guard<std::mutex> lock(g_runtime.route_mutex);
@@ -1183,6 +1264,12 @@ class BuniteCefApp : public CefApp, public CefBrowserProcessHandler {
 public:
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override {
     return this;
+  }
+
+  void OnScheduleMessagePumpWork(int64_t delay_ms) override {
+    if (g_runtime.message_window) {
+      PostMessageW(g_runtime.message_window, kScheduleMessagePumpMessage, 0, static_cast<LPARAM>(delay_ms));
+    }
   }
 
   void OnBeforeCommandLineProcessing(const CefString&, CefRefPtr<CefCommandLine> command_line) override {
@@ -1419,6 +1506,25 @@ private:
   IMPLEMENT_REFCOUNTING(BuniteCefClient);
 };
 
+class BuniteDevToolsClient : public CefClient, public CefLifeSpanHandler {
+public:
+  CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
+
+  void OnAfterCreated(CefRefPtr<CefBrowser>) override {
+    CEF_REQUIRE_UI_THREAD();
+    g_runtime.devtools_browser_count.fetch_add(1);
+  }
+
+  void OnBeforeClose(CefRefPtr<CefBrowser>) override {
+    CEF_REQUIRE_UI_THREAD();
+    g_runtime.devtools_browser_count.fetch_sub(1);
+    maybeCompleteShutdownOnUiThread();
+  }
+
+private:
+  IMPLEMENT_REFCOUNTING(BuniteDevToolsClient);
+};
+
 bool BuniteCefClient::OnShowPermissionPrompt(
   CefRefPtr<CefBrowser>,
   uint64_t,
@@ -1486,7 +1592,7 @@ void openDevToolsForView(ViewHost* view) {
   window_info.SetAsPopup(nullptr, "Bunite DevTools");
 
   CefBrowserSettings settings;
-  view->browser->GetHost()->ShowDevTools(window_info, nullptr, settings, CefPoint());
+  view->browser->GetHost()->ShowDevTools(window_info, new BuniteDevToolsClient(), settings, CefPoint());
 }
 
 void closeDevToolsForView(ViewHost* view) {
@@ -1510,8 +1616,52 @@ void toggleDevToolsForView(ViewHost* view) {
   openDevToolsForView(view);
 }
 
-LRESULT CALLBACK messageWindowProc(HWND hwnd, UINT message, WPARAM, LPARAM) {
-  return DefWindowProcW(hwnd, message, 0, 0);
+LRESULT CALLBACK messageWindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param) {
+  switch (message) {
+    case kRunQueuedTaskMessage:
+      executeQueuedUiTasks();
+      return 0;
+
+    case kScheduleMessagePumpMessage: {
+      const int64_t delay_ms = static_cast<int64_t>(static_cast<intptr_t>(l_param));
+      scheduleCefMessageLoopWorkOnUiThread(delay_ms);
+      return 0;
+    }
+
+    case kDoMessagePumpWorkMessage:
+      doCefMessageLoopWorkOnUiThread();
+      maybeCompleteShutdownOnUiThread();
+      return 0;
+
+    case kFinalizeShutdownMessage:
+      if (g_runtime.message_window) {
+        KillTimer(g_runtime.message_window, kScheduledPumpTimerId);
+        KillTimer(g_runtime.message_window, kFallbackPumpTimerId);
+      }
+      g_runtime.cef_timer_pending = false;
+      g_runtime.cef_timer_delay_ms = 0;
+      shutdownCefOnUiThread();
+      PostQuitMessage(0);
+      return 0;
+
+    case WM_TIMER:
+      if (w_param == kScheduledPumpTimerId) {
+        KillTimer(hwnd, kScheduledPumpTimerId);
+        g_runtime.cef_timer_pending = false;
+        g_runtime.cef_timer_delay_ms = 0;
+        doCefMessageLoopWorkOnUiThread();
+        maybeCompleteShutdownOnUiThread();
+        return 0;
+      }
+      if (w_param == kFallbackPumpTimerId) {
+        doCefMessageLoopWorkOnUiThread();
+        maybeCompleteShutdownOnUiThread();
+        return 0;
+      }
+      break;
+  }
+
+  return DefWindowProcW(hwnd, message, w_param, l_param);
 }
 
 LRESULT CALLBACK buniteWindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param) {
@@ -1600,9 +1750,11 @@ bool registerWindowClasses() {
   static bool registered = false;
 
   std::call_once(once, []() {
+    HINSTANCE module = getCurrentModuleHandle();
+
     WNDCLASSW window_class{};
     window_class.lpfnWndProc = buniteWindowProc;
-    window_class.hInstance = GetModuleHandleW(nullptr);
+    window_class.hInstance = module;
     window_class.lpszClassName = kWindowClass;
     window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     window_class.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
@@ -1648,14 +1800,20 @@ bool initializeCefOnUiThread() {
 
   CefSettings settings{};
   settings.no_sandbox = true;
-  settings.multi_threaded_message_loop = true;
-  settings.external_message_pump = false;
+  settings.multi_threaded_message_loop = false;
+  settings.external_message_pump = true;
 
   CefString(&settings.browser_subprocess_path) = g_runtime.process_helper_path;
   CefString(&settings.resources_dir_path) = resource_dir.wstring();
   CefString(&settings.locales_dir_path) = locales_dir.wstring();
   if (const char* user_data_dir = std::getenv("BUNITE_USER_DATA_DIR")) {
     CefString(&settings.cache_path) = user_data_dir;
+  }
+  if (const char* remote_debug_port = std::getenv("BUNITE_REMOTE_DEBUGGING_PORT")) {
+    const int parsed_port = std::atoi(remote_debug_port);
+    if (parsed_port > 0 && parsed_port <= 65535) {
+      settings.remote_debugging_port = parsed_port;
+    }
   }
 
   settings.log_severity = LOGSEVERITY_ERROR;
@@ -1679,6 +1837,70 @@ void shutdownCefOnUiThread() {
   }
 }
 
+void cancelPendingPermissionRequestsOnUiThread() {
+  std::vector<PendingPermissionRequest> pending;
+  {
+    std::lock_guard<std::mutex> lock(g_runtime.permission_mutex);
+    for (auto& [_, request] : g_runtime.pending_permissions) {
+      pending.push_back(request);
+    }
+    g_runtime.pending_permissions.clear();
+  }
+
+  for (const auto& request : pending) {
+    if (request.kind == PermissionRequestKind::Prompt && request.prompt_callback) {
+      request.prompt_callback->Continue(CEF_PERMISSION_RESULT_DENY);
+      continue;
+    }
+    if (request.kind == PermissionRequestKind::MediaAccess && request.media_callback) {
+      request.media_callback->Cancel();
+    }
+  }
+}
+
+void cancelPendingRouteRequestsOnUiThread() {
+  std::vector<RuntimeState::PendingRouteRequest> pending;
+  {
+    std::lock_guard<std::mutex> lock(g_runtime.route_mutex);
+    for (auto& [_, request] : g_runtime.pending_routes) {
+      pending.push_back(std::move(request));
+    }
+    g_runtime.pending_routes.clear();
+  }
+
+  for (auto& request : pending) {
+    if (request.callback) {
+      request.callback->Cancel();
+    }
+  }
+}
+
+void maybeCompleteShutdownOnUiThread() {
+  if (!g_runtime.shutting_down) {
+    return;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
+    if (!g_runtime.views_by_id.empty()) {
+      return;
+    }
+  }
+
+  if (g_runtime.devtools_browser_count.load() > 0) {
+    return;
+  }
+
+  if (g_runtime.shutdown_finalize_posted) {
+    return;
+  }
+
+  g_runtime.shutdown_finalize_posted = true;
+  if (g_runtime.message_window) {
+    PostMessageW(g_runtime.message_window, kFinalizeShutdownMessage, 0, 0);
+  }
+}
+
 void closeAllWindowsForShutdown() {
   std::vector<WindowHost*> windows;
   std::vector<ViewHost*> orphan_views;
@@ -1696,28 +1918,13 @@ void closeAllWindowsForShutdown() {
 
   for (auto* window : windows) {
     if (window && window->hwnd) {
-      SendMessageW(window->hwnd, WM_CLOSE, 0, 0);
+      PostMessageW(window->hwnd, WM_CLOSE, 0, 0);
     }
   }
 
   for (auto* view : orphan_views) {
     closeViewHost(view);
   }
-}
-
-bool waitForAllViewsToClose(int timeout_ms) {
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-  while (std::chrono::steady_clock::now() < deadline) {
-    {
-      std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
-      if (g_runtime.views_by_id.empty()) {
-        return true;
-      }
-    }
-    Sleep(10);
-  }
-
-  return false;
 }
 
 WindowHost* getWindowHost(void* window_ptr) {
@@ -1774,6 +1981,85 @@ bool createBrowserForView(ViewHost* view) {
   return browser != nullptr;
 }
 
+void uiThreadMain() {
+  g_runtime.ui_thread_id = GetCurrentThreadId();
+
+  bool init_success = false;
+  if (registerWindowClasses()) {
+    g_runtime.message_window = CreateWindowExW(
+      0,
+      L"STATIC",
+      L"",
+      0,
+      0,
+      0,
+      0,
+      0,
+      nullptr,
+      nullptr,
+      getCurrentModuleHandle(),
+      nullptr
+    );
+
+    if (g_runtime.message_window) {
+      SetWindowLongPtrW(
+        g_runtime.message_window,
+        GWLP_WNDPROC,
+        reinterpret_cast<LONG_PTR>(messageWindowProc)
+      );
+      init_success = initializeCefOnUiThread();
+      if (init_success) {
+        SetTimer(g_runtime.message_window, kFallbackPumpTimerId, kFallbackPumpDelayMs, nullptr);
+      }
+    } else {
+      std::fprintf(stderr, "[bunite/native] Failed to create message window (err=%lu).\n", GetLastError());
+    }
+  } else {
+    std::fprintf(stderr, "[bunite/native] Failed to register window classes.\n");
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(g_runtime.lifecycle_mutex);
+    g_runtime.init_success = init_success;
+    g_runtime.init_finished = true;
+    g_runtime.initialized = init_success;
+  }
+  g_runtime.lifecycle_cv.notify_all();
+
+  if (!init_success) {
+    if (g_runtime.message_window) {
+      DestroyWindow(g_runtime.message_window);
+      g_runtime.message_window = nullptr;
+    }
+    g_runtime.ui_thread_id = 0;
+    {
+      std::lock_guard<std::mutex> lock(g_runtime.lifecycle_mutex);
+      g_runtime.shutdown_complete = true;
+    }
+    g_runtime.lifecycle_cv.notify_all();
+    return;
+  }
+
+  MSG msg{};
+  while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    TranslateMessage(&msg);
+    DispatchMessageW(&msg);
+  }
+
+  if (g_runtime.message_window) {
+    DestroyWindow(g_runtime.message_window);
+    g_runtime.message_window = nullptr;
+  }
+
+  g_runtime.ui_thread_id = 0;
+  {
+    std::lock_guard<std::mutex> lock(g_runtime.lifecycle_mutex);
+    g_runtime.initialized = false;
+    g_runtime.shutdown_complete = true;
+  }
+  g_runtime.lifecycle_cv.notify_all();
+}
+
 } // namespace
 
 extern "C" BUNITE_EXPORT bool bunite_init(
@@ -1783,17 +2069,22 @@ extern "C" BUNITE_EXPORT bool bunite_init(
   bool popup_blocking,
   const char* chromium_flags_json
 ) {
-  std::lock_guard<std::mutex> lock(g_runtime.lifecycle_mutex);
-  if (g_runtime.initialized) {
-    return true;
+  {
+    std::lock_guard<std::mutex> lock(g_runtime.lifecycle_mutex);
+    if (g_runtime.initialized) {
+      return true;
+    }
+    g_runtime.init_finished = false;
+    g_runtime.init_success = false;
+    g_runtime.shutdown_complete = false;
+    g_runtime.shutdown_finalize_posted = false;
+    g_runtime.shutting_down = false;
+    g_runtime.process_helper_path = process_helper_path ? process_helper_path : "";
+    g_runtime.cef_dir = cef_dir ? cef_dir : "";
+    g_runtime.popup_blocking = popup_blocking;
+    g_runtime.chromium_flags = parseChromiumFlagsJson(
+      chromium_flags_json ? chromium_flags_json : "");
   }
-  g_runtime.shutting_down = false;
-  g_runtime.process_helper_path = process_helper_path ? process_helper_path : "";
-  g_runtime.cef_dir = cef_dir ? cef_dir : "";
-  g_runtime.popup_blocking = popup_blocking;
-  g_runtime.chromium_flags = parseChromiumFlagsJson(
-    chromium_flags_json ? chromium_flags_json : "");
-  g_runtime.cef_owner_thread = std::this_thread::get_id();
 
   if (hide_console) {
     if (HWND console = GetConsoleWindow()) {
@@ -1801,14 +2092,22 @@ extern "C" BUNITE_EXPORT bool bunite_init(
     }
   }
 
-  g_runtime.init_success = initializeCefOnUiThread();
-  g_runtime.init_finished = true;
-  g_runtime.initialized = g_runtime.init_success;
-  return g_runtime.init_success;
+  g_runtime.ui_thread = std::thread(uiThreadMain);
+
+  std::unique_lock<std::mutex> lock(g_runtime.lifecycle_mutex);
+  g_runtime.lifecycle_cv.wait(lock, []() { return g_runtime.init_finished; });
+  const bool init_success = g_runtime.init_success;
+  lock.unlock();
+
+  if (!init_success && g_runtime.ui_thread.joinable()) {
+    g_runtime.ui_thread.join();
+  }
+
+  return init_success;
 }
 
 extern "C" BUNITE_EXPORT void bunite_run_loop(void) {
-  // The native UI thread owns the Win32 + CEF loop as soon as bunite_init succeeds.
+  // The native UI thread owns the Win32 + CEF loop after bunite_init succeeds.
 }
 
 extern "C" BUNITE_EXPORT void bunite_free_cstring(const char* value) {
@@ -1816,33 +2115,50 @@ extern "C" BUNITE_EXPORT void bunite_free_cstring(const char* value) {
 }
 
 extern "C" BUNITE_EXPORT void bunite_quit(void) {
-  bool should_shutdown = false;
   {
     std::lock_guard<std::mutex> lock(g_runtime.lifecycle_mutex);
     if (!g_runtime.initialized) {
       return;
     }
-    if (g_runtime.cef_owner_thread != std::this_thread::get_id()) {
-      std::fprintf(stderr, "[bunite/native] bunite_quit must run on the same thread as bunite_init.\n");
+    if (g_runtime.shutting_down) {
       return;
     }
     g_runtime.shutting_down = true;
-    g_runtime.initialized = false;
-    g_runtime.init_finished = false;
-    g_runtime.init_success = false;
-    should_shutdown = g_runtime.cef_initialized;
   }
 
-  if (!should_shutdown) {
-    return;
+  runOnUiThreadSync<void>([]() {
+    cancelPendingPermissionRequestsOnUiThread();
+    cancelPendingRouteRequestsOnUiThread();
+    closeAllWindowsForShutdown();
+    maybeCompleteShutdownOnUiThread();
+  });
+
+  bool shutdown_completed = false;
+  {
+    std::unique_lock<std::mutex> lock(g_runtime.lifecycle_mutex);
+    shutdown_completed = g_runtime.lifecycle_cv.wait_for(
+      lock,
+      std::chrono::seconds(5),
+      []() { return g_runtime.shutdown_complete; }
+    );
   }
 
-  runOnUiThreadSync<void>([]() { closeAllWindowsForShutdown(); });
-  if (!waitForAllViewsToClose(2000)) {
-    std::fprintf(stderr, "[bunite/native] Skipping CefShutdown because browsers are still closing.\n");
-    return;
+  if (!shutdown_completed) {
+    std::fprintf(stderr, "[bunite/native] Shutdown timed out, forcing UI thread exit.\n");
+    if (g_runtime.message_window) {
+      PostMessageW(g_runtime.message_window, kFinalizeShutdownMessage, 0, 0);
+    } else if (g_runtime.ui_thread_id != 0) {
+      PostThreadMessageW(g_runtime.ui_thread_id, WM_QUIT, 0, 0);
+    }
   }
-  shutdownCefOnUiThread();
+
+  if (g_runtime.ui_thread.joinable()) {
+    if (shutdown_completed) {
+      g_runtime.ui_thread.join();
+    } else {
+      g_runtime.ui_thread.detach();
+    }
+  }
 }
 
 extern "C" BUNITE_EXPORT void bunite_set_webview_event_handler(BuniteWebviewEventHandler handler) {
@@ -1898,7 +2214,7 @@ extern "C" BUNITE_EXPORT void* bunite_window_create(
       static_cast<int>(std::max(height, 100.0)),
       nullptr,
       nullptr,
-      GetModuleHandleW(nullptr),
+      getCurrentModuleHandle(),
       window
     );
 
