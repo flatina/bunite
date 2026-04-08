@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "package" },
+    { "path": "package/src/preload" },
+    { "path": "tests/smoke" },
+    { "path": "tests/smoke/src/renderer" }
+  ]
+}

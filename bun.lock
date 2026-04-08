@@ -15,12 +15,6 @@
         "bunite-core": "workspace:*",
       },
     },
-    "examples/ipc-smoke": {
-      "name": "bunite-ipc-smoke-example",
-      "dependencies": {
-        "bunite-core": "workspace:*",
-      },
-    },
     "examples/multitab-browser": {
       "name": "bunite-multitab-browser",
       "dependencies": {
@@ -29,9 +23,15 @@
     },
     "package": {
       "name": "bunite-core",
-      "version": "0.0.1",
+      "version": "0.0.2",
       "dependencies": {
         "msgpackr": "^1.11.9",
+      },
+    },
+    "tests/smoke": {
+      "name": "bunite-smoke-test",
+      "dependencies": {
+        "bunite-core": "workspace:*",
       },
     },
   },
@@ -58,9 +58,9 @@
 
     "bunite-core": ["bunite-core@workspace:package"],
 
-    "bunite-ipc-smoke-example": ["bunite-ipc-smoke-example@workspace:examples/ipc-smoke"],
-
     "bunite-multitab-browser": ["bunite-multitab-browser@workspace:examples/multitab-browser"],
+
+    "bunite-smoke-test": ["bunite-smoke-test@workspace:tests/smoke"],
 
     "detect-libc": ["detect-libc@2.1.2", "", {}, "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="],
 

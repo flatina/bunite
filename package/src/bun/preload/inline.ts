@@ -7,7 +7,7 @@ function escapeRootForComparison(path: string) {
 }
 
 function resolveAppResFile(appresRoot: string, url: string) {
-  const relativePath = url.replace(/^views:\/\//, "").replace(/^[\\/]+/, "");
+  const relativePath = url.replace(/^appres:\/\//, "").replace(/^[\\/]+/, "");
   const normalizedRoot = resolve(appresRoot);
   const candidate = resolve(normalizedRoot, relativePath.split("/").join(sep));
   const comparableRoot = escapeRootForComparison(normalizedRoot);

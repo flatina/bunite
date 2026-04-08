@@ -1,14 +1,10 @@
 {
   "extends": "../../../../tsconfig.base.json",
   "compilerOptions": {
+    "composite": true,
     "rootDir": ".",
     "types": [],
-    "lib": [
-      "ES2022",
-      "DOM"
-    ]
+    "lib": ["ES2022", "DOM"]
   },
-  "include": [
-    "index.ts"
-  ]
+  "include": ["index.ts"]
 }
