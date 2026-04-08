@@ -193,7 +193,6 @@ function createTab(url: string): number {
   const view = new BrowserView({
     url: !url ? "views://newtab" : url,
     viewsRoot: isViews ? rendererDir : undefined,
-    windowPtr: win.ptr,
     autoResize: false,
     windowId: win.id
   });

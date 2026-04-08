@@ -43,18 +43,18 @@ type NativeSymbols = {
     hidden: boolean,
     minimized: boolean,
     maximized: boolean
-  ) => Pointer;
-  bunite_window_show: (windowPtr: Pointer) => void;
-  bunite_window_close: (windowPtr: Pointer) => void;
-  bunite_window_set_title: (windowPtr: Pointer, title: CStringPointer) => void;
-  bunite_window_minimize: (windowPtr: Pointer) => void;
-  bunite_window_unminimize: (windowPtr: Pointer) => void;
-  bunite_window_is_minimized: (windowPtr: Pointer) => boolean;
-  bunite_window_maximize: (windowPtr: Pointer) => void;
-  bunite_window_unmaximize: (windowPtr: Pointer) => void;
-  bunite_window_is_maximized: (windowPtr: Pointer) => boolean;
+  ) => boolean;
+  bunite_window_show: (windowId: number) => void;
+  bunite_window_close: (windowId: number) => void;
+  bunite_window_set_title: (windowId: number, title: CStringPointer) => void;
+  bunite_window_minimize: (windowId: number) => void;
+  bunite_window_unminimize: (windowId: number) => void;
+  bunite_window_is_minimized: (windowId: number) => boolean;
+  bunite_window_maximize: (windowId: number) => void;
+  bunite_window_unmaximize: (windowId: number) => void;
+  bunite_window_is_maximized: (windowId: number) => boolean;
   bunite_window_set_frame: (
-    windowPtr: Pointer,
+    windowId: number,
     x: number,
     y: number,
     width: number,
@@ -62,7 +62,7 @@ type NativeSymbols = {
   ) => void;
   bunite_view_create: (
     viewId: number,
-    windowPtr: Pointer | null,
+    windowId: number,
     url: CStringPointer,
     html: CStringPointer,
     preload: CStringPointer,
@@ -74,21 +74,21 @@ type NativeSymbols = {
     height: number,
     autoResize: boolean,
     sandbox: boolean
-  ) => Pointer;
+  ) => boolean;
   bunite_register_view_route: (path: CStringPointer) => void;
   bunite_unregister_view_route: (path: CStringPointer) => void;
   bunite_complete_route_request: (requestId: number, html: CStringPointer) => void;
-  bunite_view_set_visible: (viewPtr: Pointer, visible: boolean) => void;
-  bunite_view_set_bounds: (viewPtr: Pointer, x: number, y: number, width: number, height: number) => void;
-  bunite_view_set_anchor: (viewPtr: Pointer, mode: number, inset: number) => void;
-  bunite_view_go_back: (viewPtr: Pointer) => void;
-  bunite_view_reload: (viewPtr: Pointer) => void;
-  bunite_view_load_url: (viewPtr: Pointer, url: CStringPointer) => void;
-  bunite_view_load_html: (viewPtr: Pointer, html: CStringPointer) => void;
-  bunite_view_remove: (viewPtr: Pointer) => void;
-  bunite_view_open_devtools: (viewPtr: Pointer) => void;
-  bunite_view_close_devtools: (viewPtr: Pointer) => void;
-  bunite_view_toggle_devtools: (viewPtr: Pointer) => void;
+  bunite_view_set_visible: (viewId: number, visible: boolean) => void;
+  bunite_view_set_bounds: (viewId: number, x: number, y: number, width: number, height: number) => void;
+  bunite_view_set_anchor: (viewId: number, mode: number, inset: number) => void;
+  bunite_view_go_back: (viewId: number) => void;
+  bunite_view_reload: (viewId: number) => void;
+  bunite_view_load_url: (viewId: number, url: CStringPointer) => void;
+  bunite_view_load_html: (viewId: number, html: CStringPointer) => void;
+  bunite_view_remove: (viewId: number) => void;
+  bunite_view_open_devtools: (viewId: number) => void;
+  bunite_view_close_devtools: (viewId: number) => void;
+  bunite_view_toggle_devtools: (viewId: number) => void;
   bunite_complete_permission_request: (requestId: number, state: number) => void;
   bunite_show_message_box: (
     type: CStringPointer,
@@ -151,52 +151,52 @@ const nativeSymbolDefinitions = {
       FFIType.bool,
       FFIType.bool
     ],
-    returns: FFIType.ptr
+    returns: FFIType.bool
   },
   bunite_window_show: {
-    args: [FFIType.ptr],
+    args: [FFIType.u32],
     returns: FFIType.void
   },
   bunite_window_close: {
-    args: [FFIType.ptr],
+    args: [FFIType.u32],
     returns: FFIType.void
   },
   bunite_window_set_title: {
-    args: [FFIType.ptr, FFIType.cstring],
+    args: [FFIType.u32, FFIType.cstring],
     returns: FFIType.void
   },
   bunite_window_minimize: {
-    args: [FFIType.ptr],
+    args: [FFIType.u32],
     returns: FFIType.void
   },
   bunite_window_unminimize: {
-    args: [FFIType.ptr],
+    args: [FFIType.u32],
     returns: FFIType.void
   },
   bunite_window_is_minimized: {
-    args: [FFIType.ptr],
+    args: [FFIType.u32],
     returns: FFIType.bool
   },
   bunite_window_maximize: {
-    args: [FFIType.ptr],
+    args: [FFIType.u32],
     returns: FFIType.void
   },
   bunite_window_unmaximize: {
-    args: [FFIType.ptr],
+    args: [FFIType.u32],
     returns: FFIType.void
   },
   bunite_window_is_maximized: {
-    args: [FFIType.ptr],
+    args: [FFIType.u32],
     returns: FFIType.bool
   },
   bunite_window_set_frame: {
-    args: [FFIType.ptr, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64],
+    args: [FFIType.u32, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64],
     returns: FFIType.void
   },
   bunite_view_create: {
     args: [
       FFIType.u32,
-      FFIType.ptr,
+      FFIType.u32,
       FFIType.cstring,
       FFIType.cstring,
       FFIType.cstring,
@@ -209,7 +209,7 @@ const nativeSymbolDefinitions = {
       FFIType.bool,
       FFIType.bool
     ],
-    returns: FFIType.ptr
+    returns: FFIType.bool
   },
   bunite_register_view_route: {
     args: [FFIType.cstring],
@@ -224,47 +224,47 @@ const nativeSymbolDefinitions = {
     returns: FFIType.void
   },
   bunite_view_set_visible: {
-    args: [FFIType.ptr, FFIType.bool],
+    args: [FFIType.u32, FFIType.bool],
     returns: FFIType.void
   },
   bunite_view_set_bounds: {
-    args: [FFIType.ptr, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64],
+    args: [FFIType.u32, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64],
     returns: FFIType.void
   },
   bunite_view_set_anchor: {
-    args: [FFIType.ptr, FFIType.i32, FFIType.f64],
+    args: [FFIType.u32, FFIType.i32, FFIType.f64],
     returns: FFIType.void
   },
   bunite_view_go_back: {
-    args: [FFIType.ptr],
+    args: [FFIType.u32],
     returns: FFIType.void
   },
   bunite_view_reload: {
-    args: [FFIType.ptr],
+    args: [FFIType.u32],
     returns: FFIType.void
   },
   bunite_view_load_url: {
-    args: [FFIType.ptr, FFIType.cstring],
+    args: [FFIType.u32, FFIType.cstring],
     returns: FFIType.void
   },
   bunite_view_load_html: {
-    args: [FFIType.ptr, FFIType.cstring],
+    args: [FFIType.u32, FFIType.cstring],
     returns: FFIType.void
   },
   bunite_view_remove: {
-    args: [FFIType.ptr],
+    args: [FFIType.u32],
     returns: FFIType.void
   },
   bunite_view_open_devtools: {
-    args: [FFIType.ptr],
+    args: [FFIType.u32],
     returns: FFIType.void
   },
   bunite_view_close_devtools: {
-    args: [FFIType.ptr],
+    args: [FFIType.u32],
     returns: FFIType.void
   },
   bunite_view_toggle_devtools: {
-    args: [FFIType.ptr],
+    args: [FFIType.u32],
     returns: FFIType.void
   },
   bunite_complete_permission_request: {

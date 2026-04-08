@@ -1,4 +1,3 @@
-import type { Pointer } from "bun:ffi";
 import { BuniteEvent } from "../events/event";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import { ensureNativeRuntime, getNativeLibrary, toCString } from "../proc/native";
@@ -52,7 +51,7 @@ const BrowserWindowMap: Record<number, BrowserWindow<any>> = {};
 
 export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
   id = getNextWindowId();
-  ptr: Pointer | null = null;
+  private nativeAttached = false;
   title: string;
   frame: WindowOptionsType["frame"];
   url: string | null;
@@ -106,7 +105,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
       return;
     }
     this.closed = true;
-    this.ptr = null;
+    this.nativeAttached = false;
     BrowserView.getById(this.webviewId)?.detachFromNative();
     delete BrowserWindowMap[this.id];
     buniteEventEmitter.off(`move-${this.id}`, this.handleNativeMove);
@@ -130,7 +129,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     this.sandbox = options.sandbox ?? defaultOptions.sandbox;
 
     const native = getNativeLibrary();
-    this.ptr =
+    this.nativeAttached =
       native?.symbols.bunite_window_create(
         this.id,
         this.frame.x,
@@ -143,7 +142,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
         this.hidden,
         Boolean(this.frame.minimized),
         Boolean(this.frame.maximized)
-      ) ?? null;
+      ) ?? false;
 
     BrowserWindowMap[this.id] = this;
     buniteEventEmitter.on(`move-${this.id}`, this.handleNativeMove);
@@ -155,7 +154,6 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
       html: this.html,
       preload: this.preload,
       viewsRoot: this.viewsRoot,
-      windowPtr: this.ptr,
       frame: {
         x: 0,
         y: 0,
@@ -181,8 +179,8 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
 
   show() {
     this.hidden = false;
-    if (this.ptr) {
-      getNativeLibrary()?.symbols.bunite_window_show(this.ptr);
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_window_show(this.id);
     }
   }
 
@@ -191,10 +189,10 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
       return;
     }
     this.closed = true;
-    const hadNativePtr = Boolean(this.ptr);
-    if (this.ptr) {
-      getNativeLibrary()?.symbols.bunite_window_close(this.ptr);
-      this.ptr = null;
+    const hadNative = this.nativeAttached;
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_window_close(this.id);
+      this.nativeAttached = false;
     } else {
       BrowserView.getById(this.webviewId)?.remove();
     }
@@ -202,13 +200,13 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     buniteEventEmitter.off(`move-${this.id}`, this.handleNativeMove);
     buniteEventEmitter.off(`resize-${this.id}`, this.handleNativeResize);
     buniteEventEmitter.off(`close-${this.id}`, this.handleNativeClose);
-    if (!hadNativePtr) {
+    if (!hadNative) {
       buniteEventEmitter.emitEvent(buniteEventEmitter.events.window.close({ id: this.id }), this.id);
     }
   }
 
   maximize() {
-    if (!this.ptr) {
+    if (!this.nativeAttached) {
       this.frame.maximized = true;
       this.frame.minimized = false;
       return;
@@ -219,13 +217,13 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
       return;
     }
 
-    native.symbols.bunite_window_maximize(this.ptr);
-    this.frame.minimized = native.symbols.bunite_window_is_minimized(this.ptr);
-    this.frame.maximized = native.symbols.bunite_window_is_maximized(this.ptr);
+    native.symbols.bunite_window_maximize(this.id);
+    this.frame.minimized = native.symbols.bunite_window_is_minimized(this.id);
+    this.frame.maximized = native.symbols.bunite_window_is_maximized(this.id);
   }
 
   unmaximize() {
-    if (!this.ptr) {
+    if (!this.nativeAttached) {
       this.frame.maximized = false;
       return;
     }
@@ -235,23 +233,23 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
       return;
     }
 
-    native.symbols.bunite_window_unmaximize(this.ptr);
-    this.frame.minimized = native.symbols.bunite_window_is_minimized(this.ptr);
-    this.frame.maximized = native.symbols.bunite_window_is_maximized(this.ptr);
+    native.symbols.bunite_window_unmaximize(this.id);
+    this.frame.minimized = native.symbols.bunite_window_is_minimized(this.id);
+    this.frame.maximized = native.symbols.bunite_window_is_maximized(this.id);
   }
 
   isMaximized() {
-    if (!this.ptr) {
+    if (!this.nativeAttached) {
       return Boolean(this.frame.maximized);
     }
 
-    const maximized = getNativeLibrary()?.symbols.bunite_window_is_maximized(this.ptr) ?? false;
+    const maximized = getNativeLibrary()?.symbols.bunite_window_is_maximized(this.id) ?? false;
     this.frame.maximized = maximized;
     return maximized;
   }
 
   minimize() {
-    if (!this.ptr) {
+    if (!this.nativeAttached) {
       this.restoreMaximizedAfterMinimize = Boolean(this.frame.maximized);
       this.frame.minimized = true;
       this.frame.maximized = false;
@@ -263,13 +261,13 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
       return;
     }
 
-    native.symbols.bunite_window_minimize(this.ptr);
-    this.frame.minimized = native.symbols.bunite_window_is_minimized(this.ptr);
-    this.frame.maximized = native.symbols.bunite_window_is_maximized(this.ptr);
+    native.symbols.bunite_window_minimize(this.id);
+    this.frame.minimized = native.symbols.bunite_window_is_minimized(this.id);
+    this.frame.maximized = native.symbols.bunite_window_is_maximized(this.id);
   }
 
   unminimize() {
-    if (!this.ptr) {
+    if (!this.nativeAttached) {
       this.frame.minimized = false;
       this.frame.maximized = this.restoreMaximizedAfterMinimize;
       this.restoreMaximizedAfterMinimize = false;
@@ -281,32 +279,32 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
       return;
     }
 
-    native.symbols.bunite_window_unminimize(this.ptr);
-    this.frame.minimized = native.symbols.bunite_window_is_minimized(this.ptr);
-    this.frame.maximized = native.symbols.bunite_window_is_maximized(this.ptr);
+    native.symbols.bunite_window_unminimize(this.id);
+    this.frame.minimized = native.symbols.bunite_window_is_minimized(this.id);
+    this.frame.maximized = native.symbols.bunite_window_is_maximized(this.id);
   }
 
   isMinimized() {
-    if (!this.ptr) {
+    if (!this.nativeAttached) {
       return Boolean(this.frame.minimized);
     }
 
-    const minimized = getNativeLibrary()?.symbols.bunite_window_is_minimized(this.ptr) ?? false;
+    const minimized = getNativeLibrary()?.symbols.bunite_window_is_minimized(this.id) ?? false;
     this.frame.minimized = minimized;
     return minimized;
   }
 
   setTitle(title: string) {
     this.title = title;
-    if (this.ptr) {
-      getNativeLibrary()?.symbols.bunite_window_set_title(this.ptr, toCString(title));
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_window_set_title(this.id, toCString(title));
     }
   }
 
   setFrame(x: number, y: number, width: number, height: number) {
     this.frame = { ...this.frame, x, y, width, height };
-    if (this.ptr) {
-      getNativeLibrary()?.symbols.bunite_window_set_frame(this.ptr, x, y, width, height);
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_window_set_frame(this.id, x, y, width, height);
     }
   }
 

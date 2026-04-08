@@ -1,5 +1,4 @@
 import { buildViewPreloadScript } from "../preload/inline";
-import type { Pointer } from "bun:ffi";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import { defineBuniteRPC, type BuniteRPCConfig, type BuniteRPCSchema, type RPCWithTransport } from "../../shared/rpc";
 import { ensureNativeRuntime, getNativeLibrary, toCString } from "../proc/native";
@@ -16,7 +15,6 @@ export type BrowserViewOptions<T = undefined> = {
   preload: string | null;
   viewsRoot: string | null;
   partition: string | null;
-  windowPtr?: Pointer | null;
   frame: {
     x: number;
     y: number;
@@ -36,7 +34,6 @@ const defaultOptions: BrowserViewOptions = {
   preload: null,
   viewsRoot: null,
   partition: null,
-  windowPtr: null,
   frame: {
     x: 0,
     y: 0,
@@ -51,7 +48,7 @@ const defaultOptions: BrowserViewOptions = {
 
 export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
   id = nextWebviewId++;
-  ptr: Pointer | null = null;
+  private nativeAttached = false;
   windowId: number;
   url: string | null;
   html: string | null;
@@ -99,10 +96,10 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
 
     BrowserViewMap[this.id] = this;
     this.rpc?.setTransport(this.createTransport());
-    this.ptr =
+    this.nativeAttached =
       getNativeLibrary()?.symbols.bunite_view_create(
         this.id,
-        options.windowPtr ?? null,
+        this.windowId,
         toCString(this.url ?? ""),
         toCString(this.html ?? ""),
         toCString(preloadScript),
@@ -114,7 +111,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
         this.frame.height,
         this.autoResize,
         this.sandbox
-      ) ?? null;
+      ) ?? false;
   }
 
   static getById(id: number) {
@@ -155,77 +152,77 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
 
   setAnchor(mode: "none" | "fill" | "top" | "below-top", inset = 0) {
     const modeInt = { none: 0, fill: 1, top: 2, "below-top": 3 }[mode];
-    if (this.ptr) {
-      getNativeLibrary()?.symbols.bunite_view_set_anchor(this.ptr, modeInt, inset);
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_view_set_anchor(this.id, modeInt, inset);
     }
   }
 
   goBack() {
-    if (this.ptr) {
-      getNativeLibrary()?.symbols.bunite_view_go_back(this.ptr);
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_view_go_back(this.id);
     }
   }
 
   reload() {
-    if (this.ptr) {
-      getNativeLibrary()?.symbols.bunite_view_reload(this.ptr);
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_view_reload(this.id);
     }
   }
 
   setVisible(visible: boolean) {
-    if (this.ptr) {
-      getNativeLibrary()?.symbols.bunite_view_set_visible(this.ptr, visible);
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_view_set_visible(this.id, visible);
     }
   }
 
   setBounds(x: number, y: number, width: number, height: number) {
     this.frame = { x, y, width, height };
-    if (this.ptr) {
-      getNativeLibrary()?.symbols.bunite_view_set_bounds(this.ptr, x, y, width, height);
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_view_set_bounds(this.id, x, y, width, height);
     }
   }
 
   loadURL(url: string) {
     this.url = url;
-    if (this.ptr) {
-      getNativeLibrary()?.symbols.bunite_view_load_url(this.ptr, toCString(url));
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_view_load_url(this.id, toCString(url));
     }
   }
 
   loadHTML(html: string) {
     this.html = html;
-    if (this.ptr) {
-      getNativeLibrary()?.symbols.bunite_view_load_html(this.ptr, toCString(html));
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_view_load_html(this.id, toCString(html));
     }
   }
 
   remove() {
-    if (this.ptr) {
-      getNativeLibrary()?.symbols.bunite_view_remove(this.ptr);
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_view_remove(this.id);
     }
     this.detachFromNative();
   }
 
   openDevTools() {
-    if (this.ptr) {
-      getNativeLibrary()?.symbols.bunite_view_open_devtools(this.ptr);
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_view_open_devtools(this.id);
     }
   }
 
   closeDevTools() {
-    if (this.ptr) {
-      getNativeLibrary()?.symbols.bunite_view_close_devtools(this.ptr);
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_view_close_devtools(this.id);
     }
   }
 
   toggleDevTools() {
-    if (this.ptr) {
-      getNativeLibrary()?.symbols.bunite_view_toggle_devtools(this.ptr);
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_view_toggle_devtools(this.id);
     }
   }
 
   detachFromNative() {
-    this.ptr = null;
+    this.nativeAttached = false;
     for (const eventName of [
       "will-navigate",
       "did-navigate",
