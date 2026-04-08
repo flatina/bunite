@@ -3,6 +3,7 @@ import type { BrowserView } from "./BrowserView";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import type { RPCPacket, RPCRequestPacket } from "../../shared/rpc";
 import type { GlobalIPCHandler } from "./App";
+import { log } from "../../shared/log";
 import {
   asUint8Array,
   createEncryptedRPCFrame,
@@ -114,7 +115,7 @@ export function ensureRPCServer() {
 
               view.handleIncomingRPC(packet);
             } catch (error) {
-              console.error("[bunite] Failed to parse RPC payload", error);
+              log.error("Failed to parse RPC payload", error);
             }
           }
         }
