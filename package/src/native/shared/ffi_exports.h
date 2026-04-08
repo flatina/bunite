@@ -28,7 +28,7 @@ BUNITE_EXPORT void bunite_free_cstring(const char* value);
 BUNITE_EXPORT void bunite_set_webview_event_handler(BuniteWebviewEventHandler handler);
 BUNITE_EXPORT void bunite_set_window_event_handler(BuniteWindowEventHandler handler);
 
-BUNITE_EXPORT void* bunite_window_create(
+BUNITE_EXPORT bool bunite_window_create(
 	uint32_t window_id,
 	double x,
 	double y,
@@ -41,26 +41,26 @@ BUNITE_EXPORT void* bunite_window_create(
 	bool minimized,
 	bool maximized
 );
-BUNITE_EXPORT void bunite_window_show(void* window_ptr);
-BUNITE_EXPORT void bunite_window_close(void* window_ptr);
-BUNITE_EXPORT void bunite_window_set_title(void* window_ptr, const char* title);
-BUNITE_EXPORT void bunite_window_minimize(void* window_ptr);
-BUNITE_EXPORT void bunite_window_unminimize(void* window_ptr);
-BUNITE_EXPORT bool bunite_window_is_minimized(void* window_ptr);
-BUNITE_EXPORT void bunite_window_maximize(void* window_ptr);
-BUNITE_EXPORT void bunite_window_unmaximize(void* window_ptr);
-BUNITE_EXPORT bool bunite_window_is_maximized(void* window_ptr);
+BUNITE_EXPORT void bunite_window_show(uint32_t window_id);
+BUNITE_EXPORT void bunite_window_close(uint32_t window_id);
+BUNITE_EXPORT void bunite_window_set_title(uint32_t window_id, const char* title);
+BUNITE_EXPORT void bunite_window_minimize(uint32_t window_id);
+BUNITE_EXPORT void bunite_window_unminimize(uint32_t window_id);
+BUNITE_EXPORT bool bunite_window_is_minimized(uint32_t window_id);
+BUNITE_EXPORT void bunite_window_maximize(uint32_t window_id);
+BUNITE_EXPORT void bunite_window_unmaximize(uint32_t window_id);
+BUNITE_EXPORT bool bunite_window_is_maximized(uint32_t window_id);
 BUNITE_EXPORT void bunite_window_set_frame(
-	void* window_ptr,
+	uint32_t window_id,
 	double x,
 	double y,
 	double width,
 	double height
 );
 
-BUNITE_EXPORT void* bunite_view_create(
+BUNITE_EXPORT bool bunite_view_create(
 	uint32_t view_id,
-	void* window_ptr,
+	uint32_t window_id,
 	const char* url,
 	const char* html,
 	const char* preload,
@@ -73,26 +73,26 @@ BUNITE_EXPORT void* bunite_view_create(
 	bool auto_resize,
 	bool sandbox
 );
-BUNITE_EXPORT void bunite_view_load_url(void* view_ptr, const char* url);
-BUNITE_EXPORT void bunite_view_load_html(void* view_ptr, const char* html);
+BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char* url);
+BUNITE_EXPORT void bunite_view_load_html(uint32_t view_id, const char* html);
 BUNITE_EXPORT void bunite_register_view_route(const char* path);
 BUNITE_EXPORT void bunite_unregister_view_route(const char* path);
 BUNITE_EXPORT void bunite_complete_route_request(uint32_t request_id, const char* html);
-BUNITE_EXPORT void bunite_view_set_visible(void* view_ptr, bool visible);
+BUNITE_EXPORT void bunite_view_set_visible(uint32_t view_id, bool visible);
 BUNITE_EXPORT void bunite_view_set_bounds(
-	void* view_ptr,
+	uint32_t view_id,
 	double x,
 	double y,
 	double width,
 	double height
 );
-BUNITE_EXPORT void bunite_view_set_anchor(void* view_ptr, int mode, double inset);
-BUNITE_EXPORT void bunite_view_go_back(void* view_ptr);
-BUNITE_EXPORT void bunite_view_reload(void* view_ptr);
-BUNITE_EXPORT void bunite_view_remove(void* view_ptr);
-BUNITE_EXPORT void bunite_view_open_devtools(void* view_ptr);
-BUNITE_EXPORT void bunite_view_close_devtools(void* view_ptr);
-BUNITE_EXPORT void bunite_view_toggle_devtools(void* view_ptr);
+BUNITE_EXPORT void bunite_view_set_anchor(uint32_t view_id, int mode, double inset);
+BUNITE_EXPORT void bunite_view_go_back(uint32_t view_id);
+BUNITE_EXPORT void bunite_view_reload(uint32_t view_id);
+BUNITE_EXPORT void bunite_view_remove(uint32_t view_id);
+BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id);
+BUNITE_EXPORT void bunite_view_close_devtools(uint32_t view_id);
+BUNITE_EXPORT void bunite_view_toggle_devtools(uint32_t view_id);
 BUNITE_EXPORT void bunite_complete_permission_request(uint32_t request_id, uint32_t state);
 BUNITE_EXPORT int32_t bunite_show_message_box(
 	const char* type,

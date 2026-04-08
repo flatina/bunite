@@ -1927,12 +1927,16 @@ void closeAllWindowsForShutdown() {
   }
 }
 
-WindowHost* getWindowHost(void* window_ptr) {
-  return static_cast<WindowHost*>(window_ptr);
+WindowHost* getWindowHostById(uint32_t window_id) {
+  std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
+  auto it = g_runtime.windows_by_id.find(window_id);
+  return it != g_runtime.windows_by_id.end() ? it->second : nullptr;
 }
 
-ViewHost* getViewHost(void* view_ptr) {
-  return static_cast<ViewHost*>(view_ptr);
+ViewHost* getViewHostById(uint32_t view_id) {
+  std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
+  auto it = g_runtime.views_by_id.find(view_id);
+  return it != g_runtime.views_by_id.end() ? it->second : nullptr;
 }
 
 DWORD makeWindowStyle(const std::wstring& title_bar_style) {
@@ -2171,7 +2175,7 @@ extern "C" BUNITE_EXPORT void bunite_set_window_event_handler(BuniteWindowEventH
   g_runtime.window_event_handler = handler;
 }
 
-extern "C" BUNITE_EXPORT void* bunite_window_create(
+extern "C" BUNITE_EXPORT bool bunite_window_create(
   uint32_t window_id,
   double x,
   double y,
@@ -2184,7 +2188,7 @@ extern "C" BUNITE_EXPORT void* bunite_window_create(
   bool minimized,
   bool maximized
 ) {
-  return runOnUiThreadSync<void*>([=]() -> void* {
+  return runOnUiThreadSync<bool>([=]() -> bool {
     auto* window = new WindowHost{
       window_id,
       nullptr,
@@ -2220,7 +2224,7 @@ extern "C" BUNITE_EXPORT void* bunite_window_create(
 
     if (!window->hwnd) {
       delete window;
-      return nullptr;
+      return false;
     }
 
     {
@@ -2233,12 +2237,13 @@ extern "C" BUNITE_EXPORT void* bunite_window_create(
       UpdateWindow(window->hwnd);
     }
 
-    return window;
+    return true;
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_window_show(void* window_ptr) {
-  runOnUiThreadSync<void>([window = getWindowHost(window_ptr)]() {
+extern "C" BUNITE_EXPORT void bunite_window_show(uint32_t window_id) {
+  runOnUiThreadSync<void>([window_id]() {
+    auto* window = getWindowHostById(window_id);
     if (!window || !window->hwnd) {
       return;
     }
@@ -2251,8 +2256,9 @@ extern "C" BUNITE_EXPORT void bunite_window_show(void* window_ptr) {
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_window_close(void* window_ptr) {
-  runOnUiThreadSync<void>([window = getWindowHost(window_ptr)]() {
+extern "C" BUNITE_EXPORT void bunite_window_close(uint32_t window_id) {
+  runOnUiThreadSync<void>([window_id]() {
+    auto* window = getWindowHostById(window_id);
     if (!window || !window->hwnd) {
       return;
     }
@@ -2260,8 +2266,9 @@ extern "C" BUNITE_EXPORT void bunite_window_close(void* window_ptr) {
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_window_set_title(void* window_ptr, const char* title) {
-  runOnUiThreadSync<void>([window = getWindowHost(window_ptr), value = std::string(title ? title : "")]() {
+extern "C" BUNITE_EXPORT void bunite_window_set_title(uint32_t window_id, const char* title) {
+  runOnUiThreadSync<void>([window_id, value = std::string(title ? title : "")]() {
+    auto* window = getWindowHostById(window_id);
     if (!window || !window->hwnd) {
       return;
     }
@@ -2270,8 +2277,9 @@ extern "C" BUNITE_EXPORT void bunite_window_set_title(void* window_ptr, const ch
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_window_minimize(void* window_ptr) {
-  runOnUiThreadSync<void>([window = getWindowHost(window_ptr)]() {
+extern "C" BUNITE_EXPORT void bunite_window_minimize(uint32_t window_id) {
+  runOnUiThreadSync<void>([window_id]() {
+    auto* window = getWindowHostById(window_id);
     if (!window || !window->hwnd) {
       return;
     }
@@ -2287,8 +2295,9 @@ extern "C" BUNITE_EXPORT void bunite_window_minimize(void* window_ptr) {
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_window_unminimize(void* window_ptr) {
-  runOnUiThreadSync<void>([window = getWindowHost(window_ptr)]() {
+extern "C" BUNITE_EXPORT void bunite_window_unminimize(uint32_t window_id) {
+  runOnUiThreadSync<void>([window_id]() {
+    auto* window = getWindowHostById(window_id);
     if (!window || !window->hwnd) {
       return;
     }
@@ -2304,8 +2313,9 @@ extern "C" BUNITE_EXPORT void bunite_window_unminimize(void* window_ptr) {
   });
 }
 
-extern "C" BUNITE_EXPORT bool bunite_window_is_minimized(void* window_ptr) {
-  return runOnUiThreadSync<bool>([window = getWindowHost(window_ptr)]() -> bool {
+extern "C" BUNITE_EXPORT bool bunite_window_is_minimized(uint32_t window_id) {
+  return runOnUiThreadSync<bool>([window_id]() -> bool {
+    auto* window = getWindowHostById(window_id);
     if (!window || !window->hwnd) {
       return false;
     }
@@ -2318,8 +2328,9 @@ extern "C" BUNITE_EXPORT bool bunite_window_is_minimized(void* window_ptr) {
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_window_maximize(void* window_ptr) {
-  runOnUiThreadSync<void>([window = getWindowHost(window_ptr)]() {
+extern "C" BUNITE_EXPORT void bunite_window_maximize(uint32_t window_id) {
+  runOnUiThreadSync<void>([window_id]() {
+    auto* window = getWindowHostById(window_id);
     if (!window || !window->hwnd) {
       return;
     }
@@ -2335,8 +2346,9 @@ extern "C" BUNITE_EXPORT void bunite_window_maximize(void* window_ptr) {
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_window_unmaximize(void* window_ptr) {
-  runOnUiThreadSync<void>([window = getWindowHost(window_ptr)]() {
+extern "C" BUNITE_EXPORT void bunite_window_unmaximize(uint32_t window_id) {
+  runOnUiThreadSync<void>([window_id]() {
+    auto* window = getWindowHostById(window_id);
     if (!window || !window->hwnd) {
       return;
     }
@@ -2352,8 +2364,9 @@ extern "C" BUNITE_EXPORT void bunite_window_unmaximize(void* window_ptr) {
   });
 }
 
-extern "C" BUNITE_EXPORT bool bunite_window_is_maximized(void* window_ptr) {
-  return runOnUiThreadSync<bool>([window = getWindowHost(window_ptr)]() -> bool {
+extern "C" BUNITE_EXPORT bool bunite_window_is_maximized(uint32_t window_id) {
+  return runOnUiThreadSync<bool>([window_id]() -> bool {
+    auto* window = getWindowHostById(window_id);
     if (!window || !window->hwnd) {
       return false;
     }
@@ -2367,13 +2380,14 @@ extern "C" BUNITE_EXPORT bool bunite_window_is_maximized(void* window_ptr) {
 }
 
 extern "C" BUNITE_EXPORT void bunite_window_set_frame(
-  void* window_ptr,
+  uint32_t window_id,
   double x,
   double y,
   double width,
   double height
 ) {
-  runOnUiThreadSync<void>([window = getWindowHost(window_ptr), x, y, width, height]() {
+  runOnUiThreadSync<void>([window_id, x, y, width, height]() {
+    auto* window = getWindowHostById(window_id);
     if (!window || !window->hwnd) {
       return;
     }
@@ -2390,9 +2404,9 @@ extern "C" BUNITE_EXPORT void bunite_window_set_frame(
   });
 }
 
-extern "C" BUNITE_EXPORT void* bunite_view_create(
+extern "C" BUNITE_EXPORT bool bunite_view_create(
   uint32_t view_id,
-  void* window_ptr,
+  uint32_t window_id,
   const char* url,
   const char* html,
   const char* preload,
@@ -2405,10 +2419,10 @@ extern "C" BUNITE_EXPORT void* bunite_view_create(
   bool auto_resize,
   bool sandbox
 ) {
-  return runOnUiThreadSync<void*>([=]() -> void* {
-    auto* window = getWindowHost(window_ptr);
+  return runOnUiThreadSync<bool>([=]() -> bool {
+    auto* window = getWindowHostById(window_id);
     if (!window || !window->hwnd) {
-      return nullptr;
+      return false;
     }
 
     auto* view = new ViewHost{
@@ -2443,15 +2457,16 @@ extern "C" BUNITE_EXPORT void* bunite_view_create(
         window->views.erase(std::remove(window->views.begin(), window->views.end(), view), window->views.end());
       }
       delete view;
-      return nullptr;
+      return false;
     }
 
-    return view;
+    return true;
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_load_url(void* view_ptr, const char* url) {
-  runOnUiThreadSync<void>([view = getViewHost(view_ptr), next_url = std::string(url ? url : "")]() {
+extern "C" BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char* url) {
+  runOnUiThreadSync<void>([view_id, next_url = std::string(url ? url : "")]() {
+    auto* view = getViewHostById(view_id);
     if (!view) {
       return;
     }
@@ -2465,8 +2480,9 @@ extern "C" BUNITE_EXPORT void bunite_view_load_url(void* view_ptr, const char* u
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_load_html(void* view_ptr, const char* html) {
-  runOnUiThreadSync<void>([view = getViewHost(view_ptr), content = std::string(html ? html : "")]() {
+extern "C" BUNITE_EXPORT void bunite_view_load_html(uint32_t view_id, const char* html) {
+  runOnUiThreadSync<void>([view_id, content = std::string(html ? html : "")]() {
+    auto* view = getViewHostById(view_id);
     if (!view) {
       return;
     }
@@ -2479,8 +2495,9 @@ extern "C" BUNITE_EXPORT void bunite_view_load_html(void* view_ptr, const char* 
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_set_visible(void* view_ptr, bool visible) {
-  runOnUiThreadSync<void>([view = getViewHost(view_ptr), visible]() {
+extern "C" BUNITE_EXPORT void bunite_view_set_visible(uint32_t view_id, bool visible) {
+  runOnUiThreadSync<void>([view_id, visible]() {
+    auto* view = getViewHostById(view_id);
     if (!view || !view->browser) {
       return;
     }
@@ -2492,13 +2509,14 @@ extern "C" BUNITE_EXPORT void bunite_view_set_visible(void* view_ptr, bool visib
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_set_bounds(
-  void* view_ptr,
+  uint32_t view_id,
   double x,
   double y,
   double width,
   double height
 ) {
-  runOnUiThreadSync<void>([view = getViewHost(view_ptr), x, y, width, height]() {
+  runOnUiThreadSync<void>([view_id, x, y, width, height]() {
+    auto* view = getViewHostById(view_id);
     if (!view || !view->browser) {
       return;
     }
@@ -2552,8 +2570,9 @@ extern "C" BUNITE_EXPORT void bunite_complete_route_request(uint32_t request_id,
   }
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_set_anchor(void* view_ptr, int mode, double inset) {
-  runOnUiThreadSync<void>([view = getViewHost(view_ptr), mode, inset]() {
+extern "C" BUNITE_EXPORT void bunite_view_set_anchor(uint32_t view_id, int mode, double inset) {
+  runOnUiThreadSync<void>([view_id, mode, inset]() {
+    auto* view = getViewHostById(view_id);
     if (!view) {
       return;
     }
@@ -2563,36 +2582,38 @@ extern "C" BUNITE_EXPORT void bunite_view_set_anchor(void* view_ptr, int mode, d
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_go_back(void* view_ptr) {
-  runOnUiThreadSync<void>([view = getViewHost(view_ptr)]() {
+extern "C" BUNITE_EXPORT void bunite_view_go_back(uint32_t view_id) {
+  runOnUiThreadSync<void>([view_id]() {
+    auto* view = getViewHostById(view_id);
     if (view && view->browser) {
       view->browser->GoBack();
     }
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_reload(void* view_ptr) {
-  runOnUiThreadSync<void>([view = getViewHost(view_ptr)]() {
+extern "C" BUNITE_EXPORT void bunite_view_reload(uint32_t view_id) {
+  runOnUiThreadSync<void>([view_id]() {
+    auto* view = getViewHostById(view_id);
     if (view && view->browser) {
       view->browser->Reload();
     }
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_remove(void* view_ptr) {
-  runOnUiThreadSync<void>([view = getViewHost(view_ptr)]() { closeViewHost(view); });
+extern "C" BUNITE_EXPORT void bunite_view_remove(uint32_t view_id) {
+  runOnUiThreadSync<void>([view_id]() { closeViewHost(getViewHostById(view_id)); });
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_open_devtools(void* view_ptr) {
-  runOnUiThreadSync<void>([view = getViewHost(view_ptr)]() { openDevToolsForView(view); });
+extern "C" BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id) {
+  runOnUiThreadSync<void>([view_id]() { openDevToolsForView(getViewHostById(view_id)); });
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_close_devtools(void* view_ptr) {
-  runOnUiThreadSync<void>([view = getViewHost(view_ptr)]() { closeDevToolsForView(view); });
+extern "C" BUNITE_EXPORT void bunite_view_close_devtools(uint32_t view_id) {
+  runOnUiThreadSync<void>([view_id]() { closeDevToolsForView(getViewHostById(view_id)); });
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_toggle_devtools(void* view_ptr) {
-  runOnUiThreadSync<void>([view = getViewHost(view_ptr)]() { toggleDevToolsForView(view); });
+extern "C" BUNITE_EXPORT void bunite_view_toggle_devtools(uint32_t view_id) {
+  runOnUiThreadSync<void>([view_id]() { toggleDevToolsForView(getViewHostById(view_id)); });
 }
 
 extern "C" BUNITE_EXPORT void bunite_complete_permission_request(uint32_t request_id, uint32_t state) {
