@@ -15,6 +15,7 @@ import {
 } from "../shared/rpc";
 import type { BuniteConfig } from "../types/config";
 import type { MessageBoxOptions, MessageBoxResponse } from "./core/Utils";
+import { log, type LogLevel } from "../shared/log";
 
 export {
   app,
@@ -24,10 +25,12 @@ export {
   buniteEventEmitter,
   completePermissionRequest,
   createRPC,
-  defineBuniteRPC
+  defineBuniteRPC,
+  log
 };
 
 export type {
+  LogLevel,
   BuniteEvent,
   BuniteConfig,
   BuniteRPCConfig,

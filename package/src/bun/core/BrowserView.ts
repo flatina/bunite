@@ -1,4 +1,5 @@
 import { buildViewPreloadScript } from "../preload/inline";
+import { log } from "../../shared/log";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import { defineBuniteRPC, type BuniteRPCConfig, type BuniteRPCSchema, type RPCWithTransport } from "../../shared/rpc";
 import { ensureNativeRuntime, getNativeLibrary, toCString } from "../proc/native";
@@ -83,7 +84,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
       throw new Error("sandboxed BrowserView is not implemented in Bunite Windows Phase 1 yet.");
     }
     if (this.partition) {
-      console.warn("[bunite] BrowserView.partition is not implemented in Bunite Windows Phase 1 yet.");
+      log.warn("BrowserView.partition is not implemented in Bunite Windows Phase 1 yet.");
     }
 
     const preloadScript = buildViewPreloadScript({

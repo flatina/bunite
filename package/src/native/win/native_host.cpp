@@ -1,4 +1,5 @@
 #include "../shared/ffi_exports.h"
+#include "../shared/log.h"
 
 #include <windows.h>
 
@@ -1165,14 +1166,8 @@ public:
     const auto content = loadViewsResource(view_id_, url, mime_type);
     if (!content) {
       const std::string views_root = getViewsRootForView(view_id_);
-      std::fprintf(
-        stderr,
-        "[bunite/native] views:// resource not found (view=%u, url=%s, normalized=%s, root=%s)\n",
-        view_id_,
-        url.c_str(),
-        normalized_path.c_str(),
-        views_root.c_str()
-      );
+      BUNITE_WARN("views:// resource not found (view=%u, url=%s, normalized=%s, root=%s)",
+        view_id_, url.c_str(), normalized_path.c_str(), views_root.c_str());
       status_code_ = 404;
       status_text_ = "Not Found";
       mime_type_ = "text/plain";
@@ -1773,11 +1768,11 @@ bool registerWindowClasses() {
 
 bool initializeCefOnUiThread() {
   if (g_runtime.process_helper_path.empty() || g_runtime.cef_dir.empty()) {
-    std::fprintf(stderr, "[bunite/native] Missing process helper or CEF directory.\n");
+    BUNITE_ERROR("Missing process helper or CEF directory.");
     return false;
   }
   if (!registerWindowClasses()) {
-    std::fprintf(stderr, "[bunite/native] Failed to register window classes.\n");
+    BUNITE_ERROR("Failed to register window classes.");
     return false;
   }
 
@@ -1800,7 +1795,7 @@ bool initializeCefOnUiThread() {
   CefRefPtr<BuniteCefApp> app = new BuniteCefApp();
   const int execute_result = CefExecuteProcess(main_args, app, nullptr);
   if (execute_result >= 0) {
-    std::fprintf(stderr, "[bunite/native] CefExecuteProcess exited early with code %d.\n", execute_result);
+    BUNITE_ERROR("CefExecuteProcess exited early with code %d.", execute_result);
     return false;
   }
 
@@ -1826,7 +1821,7 @@ bool initializeCefOnUiThread() {
   CefString(&settings.log_file) = "";
 
   if (!CefInitialize(main_args, settings, app, nullptr)) {
-    std::fprintf(stderr, "[bunite/native] CefInitialize returned false.\n");
+    BUNITE_ERROR("CefInitialize returned false.");
     return false;
   }
 
@@ -2022,10 +2017,10 @@ void uiThreadMain() {
         SetTimer(g_runtime.message_window, kFallbackPumpTimerId, kFallbackPumpDelayMs, nullptr);
       }
     } else {
-      std::fprintf(stderr, "[bunite/native] Failed to create message window (err=%lu).\n", GetLastError());
+      BUNITE_ERROR("Failed to create message window (err=%lu).", GetLastError());
     }
   } else {
-    std::fprintf(stderr, "[bunite/native] Failed to register window classes.\n");
+    BUNITE_ERROR("Failed to register window classes.");
   }
 
   {
@@ -2071,6 +2066,10 @@ void uiThreadMain() {
 }
 
 } // namespace
+
+extern "C" BUNITE_EXPORT void bunite_set_log_level(int32_t level) {
+  buniteSetLogLevel(static_cast<BuniteLogLevel>(level));
+}
 
 extern "C" BUNITE_EXPORT bool bunite_init(
   const char* process_helper_path,
@@ -2153,7 +2152,7 @@ extern "C" BUNITE_EXPORT void bunite_quit(void) {
     );
 
     if (!shutdown_completed) {
-      std::fprintf(stderr, "[bunite/native] Shutdown timed out, posting finalize.\n");
+      BUNITE_WARN("Shutdown timed out, posting finalize.");
       if (g_runtime.message_window) {
         PostMessageW(g_runtime.message_window, kFinalizeShutdownMessage, 0, 0);
       }
@@ -2166,7 +2165,7 @@ extern "C" BUNITE_EXPORT void bunite_quit(void) {
     }
 
     if (!shutdown_completed) {
-      std::fprintf(stderr, "[bunite/native] Finalize timed out, forcing message loop exit.\n");
+      BUNITE_WARN("Finalize timed out, forcing message loop exit.");
       if (g_runtime.ui_thread_id != 0) {
         PostThreadMessageW(g_runtime.ui_thread_id, WM_QUIT, 0, 0);
       }
@@ -2183,7 +2182,7 @@ extern "C" BUNITE_EXPORT void bunite_quit(void) {
     if (shutdown_completed) {
       g_runtime.ui_thread.join();
     } else {
-      std::fprintf(stderr, "[bunite/native] UI thread did not exit, detaching.\n");
+      BUNITE_WARN("UI thread did not exit, detaching.");
       g_runtime.ui_thread.detach();
     }
   }
