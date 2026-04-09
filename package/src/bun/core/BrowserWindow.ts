@@ -133,7 +133,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
         appresRoot = dirname(resolved);
       }
       const rel = relative(appresRoot, resolved).replaceAll(sep, "/");
-      url = `appres://${rel}`;
+      url = `appres://app.internal/${rel}`;
     }
     this.url = url;
     this.appresRoot = appresRoot ?? resolveDefaultAppResRoot();
