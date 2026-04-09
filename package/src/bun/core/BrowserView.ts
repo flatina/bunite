@@ -6,6 +6,7 @@ import { ensureNativeRuntime, getNativeLibrary, toCString } from "../proc/native
 import { attachBrowserViewRegistry, getRPCPort, sendMessageToView } from "./Socket";
 import { randomBytes } from "node:crypto";
 import { resolveDefaultAppResRoot } from "../../shared/paths";
+import { removeSurfacesForHostView } from "./SurfaceManager";
 
 const BrowserViewMap: Record<number, BrowserView<any>> = {};
 let nextWebviewId = 1;
@@ -229,6 +230,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
   }
 
   detachFromNative() {
+    removeSurfacesForHostView(this.id);
     this.nativeAttached = false;
     for (const eventName of [
       "will-navigate",
