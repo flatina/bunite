@@ -46,13 +46,7 @@ namespace {
 
 constexpr wchar_t kWindowClass[] = L"BuniteWindowClass";
 constexpr UINT kRunQueuedTaskMessage = WM_APP + 1;
-constexpr UINT kScheduleMessagePumpMessage = WM_APP + 2;
-constexpr UINT kDoMessagePumpWorkMessage = WM_APP + 3;
 constexpr UINT kFinalizeShutdownMessage = WM_APP + 4;
-constexpr UINT_PTR kScheduledPumpTimerId = 1;
-constexpr UINT_PTR kFallbackPumpTimerId = 2;
-constexpr UINT kMaxPumpDelayMs = 1000 / 30;
-constexpr UINT kFallbackPumpDelayMs = 16;
 
 struct WindowHost;
 struct ViewHost;
@@ -122,7 +116,7 @@ struct RuntimeState {
   bool initialized = false;
   std::atomic<bool> shutting_down{false};
   bool shutdown_complete = false;
-  bool shutdown_finalize_posted = false;
+  std::atomic<bool> shutdown_finalize_posted{false};
 
   std::thread ui_thread;
   DWORD ui_thread_id = 0;
@@ -161,9 +155,6 @@ struct RuntimeState {
   std::string cef_dir;
   bool popup_blocking = false;
   std::map<std::string, std::string> chromium_flags;
-  bool cef_timer_pending = false;
-  UINT cef_timer_delay_ms = 0;
-  bool cef_work_in_progress = false;
   std::atomic<int> devtools_browser_count = 0;
 };
 
@@ -826,6 +817,44 @@ void runOnUiThreadSync<void>(std::function<void()> task) {
   future.get();
 }
 
+class CefClosureTask : public CefTask {
+public:
+  explicit CefClosureTask(std::function<void()> fn) : fn_(std::move(fn)) {}
+  void Execute() override { fn_(); }
+private:
+  std::function<void()> fn_;
+  IMPLEMENT_REFCOUNTING(CefClosureTask);
+};
+
+void postCefUiTask(std::function<void()> task) {
+  CefPostTask(TID_UI, new CefClosureTask(std::move(task)));
+}
+
+template <typename Result>
+Result runOnCefUiThreadSync(std::function<Result()> task) {
+  if (CefCurrentlyOn(TID_UI)) {
+    return task();
+  }
+
+  auto packaged = std::make_shared<std::packaged_task<Result()>>(std::move(task));
+  auto future = packaged->get_future();
+  postCefUiTask([packaged]() { (*packaged)(); });
+  return future.get();
+}
+
+template <>
+void runOnCefUiThreadSync<void>(std::function<void()> task) {
+  if (CefCurrentlyOn(TID_UI)) {
+    task();
+    return;
+  }
+
+  auto packaged = std::make_shared<std::packaged_task<void()>>(std::move(task));
+  auto future = packaged->get_future();
+  postCefUiTask([packaged]() { (*packaged)(); });
+  future.get();
+}
+
 void executeQueuedUiTasks() {
   for (;;) {
     std::queue<std::function<void()>> tasks;
@@ -843,45 +872,6 @@ void executeQueuedUiTasks() {
       task();
     }
   }
-}
-
-void doCefMessageLoopWorkOnUiThread() {
-  if (!g_runtime.cef_initialized || g_runtime.cef_work_in_progress) {
-    return;
-  }
-
-  g_runtime.cef_work_in_progress = true;
-  CefDoMessageLoopWork();
-  g_runtime.cef_work_in_progress = false;
-}
-
-void scheduleCefMessageLoopWorkOnUiThread(int64_t delay_ms) {
-  if (!g_runtime.message_window) {
-    return;
-  }
-
-  if (delay_ms <= 0) {
-    if (g_runtime.cef_timer_pending) {
-      KillTimer(g_runtime.message_window, kScheduledPumpTimerId);
-      g_runtime.cef_timer_pending = false;
-      g_runtime.cef_timer_delay_ms = 0;
-    }
-    PostMessageW(g_runtime.message_window, kDoMessagePumpWorkMessage, 0, 0);
-    return;
-  }
-
-  const UINT clamped_delay = static_cast<UINT>(std::min<int64_t>(delay_ms, kMaxPumpDelayMs));
-  if (g_runtime.cef_timer_pending && g_runtime.cef_timer_delay_ms <= clamped_delay) {
-    return;
-  }
-
-  if (g_runtime.cef_timer_pending) {
-    KillTimer(g_runtime.message_window, kScheduledPumpTimerId);
-  }
-
-  SetTimer(g_runtime.message_window, kScheduledPumpTimerId, clamped_delay, nullptr);
-  g_runtime.cef_timer_pending = true;
-  g_runtime.cef_timer_delay_ms = clamped_delay;
 }
 
 std::string normalizeAppResPath(const std::string& url) {
@@ -997,11 +987,19 @@ void syncWindowFrame(WindowHost* window) {
 }
 
 void resizeViewToFit(ViewHost* view) {
-  if (!view || !view->browser || !view->window || !view->window->hwnd) {
+  if (!view || !view->window || !view->window->hwnd) {
+    return;
+  }
+  if (view->closing.load()) {
     return;
   }
 
-  HWND browser_hwnd = view->browser->GetHost()->GetWindowHandle();
+  auto browser = view->browser;  // CefRefPtr copy — atomic refcount
+  if (!browser) {
+    return;
+  }
+
+  HWND browser_hwnd = browser->GetHost()->GetWindowHandle();
   if (!browser_hwnd) {
     return;
   }
@@ -1059,16 +1057,30 @@ void finalizeViewHost(ViewHost* view) {
   cancelPendingMessageBoxesForView(view->id);
   bunite::WebviewContentStorage::instance().remove(view->id);
 
+  WindowHost* window = nullptr;
+  bool window_views_empty = false;
   {
     std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
     g_runtime.views_by_id.erase(view->id);
     if (view->window) {
-      auto& views = view->window->views;
+      window = view->window;
+      auto& views = window->views;
       views.erase(std::remove(views.begin(), views.end(), view), views.end());
+      window_views_empty = views.empty();
     }
   }
 
   delete view;
+
+  // All views finalized — destroy parent HWND on Win32 thread
+  if (window && window->closing.load() && window_views_empty) {
+    postUiTask([window]() {
+      if (window->hwnd) {
+        DestroyWindow(window->hwnd);
+      }
+    });
+  }
+
   maybeCompleteShutdownOnUiThread();
 }
 
@@ -1078,12 +1090,22 @@ void closeViewHost(ViewHost* view) {
   }
 
   if (view->browser) {
-    closeDevToolsForView(view);
-    view->browser->GetHost()->CloseBrowser(true);
+    postCefUiTask([view]() {
+      closeDevToolsForView(view);
+      view->browser->GetHost()->CloseBrowser(true);
+    });
     return;
   }
 
-  finalizeViewHost(view);
+  // Browser not yet created — OnAfterCreated will check closing flag.
+  // Safety net: if CreateBrowser failed entirely, clean up on CEF thread.
+  postCefUiTask([view]() {
+    if (view->browser) {
+      view->browser->GetHost()->CloseBrowser(true);
+    } else {
+      finalizeViewHost(view);
+    }
+  });
 }
 
 void openDevToolsForView(ViewHost* view);
@@ -1096,12 +1118,21 @@ void destroyWindowHost(WindowHost* window) {
   }
   if (!window->closing.exchange(true)) {
     emitWindowEvent(window->id, "close");
-    const auto views = window->views;
-    for (auto* view : views) {
-      closeViewHost(view);
+    std::vector<ViewHost*> views_copy;
+    {
+      std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
+      views_copy = window->views;
+    }
+    if (views_copy.empty()) {
+      // No views — destroy HWND immediately
+      DestroyWindow(window->hwnd);
+    } else {
+      for (auto* view : views_copy) {
+        closeViewHost(view);
+      }
+      // DestroyWindow deferred — finalizeViewHost posts it when last view is gone
     }
   }
-  DestroyWindow(window->hwnd);
 }
 
 void finalizeWindowHost(WindowHost* window) {
@@ -1109,16 +1140,15 @@ void finalizeWindowHost(WindowHost* window) {
     return;
   }
 
-  for (auto* view : window->views) {
-    if (view) {
-      view->window = nullptr;
-    }
-  }
-  window->views.clear();
-
   bool all_closed = false;
   {
     std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
+    for (auto* view : window->views) {
+      if (view) {
+        view->window = nullptr;
+      }
+    }
+    window->views.clear();
     g_runtime.windows_by_id.erase(window->id);
     all_closed = g_runtime.windows_by_id.empty();
   }
@@ -1283,12 +1313,6 @@ public:
     return this;
   }
 
-  void OnScheduleMessagePumpWork(int64_t delay_ms) override {
-    if (g_runtime.message_window) {
-      PostMessageW(g_runtime.message_window, kScheduleMessagePumpMessage, 0, static_cast<LPARAM>(delay_ms));
-    }
-  }
-
   void OnBeforeCommandLineProcessing(const CefString&, CefRefPtr<CefCommandLine> command_line) override {
     if (!g_runtime.popup_blocking) {
       // Bunite handles popup attempts in OnBeforePopup and surfaces them to Bun.
@@ -1409,6 +1433,13 @@ public:
       std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
       g_runtime.browser_to_view_id[browser->GetIdentifier()] = view_->id;
     }
+
+    // View was marked for closing while browser was being created async
+    if (view_->closing.load()) {
+      browser->GetHost()->CloseBrowser(true);
+      return;
+    }
+
     resizeViewToFit(view_);
   }
 
@@ -1639,43 +1670,10 @@ LRESULT CALLBACK messageWindowProc(HWND hwnd, UINT message, WPARAM w_param, LPAR
       executeQueuedUiTasks();
       return 0;
 
-    case kScheduleMessagePumpMessage: {
-      const int64_t delay_ms = static_cast<int64_t>(static_cast<intptr_t>(l_param));
-      scheduleCefMessageLoopWorkOnUiThread(delay_ms);
-      return 0;
-    }
-
-    case kDoMessagePumpWorkMessage:
-      doCefMessageLoopWorkOnUiThread();
-      maybeCompleteShutdownOnUiThread();
-      return 0;
-
     case kFinalizeShutdownMessage:
-      if (g_runtime.message_window) {
-        KillTimer(g_runtime.message_window, kScheduledPumpTimerId);
-        KillTimer(g_runtime.message_window, kFallbackPumpTimerId);
-      }
-      g_runtime.cef_timer_pending = false;
-      g_runtime.cef_timer_delay_ms = 0;
       shutdownCefOnUiThread();
       PostQuitMessage(0);
       return 0;
-
-    case WM_TIMER:
-      if (w_param == kScheduledPumpTimerId) {
-        KillTimer(hwnd, kScheduledPumpTimerId);
-        g_runtime.cef_timer_pending = false;
-        g_runtime.cef_timer_delay_ms = 0;
-        doCefMessageLoopWorkOnUiThread();
-        maybeCompleteShutdownOnUiThread();
-        return 0;
-      }
-      if (w_param == kFallbackPumpTimerId) {
-        doCefMessageLoopWorkOnUiThread();
-        maybeCompleteShutdownOnUiThread();
-        return 0;
-      }
-      break;
   }
 
   return DefWindowProcW(hwnd, message, w_param, l_param);
@@ -1725,8 +1723,15 @@ LRESULT CALLBACK buniteWindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARA
       if (window) {
         syncWindowFrame(window);
 
-        for (auto* view : window->views) {
-          resizeViewToFit(view);
+        {
+          std::vector<ViewHost*> views_copy;
+          {
+            std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
+            views_copy = window->views;
+          }
+          for (auto* view : views_copy) {
+            resizeViewToFit(view);
+          }
         }
 
         emitWindowEvent(
@@ -1848,8 +1853,8 @@ bool initializeCefOnUiThread() {
 
   CefSettings settings{};
   settings.no_sandbox = true;
-  settings.multi_threaded_message_loop = false;
-  settings.external_message_pump = true;
+  settings.multi_threaded_message_loop = true;
+  settings.external_message_pump = false;
 
   CefString(&settings.browser_subprocess_path) = g_runtime.process_helper_path;
   CefString(&settings.resources_dir_path) = resource_dir.wstring();
@@ -1956,11 +1961,9 @@ void maybeCompleteShutdownOnUiThread() {
     return;
   }
 
-  if (g_runtime.shutdown_finalize_posted) {
+  if (g_runtime.shutdown_finalize_posted.exchange(true)) {
     return;
   }
-
-  g_runtime.shutdown_finalize_posted = true;
   if (g_runtime.message_window) {
     PostMessageW(g_runtime.message_window, kFinalizeShutdownMessage, 0, 0);
   }
@@ -2035,7 +2038,9 @@ bool createBrowserForView(ViewHost* view) {
   window_info.SetAsChild(window->hwnd, child_bounds);
 
   CefBrowserSettings browser_settings;
-  CefRefPtr<CefBrowser> browser = CefBrowserHost::CreateBrowserSync(
+  // CreateBrowser (async) — can be called from any browser process thread.
+  // Browser instance will be available in OnAfterCreated callback.
+  return CefBrowserHost::CreateBrowser(
     window_info,
     view->client,
     initial_url,
@@ -2043,9 +2048,6 @@ bool createBrowserForView(ViewHost* view) {
     nullptr,
     nullptr
   );
-
-  view->browser = browser;
-  return browser != nullptr;
 }
 
 void uiThreadMain() {
@@ -2076,9 +2078,6 @@ void uiThreadMain() {
         reinterpret_cast<LONG_PTR>(messageWindowProc)
       );
       init_success = initializeCefOnUiThread();
-      if (init_success) {
-        SetTimer(g_runtime.message_window, kFallbackPumpTimerId, kFallbackPumpDelayMs, nullptr);
-      }
     } else {
       BUNITE_ERROR("Failed to create message window (err=%lu).", GetLastError());
     }
@@ -2151,7 +2150,7 @@ extern "C" BUNITE_EXPORT bool bunite_init(
     g_runtime.init_finished = false;
     g_runtime.init_success = false;
     g_runtime.shutdown_complete = false;
-    g_runtime.shutdown_finalize_posted = false;
+    g_runtime.shutdown_finalize_posted.store(false);
     g_runtime.shutting_down.store(false);
     g_runtime.process_helper_path = process_helper_path ? process_helper_path : "";
     g_runtime.cef_dir = cef_dir ? cef_dir : "";
@@ -2200,10 +2199,19 @@ extern "C" BUNITE_EXPORT void bunite_quit(void) {
     g_runtime.shutting_down.store(true);
   }
 
-  runOnUiThreadSync<void>([]() {
+  // Cancel pending CEF callbacks on CEF thread
+  postCefUiTask([]() {
     cancelPendingPermissionRequestsOnUiThread();
     cancelPendingRouteRequestsOnUiThread();
+  });
+
+  // Close all windows on Win32 thread (browser closes posted to CEF thread)
+  runOnUiThreadSync<void>([]() {
     closeAllWindowsForShutdown();
+  });
+
+  // If no views remain, kick shutdown completion
+  postCefUiTask([]() {
     maybeCompleteShutdownOnUiThread();
   });
 
@@ -2569,7 +2577,7 @@ extern "C" BUNITE_EXPORT bool bunite_view_create(
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char* url) {
-  runOnUiThreadSync<void>([view_id, next_url = std::string(url ? url : "")]() {
+  postCefUiTask([view_id, next_url = std::string(url ? url : "")]() {
     auto* view = getViewHostById(view_id);
     if (!view) {
       return;
@@ -2585,7 +2593,7 @@ extern "C" BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char*
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_load_html(uint32_t view_id, const char* html) {
-  runOnUiThreadSync<void>([view_id, content = std::string(html ? html : "")]() {
+  postCefUiTask([view_id, content = std::string(html ? html : "")]() {
     auto* view = getViewHostById(view_id);
     if (!view) {
       return;
@@ -2602,10 +2610,14 @@ extern "C" BUNITE_EXPORT void bunite_view_load_html(uint32_t view_id, const char
 extern "C" BUNITE_EXPORT void bunite_view_set_visible(uint32_t view_id, bool visible) {
   runOnUiThreadSync<void>([view_id, visible]() {
     auto* view = getViewHostById(view_id);
-    if (!view || !view->browser) {
+    if (!view) {
       return;
     }
-    HWND browser_hwnd = view->browser->GetHost()->GetWindowHandle();
+    auto browser = view->browser;
+    if (!browser) {
+      return;
+    }
+    HWND browser_hwnd = browser->GetHost()->GetWindowHandle();
     if (browser_hwnd) {
       ShowWindow(browser_hwnd, visible ? SW_SHOW : SW_HIDE);
     }
@@ -2615,10 +2627,14 @@ extern "C" BUNITE_EXPORT void bunite_view_set_visible(uint32_t view_id, bool vis
 extern "C" BUNITE_EXPORT void bunite_view_bring_to_front(uint32_t view_id) {
   runOnUiThreadSync<void>([view_id]() {
     auto* view = getViewHostById(view_id);
-    if (!view || !view->browser) {
+    if (!view) {
       return;
     }
-    HWND browser_hwnd = view->browser->GetHost()->GetWindowHandle();
+    auto browser = view->browser;
+    if (!browser) {
+      return;
+    }
+    HWND browser_hwnd = browser->GetHost()->GetWindowHandle();
     if (browser_hwnd) {
       SetWindowPos(browser_hwnd, HWND_TOP, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -2635,7 +2651,11 @@ extern "C" BUNITE_EXPORT void bunite_view_set_bounds(
 ) {
   runOnUiThreadSync<void>([view_id, x, y, width, height]() {
     auto* view = getViewHostById(view_id);
-    if (!view || !view->browser) {
+    if (!view) {
+      return;
+    }
+    auto browser = view->browser;
+    if (!browser) {
       return;
     }
     view->anchor_mode = ANCHOR_NONE;
@@ -2645,7 +2665,7 @@ extern "C" BUNITE_EXPORT void bunite_view_set_bounds(
       static_cast<LONG>(x + width),
       static_cast<LONG>(y + height)
     };
-    HWND browser_hwnd = view->browser->GetHost()->GetWindowHandle();
+    HWND browser_hwnd = browser->GetHost()->GetWindowHandle();
     if (browser_hwnd) {
       SetWindowPos(
         browser_hwnd,
@@ -2701,7 +2721,7 @@ extern "C" BUNITE_EXPORT void bunite_view_set_anchor(uint32_t view_id, int mode,
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_go_back(uint32_t view_id) {
-  runOnUiThreadSync<void>([view_id]() {
+  postCefUiTask([view_id]() {
     auto* view = getViewHostById(view_id);
     if (view && view->browser) {
       view->browser->GoBack();
@@ -2710,7 +2730,7 @@ extern "C" BUNITE_EXPORT void bunite_view_go_back(uint32_t view_id) {
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_reload(uint32_t view_id) {
-  runOnUiThreadSync<void>([view_id]() {
+  postCefUiTask([view_id]() {
     auto* view = getViewHostById(view_id);
     if (view && view->browser) {
       view->browser->Reload();
@@ -2719,23 +2739,23 @@ extern "C" BUNITE_EXPORT void bunite_view_reload(uint32_t view_id) {
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_remove(uint32_t view_id) {
-  runOnUiThreadSync<void>([view_id]() { closeViewHost(getViewHostById(view_id)); });
+  postCefUiTask([view_id]() { closeViewHost(getViewHostById(view_id)); });
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id) {
-  runOnUiThreadSync<void>([view_id]() { openDevToolsForView(getViewHostById(view_id)); });
+  postCefUiTask([view_id]() { openDevToolsForView(getViewHostById(view_id)); });
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_close_devtools(uint32_t view_id) {
-  runOnUiThreadSync<void>([view_id]() { closeDevToolsForView(getViewHostById(view_id)); });
+  postCefUiTask([view_id]() { closeDevToolsForView(getViewHostById(view_id)); });
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_toggle_devtools(uint32_t view_id) {
-  runOnUiThreadSync<void>([view_id]() { toggleDevToolsForView(getViewHostById(view_id)); });
+  postCefUiTask([view_id]() { toggleDevToolsForView(getViewHostById(view_id)); });
 }
 
 extern "C" BUNITE_EXPORT void bunite_complete_permission_request(uint32_t request_id, uint32_t state) {
-  runOnUiThreadSync<void>([=]() {
+  postCefUiTask([=]() {
     std::optional<PendingPermissionRequest> request;
     {
       std::lock_guard<std::mutex> lock(g_runtime.permission_mutex);
@@ -2857,7 +2877,7 @@ extern "C" BUNITE_EXPORT uint32_t bunite_show_browser_message_box(
   int32_t default_id,
   int32_t cancel_id
 ) {
-  return runOnUiThreadSync<uint32_t>([=]() -> uint32_t {
+  return runOnCefUiThreadSync<uint32_t>([=]() -> uint32_t {
     ViewHost* view = getPreferredMessageBoxView();
     if (!view || !view->browser || !view->browser->GetMainFrame()) {
       return 0;
