@@ -58,8 +58,6 @@ class OverlaySyncController {
       height: Math.round(r.height * dpr)
     };
 
-    if (rect.width === 0 && rect.height === 0) return;
-
     if (
       !force &&
       rect.x === this.lastRect.x &&
@@ -87,17 +85,14 @@ class BuniteWebviewElement extends HTMLElement {
   private _initPromise: Promise<SurfaceInitResponse> | null = null;
   private _aborted = false;
   private _pendingSrc: string | null = null;
+  private _syncHidden = false;
 
   constructor() {
     super();
     // NOTE: Custom element spec forbids setting attributes in constructor.
-    // Default display is set in connectedCallback instead.
   }
 
   connectedCallback() {
-    if (!this.style.display) {
-      this.style.display = "inline-block";
-    }
     this._aborted = false;
     requestAnimationFrame(() => {
       if (!this.isConnected || this._aborted) return;
@@ -152,26 +147,26 @@ class BuniteWebviewElement extends HTMLElement {
     }).catch(() => {});
   }
 
-  setPassthrough(passthrough: boolean) {
-    this.style.pointerEvents = passthrough ? "none" : "";
-  }
-
   private initSurface() {
+    if (this._surfaceId != null || this._initPromise != null) return;
+
     const dpr = window.devicePixelRatio || 1;
     const r = this.getBoundingClientRect();
     const src = this._pendingSrc || this.getAttribute("src") || "";
     this._pendingSrc = null;
 
-    this._initPromise = bunite.invoke("__bunite:surface.init", {
+    const initPromise = bunite.invoke("__bunite:surface.init", {
       src,
       x: Math.round(r.x * dpr),
       y: Math.round(r.y * dpr),
       width: Math.round(r.width * dpr),
       height: Math.round(r.height * dpr)
     }) as Promise<SurfaceInitResponse>;
+    this._initPromise = initPromise;
 
-    this._initPromise
+    initPromise
       .then((response) => {
+        if (this._initPromise !== initPromise) return;
         if (this._aborted) {
           bunite.invoke("__bunite:surface.remove", { surfaceId: response.surfaceId }).catch(() => {});
           return;
@@ -191,6 +186,24 @@ class BuniteWebviewElement extends HTMLElement {
 
         this._syncCtrl = new OverlaySyncController(this, (rect) => {
           if (this._surfaceId == null) return;
+
+          const isZero = rect.width === 0 && rect.height === 0;
+          if (isZero) {
+            if (!this._syncHidden) {
+              this._syncHidden = true;
+              bunite.invoke("__bunite:surface.setHidden", {
+                surfaceId: this._surfaceId, hidden: true
+              }).catch(() => {});
+            }
+            return;
+          }
+          if (this._syncHidden) {
+            this._syncHidden = false;
+            bunite.invoke("__bunite:surface.setHidden", {
+              surfaceId: this._surfaceId, hidden: false
+            }).catch(() => {});
+          }
+
           bunite.invoke("__bunite:surface.resize", {
             surfaceId: this._surfaceId,
             x: rect.x,
@@ -201,7 +214,12 @@ class BuniteWebviewElement extends HTMLElement {
         });
         this._syncCtrl.start();
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        if (this._initPromise === initPromise) {
+          this._initPromise = null;
+        }
+      });
   }
 }
 

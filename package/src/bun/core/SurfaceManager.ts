@@ -40,6 +40,10 @@ function getOwnedSurface(surfaceId: number, ctx: { viewId: number }): SurfaceRec
   return record;
 }
 
+// NOTE: hostView.frame is only updated via JS setBounds(), not when native
+// anchoring resizes the view. This is correct for fill-anchored host views
+// at (0,0), but will be stale if the host view moves independently.
+// A proper fix requires native→JS frame-change events.
 function applyHostOffset(hostView: BrowserView, x: number, y: number) {
   return { x: x + hostView.frame.x, y: y + hostView.frame.y };
 }
