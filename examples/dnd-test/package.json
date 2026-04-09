@@ -1,0 +1,11 @@
+{
+  "name": "bunite-dnd-test",
+  "dependencies": {
+    "bunite-core": "workspace:*"
+  },
+  "private": true,
+  "scripts": {
+    "dev": "bun src/main.ts"
+  },
+  "type": "module"
+}
