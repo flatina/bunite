@@ -18,10 +18,10 @@ const appresRoot = resolveRendererRoot();
 
 const win = new BrowserWindow({
   title: "bunite smoke",
-  url: "appres://smoke/index.html",
+  url: "appres://app.internal/smoke/index.html",
   appresRoot,
   rpc: rpcDefinition,
-  navigationRules: ["^*", "appres://smoke/*", "^appres://smoke/nav-blocked.html*"]
+  navigationRules: ["^*", "appres://app.internal/smoke/*", "^appres://app.internal/smoke/nav-blocked.html*"]
 });
 
 attachNavigationChecks(win.webview);

@@ -7,7 +7,7 @@ function escapeRootForComparison(path: string) {
 }
 
 function resolveAppResFile(appresRoot: string, url: string) {
-  const relativePath = url.replace(/^appres:\/\//, "").replace(/^[\\/]+/, "");
+  const relativePath = url.replace(/^appres:\/\/app\.internal\//, "").replace(/^[\\/]+/, "");
   const normalizedRoot = resolve(appresRoot);
   const candidate = resolve(normalizedRoot, relativePath.split("/").join(sep));
   const comparableRoot = escapeRootForComparison(normalizedRoot);
@@ -29,7 +29,7 @@ function readCustomPreload(preload: string | null, appresRoot: string | null) {
   }
 
   try {
-    const resolvedPath = preload.startsWith("appres://")
+    const resolvedPath = preload.startsWith("appres://app.internal/")
       ? appresRoot
         ? resolveAppResFile(appresRoot, preload)
         : null
