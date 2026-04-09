@@ -2,6 +2,7 @@
 #include "../shared/log.h"
 
 #include <windows.h>
+#include <ole2.h>
 
 #include <algorithm>
 #include <atomic>
@@ -1717,6 +1718,9 @@ LRESULT CALLBACK buniteWindowProc(HWND hwnd, UINT message, WPARAM w_param, LPARA
       }
       break;
 
+    case WM_ERASEBKGND:
+      return 1;
+
     case WM_SIZE:
       if (window) {
         syncWindowFrame(window);
@@ -1775,7 +1779,7 @@ bool registerWindowClasses() {
     window_class.hInstance = module;
     window_class.lpszClassName = kWindowClass;
     window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    window_class.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    window_class.hbrBackground = nullptr;
 
     registered = RegisterClassW(&window_class) != 0;
   });
@@ -1999,7 +2003,7 @@ ViewHost* getViewHostById(uint32_t view_id) {
 }
 
 DWORD makeWindowStyle(const std::wstring& title_bar_style) {
-  DWORD style = WS_OVERLAPPEDWINDOW;
+  DWORD style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
   if (title_bar_style == L"hidden" || title_bar_style == L"hiddenInset") {
     style &= ~WS_CAPTION;
   }
@@ -2046,6 +2050,7 @@ bool createBrowserForView(ViewHost* view) {
 
 void uiThreadMain() {
   g_runtime.ui_thread_id = GetCurrentThreadId();
+  OleInitialize(nullptr);
 
   bool init_success = false;
   if (registerWindowClasses()) {
@@ -2113,6 +2118,8 @@ void uiThreadMain() {
     DestroyWindow(g_runtime.message_window);
     g_runtime.message_window = nullptr;
   }
+
+  OleUninitialize();
 
   g_runtime.ui_thread_id = 0;
   {

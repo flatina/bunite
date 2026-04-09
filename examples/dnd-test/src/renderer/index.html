@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: system-ui; background: #1e1e1e; color: #eee; padding: 40px; }
+  h2 { margin-bottom: 8px; }
+  .row { display: flex; gap: 40px; margin-top: 20px; }
+
+  .drag-item {
+    width: 120px; height: 70px; background: #4a9eff; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: grab; user-select: none;
+  }
+
+  .drop-zone {
+    width: 260px; height: 160px; border: 2px dashed #555; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .drop-zone.over { background: #2a2a4a; border-color: #4a9eff; }
+
+  #log { white-space: pre-wrap; font-size: 13px; color: #999; margin-top: 24px; max-height: 300px; overflow: auto; }
+</style>
+</head>
+<body>
+  <h2>HTML5 Drag &amp; Drop Test</h2>
+  <p>Drag the blue box into the dashed area. Check cursor icon and log output.</p>
+
+  <div class="row">
+    <div class="drag-item" draggable="true" id="item">Drag me</div>
+    <div class="drop-zone" id="zone">Drop here</div>
+  </div>
+
+  <div id="log"></div>
+
+  <script>
+    const item = document.getElementById("item");
+    const zone = document.getElementById("zone");
+    const log = document.getElementById("log");
+
+    function addLog(msg) {
+      log.textContent += msg + "\n";
+      log.scrollTop = log.scrollHeight;
+    }
+
+    // --- drag source ---
+    item.addEventListener("dragstart", (e) => {
+      e.dataTransfer.setData("text/plain", "hello");
+      e.dataTransfer.effectAllowed = "move";
+      addLog("dragstart  effectAllowed=" + e.dataTransfer.effectAllowed);
+    });
+
+    item.addEventListener("dragend", (e) => {
+      addLog("dragend    dropEffect=" + e.dataTransfer.dropEffect);
+    });
+
+    // --- drop target ---
+    zone.addEventListener("dragenter", (e) => {
+      e.preventDefault();
+      zone.classList.add("over");
+      addLog("dragenter  on zone");
+    });
+
+    zone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      // not logging dragover — too noisy
+    });
+
+    zone.addEventListener("dragleave", () => {
+      zone.classList.remove("over");
+      addLog("dragleave  on zone");
+    });
+
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zone.classList.remove("over");
+      const data = e.dataTransfer.getData("text/plain");
+      addLog("DROP!      data=" + data);
+      zone.textContent = "Dropped: " + data;
+    });
+
+    // --- document-level capture log ---
+    for (const evt of ["dragstart", "dragover", "drop", "dragend"]) {
+      document.addEventListener(evt, (e) => {
+        if (evt === "dragover") return;
+        addLog("[doc:" + evt + "] defaultPrevented=" + e.defaultPrevented);
+      }, true);
+    }
+  </script>
+</body>
+</html>
