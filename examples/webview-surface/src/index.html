@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Webview Surface Test</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; padding: 24px; background: #0f172a; color: #e2e8f0; }
+    h1 { font-size: 18px; margin-bottom: 12px; }
+    p { font-size: 13px; color: #94a3b8; margin-bottom: 16px; }
+    .container {
+      display: flex; gap: 16px; flex-wrap: wrap;
+    }
+    bunite-webview {
+      display: block;
+      width: 360px;
+      height: 280px;
+      border: 2px solid #334155;
+      border-radius: 8px;
+      background: #1e293b;
+    }
+    #log {
+      margin-top: 16px; padding: 10px; background: #1e293b; border-radius: 8px;
+      font-family: monospace; font-size: 12px; color: #64748b; min-height: 60px;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <h1>Webview Surface Test</h1>
+  <p>Each box below is a native BrowserView rendered via &lt;bunite-webview&gt;.</p>
+
+  <div class="container">
+    <bunite-webview src="appres://surface-a.html"></bunite-webview>
+    <bunite-webview id="surface-b"></bunite-webview>
+  </div>
+
+  <script>
+    bunite.invoke("getServerUrl").then(url => {
+      document.getElementById("surface-b").setAttribute("src", url);
+    });
+  </script>
+</body>
+</html>
