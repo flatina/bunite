@@ -39,7 +39,6 @@
 #include "include/cef_task.h"
 #include "include/wrapper/cef_helpers.h"
 
-#include "../shared/cef_response_filter.h"
 #include "../shared/webview_storage.h"
 
 namespace {
@@ -1383,8 +1382,7 @@ class BuniteCefClient
     public CefPermissionHandler {
 public:
   explicit BuniteCefClient(ViewHost* view)
-    : view_(view),
-      preload_script_(view ? view->preload_script : "") {}
+    : view_(view) {}
 
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
@@ -1403,28 +1401,8 @@ public:
     return this;
   }
 
-  CefRefPtr<CefResponseFilter> GetResourceResponseFilter(
-    CefRefPtr<CefBrowser>,
-    CefRefPtr<CefFrame> frame,
-    CefRefPtr<CefRequest> request,
-    CefRefPtr<CefResponse> response
-  ) override {
-    if (!frame->IsMain() || !response) {
-      return nullptr;
-    }
-
-    const std::string mime_type = response->GetMimeType().ToString();
-    const std::string url = request ? request->GetURL().ToString() : "";
-    if (
-      mime_type.find("html") == std::string::npos ||
-      preload_script_.empty() ||
-      url.rfind("appres://", 0) != 0
-    ) {
-      return nullptr;
-    }
-
-    return new BuniteResponseFilter(preload_script_);
-  }
+  // Preload injection moved to render process (OnContextCreated in process_helper).
+  // Response filter is no longer needed.
 
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
     CEF_REQUIRE_UI_THREAD();
@@ -1549,7 +1527,6 @@ public:
 
 private:
   ViewHost* view_;
-  std::string preload_script_;
 
   IMPLEMENT_REFCOUNTING(BuniteCefClient);
 };
@@ -2038,6 +2015,13 @@ bool createBrowserForView(ViewHost* view) {
   window_info.SetAsChild(window->hwnd, child_bounds);
 
   CefBrowserSettings browser_settings;
+
+  CefRefPtr<CefDictionaryValue> extra_info;
+  if (!view->preload_script.empty()) {
+    extra_info = CefDictionaryValue::Create();
+    extra_info->SetString("preloadScript", view->preload_script);
+  }
+
   // CreateBrowser (async) — can be called from any browser process thread.
   // Browser instance will be available in OnAfterCreated callback.
   return CefBrowserHost::CreateBrowser(
@@ -2045,7 +2029,7 @@ bool createBrowserForView(ViewHost* view) {
     view->client,
     initial_url,
     browser_settings,
-    nullptr,
+    extra_info,
     nullptr
   );
 }

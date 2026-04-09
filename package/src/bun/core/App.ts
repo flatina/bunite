@@ -12,6 +12,7 @@ import {
 } from "../proc/native";
 import { attachGlobalIPCResolver, ensureRPCServer } from "./Socket";
 import { BrowserWindow } from "./BrowserWindow";
+import { getSurfaceIPCHandlers } from "./SurfaceManager";
 import { log, logLevelToInt } from "../../shared/log";
 
 import type { LogLevel } from "../../shared/log";
@@ -60,12 +61,18 @@ class AppRuntime {
         }
 
         attachGlobalIPCResolver((channel) => this.getGlobalIPCHandler(channel));
+
+        for (const [channel, handler] of getSurfaceIPCHandlers()) {
+          this.globalIPCHandlers.set(channel, handler);
+        }
+
         setRouteRequestHandler((requestId, path) => this.handleRouteRequest(requestId, path));
 
         // Replay appres routes registered before init
         for (const path of this.appresHandlers.keys()) {
           getNativeLibrary()?.symbols.bunite_register_appres_route(toCString(path));
         }
+
 
         if (this.exitOnLastWindowClosed && runtime.nativeLoaded) {
           buniteEventEmitter.on("all-windows-closed", () => {
