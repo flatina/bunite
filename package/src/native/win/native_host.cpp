@@ -286,7 +286,7 @@ std::string buildButtonLabelsJson(const std::vector<std::string>& labels) {
 }
 
 std::optional<std::pair<uint32_t, int32_t>> parseMessageBoxResponseUrl(const std::string& url) {
-  constexpr std::string_view prefix = "appres://internal/__bunite/message-box-response";
+  constexpr std::string_view prefix = "appres://app.internal/internal/__bunite/message-box-response";
   if (url.rfind(prefix.data(), 0) != 0) {
     return std::nullopt;
   }
@@ -456,7 +456,7 @@ std::string buildBrowserMessageBoxScript(
       requestId: String(spec.requestId),
       response: String(response)
     });
-    fetch(`appres://internal/__bunite/message-box-response?${params.toString()}`, {
+    fetch(`appres://app.internal/internal/__bunite/message-box-response?${params.toString()}`, {
       method: "GET",
       cache: "no-store"
     }).catch(() => {});
@@ -730,7 +730,7 @@ std::map<std::string, std::string> parseChromiumFlagsJson(const std::string& jso
 }
 
 bool shouldAlwaysAllowNavigationUrl(const std::string& url) {
-  return url == "about:blank" || url.rfind("appres://internal/", 0) == 0;
+  return url == "about:blank" || url.rfind("appres://app.internal/internal/", 0) == 0;
 }
 
 bool shouldAllowNavigation(const ViewHost* view, const std::string& url) {
@@ -874,18 +874,31 @@ void executeQueuedUiTasks() {
 }
 
 std::string normalizeAppResPath(const std::string& url) {
+  CefURLParts parts;
+  if (CefParseURL(url, parts)) {
+    std::string path = CefString(&parts.path).ToString();
+    // Strip leading slashes from parsed path
+    while (!path.empty() && (path.front() == '/' || path.front() == '\\')) {
+      path.erase(path.begin());
+    }
+    while (!path.empty() && (path.back() == '/' || path.back() == '\\')) {
+      path.pop_back();
+    }
+    return path.empty() ? "index.html" : path;
+  }
+
+  // Fallback: manual parsing for malformed URLs
   std::string path = url;
   if (path.rfind("appres://", 0) == 0) {
-    path = path.substr(8);
+    path = path.substr(9); // "appres://" is 9 chars
+    // Skip host portion (up to first '/')
+    const auto slash_pos = path.find('/');
+    path = (slash_pos != std::string::npos) ? path.substr(slash_pos + 1) : "";
   }
 
   const auto query_pos = path.find_first_of("?#");
   if (query_pos != std::string::npos) {
     path = path.substr(0, query_pos);
-  }
-
-  while (!path.empty() && (path.front() == '/' || path.front() == '\\')) {
-    path.erase(path.begin());
   }
 
   while (!path.empty() && (path.back() == '/' || path.back() == '\\')) {
@@ -2002,7 +2015,7 @@ bool createBrowserForView(ViewHost* view) {
   }
 
   const std::string initial_url = !view->html.empty()
-    ? "appres://internal/index.html"
+    ? "appres://app.internal/internal/index.html"
     : (!view->url.empty() ? view->url : "about:blank");
 
   CefWindowInfo window_info;
@@ -2586,7 +2599,7 @@ extern "C" BUNITE_EXPORT void bunite_view_load_html(uint32_t view_id, const char
     view->html = content;
     bunite::WebviewContentStorage::instance().set(view->id, content);
     if (view->browser && view->browser->GetMainFrame()) {
-      view->browser->GetMainFrame()->LoadURL("appres://internal/index.html");
+      view->browser->GetMainFrame()->LoadURL("appres://app.internal/internal/index.html");
     }
   });
 }

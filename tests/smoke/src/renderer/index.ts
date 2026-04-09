@@ -33,11 +33,11 @@ try {
   setStatus(`rpc ok: ${pong}`);
 
   // Attempt blocked navigation (should be rejected by rules)
-  location.href = "appres://smoke/nav-blocked.html";
+  location.href = "appres://app.internal/smoke/nav-blocked.html";
 
   // Then navigate to allowed page
   setTimeout(() => {
-    location.href = "appres://smoke/nav-ok.html";
+    location.href = "appres://app.internal/smoke/nav-ok.html";
   }, 100);
 } catch (e) {
   setStatus(`error: ${e}`);
