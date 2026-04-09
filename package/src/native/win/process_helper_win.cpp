@@ -45,14 +45,21 @@ public:
     if (!frame->IsMain()) return;
 
     const std::string url = frame->GetURL().ToString();
-    if (url.empty() || url == "about:blank" || url.rfind("appres://", 0) != 0) return;
+    if (url.empty() || url == "about:blank" || url.rfind("appres://app.internal/", 0) != 0) return;
 
     const auto it = preload_scripts_.find(browser->GetIdentifier());
     if (it == preload_scripts_.end() || it->second.empty()) return;
 
     CefRefPtr<CefV8Value> retval;
     CefRefPtr<CefV8Exception> exception;
-    context->Eval(it->second, "bunite://preload", 0, retval, exception);
+    bool ok = context->Eval(it->second, "bunite://preload", 0, retval, exception);
+    if (!ok && exception) {
+      std::string msg = exception->GetMessage().ToString();
+      int line = exception->GetLineNumber();
+      std::string src_line = exception->GetSourceLine().ToString();
+      LOG(ERROR) << "bunite preload eval failed at line " << line
+                 << ": " << msg << "\n  " << src_line;
+    }
   }
 
 private:
