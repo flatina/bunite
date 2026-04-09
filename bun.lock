@@ -9,6 +9,12 @@
         "typescript": "^6.0.2",
       },
     },
+    "examples/dnd-test": {
+      "name": "bunite-dnd-test",
+      "dependencies": {
+        "bunite-core": "workspace:*",
+      },
+    },
     "examples/hello-bunite": {
       "name": "hello-bunite",
       "dependencies": {
@@ -55,6 +61,8 @@
     "bun-types": ["bun-types@1.3.11", "", { "dependencies": { "@types/node": "*" } }, "sha512-1KGPpoxQWl9f6wcZh57LvrPIInQMn2TQ7jsgxqpRzg+l0QPOFvJVH7HmvHo/AiPgwXy+/Thf6Ov3EdVn1vOabg=="],
 
     "bunite-core": ["bunite-core@workspace:package"],
+
+    "bunite-dnd-test": ["bunite-dnd-test@workspace:examples/dnd-test"],
 
     "bunite-multitab-browser": ["bunite-multitab-browser@workspace:examples/multitab-browser"],
 
