@@ -9,7 +9,7 @@
     "tests/*"
   ],
   "scripts": {
-    "typecheck": "bun x tsc -b --noEmit && bun x tsc -p examples/hello-bunite/tsconfig.json --noEmit && bun x tsc -p examples/multitab-browser/tsconfig.json --noEmit && bun x tsc -p examples/multitab-browser/src/renderer/tsconfig.json --noEmit",
+    "typecheck": "bun x tsc -b --noEmit && bun x tsc -p examples/hello-bunite/tsconfig.json --noEmit && bun x tsc -p examples/multitab-browser/tsconfig.json --noEmit && bun x tsc -p examples/multitab-browser/src/renderer/tsconfig.json --noEmit && bun x tsc -p examples/dockview-browser/tsconfig.json --noEmit && bun x tsc -p examples/dockview-browser/src/renderer/tsconfig.json --noEmit",
     "check": "bun run typecheck",
     "build:native:win": "cmake -S package -B package/build/win -DBUNITE_TARGET_ARCH=x64 && cmake --build package/build/win --config Release"
   },

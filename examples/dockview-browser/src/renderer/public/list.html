@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body {
+      margin: 0; padding: 16px;
+      font: 14px/1.5 system-ui, sans-serif;
+      color: #e5eefc; background: #0b1220;
+    }
+    button {
+      font: inherit; color: inherit; cursor: pointer; text-align: left;
+      background: #16233c; border: 1px solid #253556;
+      border-radius: 6px; padding: 8px 10px; width: 100%;
+    }
+    .list { max-height: 400px; overflow: auto; display: grid; gap: 4px; }
+    #status { margin-top: 12px; font-family: Consolas, monospace; color: #93a6c7; }
+  </style>
+</head>
+<body>
+  <h2>List</h2>
+  <div class="list" id="list"></div>
+  <div id="status">selected = none</div>
+
+  <script>
+    const list = document.getElementById("list");
+    for (let i = 1; i <= 40; i++) {
+      const btn = document.createElement("button");
+      btn.dataset.i = String(i);
+      btn.textContent = "row " + i;
+      list.append(btn);
+    }
+
+    list.onclick = (e) => {
+      const t = e.target.closest("[data-i]");
+      if (t) document.getElementById("status").textContent = "selected = row " + t.dataset.i;
+    };
+  </script>
+</body>
+</html>

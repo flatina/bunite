@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body {
+      margin: 0; padding: 16px;
+      font: 14px/1.5 system-ui, sans-serif;
+      color: #e5eefc; background: #0b1220;
+    }
+    button {
+      font: inherit; color: inherit; cursor: pointer;
+      background: #16233c; border: 1px solid #253556;
+      border-radius: 6px; padding: 6px 12px;
+    }
+    .controls { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; }
+    .scroll-list { max-height: 320px; overflow: auto; }
+    .scroll-list div {
+      padding: 8px 10px; margin-bottom: 4px;
+      background: #16233c; border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <h2>Counter</h2>
+  <div class="controls">
+    <button id="inc">+1</button>
+    <button id="rst">Reset</button>
+    <span id="val">0</span>
+  </div>
+  <div class="scroll-list" id="list"></div>
+
+  <script>
+    let n = 0;
+    const val = document.getElementById("val");
+    document.getElementById("inc").onclick = () => { val.textContent = String(++n); };
+    document.getElementById("rst").onclick = () => { n = 0; val.textContent = "0"; };
+
+    const list = document.getElementById("list");
+    for (let i = 1; i <= 20; i++) {
+      const div = document.createElement("div");
+      div.textContent = "item " + i;
+      list.append(div);
+    }
+  </script>
+</body>
+</html>

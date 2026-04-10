@@ -1,0 +1,15 @@
+{
+  "name": "dockview-browser",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bunx vite build && bun src/main.ts"
+  },
+  "dependencies": {
+    "bunite-core": "workspace:*",
+    "dockview-core": "^5.1.0"
+  },
+  "devDependencies": {
+    "vite": "^6"
+  }
+}
