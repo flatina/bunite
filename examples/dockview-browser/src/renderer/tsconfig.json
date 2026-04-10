@@ -1,0 +1,9 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "noUncheckedSideEffectImports": false
+  },
+  "include": ["index.ts", "maskHelper.ts"]
+}

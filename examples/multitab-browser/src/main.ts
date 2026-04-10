@@ -113,9 +113,9 @@ app.handle("getAppInfo", () => ({
 }));
 
 function createTab(url: string): number {
-  const isViews = !url || url.startsWith("appres://");
+  const isViews = !url || url.startsWith("appres://app.internal/");
   const view = new BrowserView({
-    url: !url ? "appres://newtab" : url,
+    url: !url ? "appres://app.internal/newtab" : url,
     appresRoot: isViews ? rendererDir : undefined,
     autoResize: false,
     windowId: win.id
@@ -198,8 +198,8 @@ app.getAppRes("newtab", () => `
     <div class="links">
       <a href="${localOrigin}/fast">Local Fast</a>
       <a href="${localOrigin}/slow?delay=2000">Local 2000ms</a>
-      <a href="appres://about">About</a>
-      <a href="appres://global-ipc">Global IPC</a>
+      <a href="appres://app.internal/about">About</a>
+      <a href="appres://app.internal/global-ipc">Global IPC</a>
       <a href="https://google.com">Google</a>
     </div>
   </body>
@@ -218,7 +218,7 @@ app.getAppRes("about", () => `
 const win = new BrowserWindow({
   title: "bunite multi-tab browser",
   frame: { x: 80, y: 80, width: 1280, height: 900 },
-  url: "appres://shell",
+  url: "appres://app.internal/shell",
   appresRoot: rendererDir,
   preload,
   rpc: shellRpc,

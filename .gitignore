@@ -6,4 +6,5 @@ build/
 native-build/
 dist/
 *.built.js
+*.built.css
 *.tsbuildinfo

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body {
+      margin: 0; padding: 16px;
+      font: 14px/1.5 system-ui, sans-serif;
+      color: #e5eefc; background: #0b1220;
+    }
+    input, select, textarea {
+      font: inherit; color: inherit;
+      background: #16233c; border: 1px solid #253556;
+      border-radius: 6px; padding: 6px 10px;
+    }
+    textarea { width: 100%; min-height: 120px; resize: vertical; box-sizing: border-box; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    label { color: #93a6c7; }
+  </style>
+</head>
+<body>
+  <h2>Form</h2>
+  <div class="row">
+    <input placeholder="title" value="bunite dockview" />
+    <select>
+      <option>alpha</option>
+      <option selected>beta</option>
+      <option>gamma</option>
+    </select>
+    <label><input type="checkbox" checked /> live</label>
+  </div>
+  <textarea>Type here to test input focus across native surfaces.</textarea>
+</body>
+</html>

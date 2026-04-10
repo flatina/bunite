@@ -5,6 +5,7 @@ import type { GlobalIPCHandler } from "./App";
 type SurfaceRecord = {
   view: BrowserView;
   hostViewId: number;
+  hidden: boolean;
 };
 
 const MAX_SURFACES_PER_HOST = 32;
@@ -87,6 +88,7 @@ const handleSurfaceInit: GlobalIPCHandler = async (params, ctx) => {
   const y = assertNum(p.y, "y");
   const width = assertNum(p.width, "width");
   const height = assertNum(p.height, "height");
+  const hidden = typeof p.hidden === "boolean" ? p.hidden : false;
 
   const hostView = BrowserView.getById(ctx.viewId);
   if (!hostView) throw new Error(`Host view not found: ${ctx.viewId}`);
@@ -105,8 +107,19 @@ const handleSurfaceInit: GlobalIPCHandler = async (params, ctx) => {
     frame: { x: offset.x, y: offset.y, width, height },
     autoResize: false
   });
-  view.bringToFront();
-  trackSurface(view.id, { view, hostViewId: ctx.viewId });
+  trackSurface(view.id, { view, hostViewId: ctx.viewId, hidden });
+  try {
+    await view.whenReady();
+  } catch {
+    untrackSurface(view.id);
+    view.remove();
+    throw new Error("Surface browser creation failed or timed out");
+  }
+  if (hidden) {
+    view.setVisible(false);
+  } else {
+    view.bringToFront();
+  }
   return { surfaceId: view.id };
 };
 
@@ -124,7 +137,7 @@ const handleSurfaceResize: GlobalIPCHandler = async (params, ctx) => {
   const hostView = BrowserView.getById(ctx.viewId);
   if (hostView) {
     const offset = applyHostOffset(hostView, x, y);
-    record.view.setBounds(offset.x, offset.y, w, h);
+    record.view.setBoundsAsync(offset.x, offset.y, w, h);
   }
   return {};
 };
@@ -149,7 +162,11 @@ const handleSurfaceSetHidden: GlobalIPCHandler = async (params, ctx) => {
   const record = getOwnedSurface(surfaceId, ctx);
   if (!record) return {};
 
+  record.hidden = hidden;
   record.view.setVisible(!hidden);
+  if (!hidden) {
+    record.view.bringToFront();
+  }
   return {};
 };
 
@@ -165,13 +182,53 @@ const handleSurfaceUpdateSrc: GlobalIPCHandler = async (params, ctx) => {
   return {};
 };
 
-const handleSurfaceBringAllToFront: GlobalIPCHandler = async (_params, ctx) => {
+const handleSurfaceSetMasks: GlobalIPCHandler = async (params, ctx) => {
+  const p = assertObj(params, "surface.setMasks params");
+  const surfaceId = assertNum(p.surfaceId, "surfaceId");
+  const masksRaw = Array.isArray(p.masks) ? p.masks : [];
+
+  const record = getOwnedSurface(surfaceId, ctx);
+  if (!record) return {};
+
+  const hostView = BrowserView.getById(ctx.viewId);
+  if (!hostView) return {};
+
+  // Convert host-page-relative mask rects to window-relative
+  const offset = applyHostOffset(hostView, 0, 0);
+  const rects = masksRaw.map((r: any) => ({
+    x: assertNum(r.x, "mask.x") + offset.x,
+    y: assertNum(r.y, "mask.y") + offset.y,
+    w: assertNum(r.w, "mask.w"),
+    h: assertNum(r.h, "mask.h")
+  }));
+
+  record.view.setMaskRegion(rects);
+  return {};
+};
+
+const handleSurfaceSetAllPassthrough: GlobalIPCHandler = async (params, ctx) => {
+  const p = assertObj(params, "surface.setAllPassthrough params");
+  const passthrough = assertBool(p.passthrough, "passthrough");
+
   const ids = hostSurfaceIds.get(ctx.viewId);
   if (!ids) return {};
 
   for (const surfaceId of ids) {
     const record = surfaces.get(surfaceId);
     if (record) {
+      record.view.setInputPassthrough(passthrough);
+    }
+  }
+  return {};
+};
+
+const handleSurfaceBringAllVisiblesToFront: GlobalIPCHandler = async (_params, ctx) => {
+  const ids = hostSurfaceIds.get(ctx.viewId);
+  if (!ids) return {};
+
+  for (const surfaceId of ids) {
+    const record = surfaces.get(surfaceId);
+    if (record && !record.hidden) {
       record.view.bringToFront();
     }
   }
@@ -185,6 +242,8 @@ export function getSurfaceIPCHandlers(): Map<string, GlobalIPCHandler> {
     ["__bunite:surface.remove", handleSurfaceRemove],
     ["__bunite:surface.setHidden", handleSurfaceSetHidden],
     ["__bunite:surface.updateSrc", handleSurfaceUpdateSrc],
-    ["__bunite:surface.bringAllToFront", handleSurfaceBringAllToFront]
+    ["__bunite:surface.setMasks", handleSurfaceSetMasks],
+    ["__bunite:surface.setAllPassthrough", handleSurfaceSetAllPassthrough],
+    ["__bunite:surface.bringAllVisiblesToFront", handleSurfaceBringAllVisiblesToFront]
   ]);
 }

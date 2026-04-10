@@ -89,6 +89,13 @@ struct ViewHost {
   std::atomic<bool> closing = false;
   CefRefPtr<CefBrowser> browser;
   CefRefPtr<BuniteCefClient> client;
+
+  // Pending state: applied in OnAfterCreated when browser HWND becomes available.
+  bool pending_visible = true;
+  bool pending_bring_to_front = false;
+  bool pending_passthrough = false;
+  bool has_pending_bounds = false;
+  RECT pending_bounds{0, 0, 0, 0};
 };
 
 struct WindowHost {
@@ -1198,6 +1205,20 @@ public:
     }
 
     const std::string url = request ? request->GetURL().ToString() : "";
+
+    // Reject requests with unexpected host
+    CefURLParts url_parts;
+    if (CefParseURL(url, url_parts)) {
+      const std::string host = CefString(&url_parts.host).ToString();
+      if (host != "app.internal") {
+        status_code_ = 403;
+        status_text_ = "Forbidden";
+        mime_type_ = "text/plain";
+        data_ = "Invalid appres host: " + host;
+        return true;
+      }
+    }
+
     const std::string normalized_path = normalizeAppResPath(url);
 
     // Dynamic route: handler lives on the Bun side, request is async
@@ -1432,6 +1453,33 @@ public:
     }
 
     resizeViewToFit(view_);
+
+    // Apply pending state queued before HWND was available
+    HWND browser_hwnd = browser->GetHost()->GetWindowHandle();
+    if (browser_hwnd) {
+      if (view_->has_pending_bounds) {
+        view_->has_pending_bounds = false;
+        view_->bounds = view_->pending_bounds;
+        SetWindowPos(browser_hwnd, nullptr,
+          view_->bounds.left, view_->bounds.top,
+          view_->bounds.right - view_->bounds.left,
+          view_->bounds.bottom - view_->bounds.top,
+          SWP_NOZORDER | SWP_NOACTIVATE);
+      }
+      if (!view_->pending_visible) {
+        ShowWindow(browser_hwnd, SW_HIDE);
+      }
+      if (view_->pending_bring_to_front) {
+        view_->pending_bring_to_front = false;
+        SetWindowPos(browser_hwnd, HWND_TOP, 0, 0, 0, 0,
+          SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+      }
+      if (view_->pending_passthrough) {
+        EnableWindow(browser_hwnd, FALSE);
+      }
+    }
+
+    emitWebviewEvent(view_->id, "view-ready");
   }
 
   bool DoClose(CefRefPtr<CefBrowser>) override {
@@ -2074,6 +2122,22 @@ void uiThreadMain() {
         GWLP_WNDPROC,
         reinterpret_cast<LONG_PTR>(messageWindowProc)
       );
+
+      // Consume a hostile STARTUPINFO.wShowWindow override.
+      // When launched via `bun run`, the child receives STARTF_USESHOWWINDOW
+      // with wShowWindow=SW_HIDE, which overrides the nCmdShow parameter of
+      // the first ShowWindow call in the process.  We only consume the
+      // override when it would hide windows; legitimate values like
+      // SW_SHOWMAXIMIZED are left for the first real window to honour.
+      {
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        GetStartupInfoW(&si);
+        if ((si.dwFlags & STARTF_USESHOWWINDOW) && si.wShowWindow == SW_HIDE) {
+          ShowWindow(g_runtime.message_window, SW_HIDE);
+        }
+      }
+
       init_success = initializeCefOnUiThread();
     } else {
       BUNITE_ERROR("Failed to create message window (err=%lu).", GetLastError());
@@ -2612,6 +2676,7 @@ extern "C" BUNITE_EXPORT void bunite_view_set_visible(uint32_t view_id, bool vis
     }
     auto browser = view->browser;
     if (!browser) {
+      view->pending_visible = visible;
       return;
     }
     HWND browser_hwnd = browser->GetHost()->GetWindowHandle();
@@ -2629,6 +2694,7 @@ extern "C" BUNITE_EXPORT void bunite_view_bring_to_front(uint32_t view_id) {
     }
     auto browser = view->browser;
     if (!browser) {
+      view->pending_bring_to_front = true;
       return;
     }
     HWND browser_hwnd = browser->GetHost()->GetWindowHandle();
@@ -2636,6 +2702,106 @@ extern "C" BUNITE_EXPORT void bunite_view_bring_to_front(uint32_t view_id) {
       SetWindowPos(browser_hwnd, HWND_TOP, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_set_mask_region(
+  uint32_t view_id,
+  const double* rects,  // [x1,y1,w1,h1, x2,y2,w2,h2, ...]
+  uint32_t count        // number of rects
+) {
+  // Copy rect data before posting to UI thread
+  std::vector<RECT> mask_rects;
+  mask_rects.reserve(count);
+  for (uint32_t i = 0; i < count; i++) {
+    const double* r = rects + i * 4;
+    mask_rects.push_back(RECT{
+      static_cast<LONG>(r[0]),
+      static_cast<LONG>(r[1]),
+      static_cast<LONG>(r[0] + r[2]),
+      static_cast<LONG>(r[1] + r[3])
+    });
+  }
+
+  runOnUiThreadSync<void>([view_id, mask_rects = std::move(mask_rects)]() {
+    auto* view = getViewHostById(view_id);
+    if (!view) return;
+    auto browser = view->browser;
+    if (!browser) return;
+    HWND hwnd = browser->GetHost()->GetWindowHandle();
+    if (!hwnd) return;
+
+    // Helper: apply region to a window and all its descendants (CEF GPU
+    // compositor may render through child HWNDs, not the outer browser HWND).
+    auto applyRegionToTree = [](HWND root, HRGN rgn) {
+      // Apply copies to descendants first (rgn is still ours).
+      // Each child gets a fresh copy translated to its own client coordinates.
+      EnumChildWindows(root, [](HWND child, LPARAM lParam) -> BOOL {
+        HRGN src = reinterpret_cast<HRGN>(lParam);
+        RECT childRect;
+        GetWindowRect(child, &childRect);
+        HWND parent = GetParent(child);
+        POINT offset = { childRect.left, childRect.top };
+        if (parent) ScreenToClient(parent, &offset);
+        HRGN copy = CreateRectRgn(0, 0, 0, 0);
+        CombineRgn(copy, src, nullptr, RGN_COPY);
+        OffsetRgn(copy, -offset.x, -offset.y);
+        if (!SetWindowRgn(child, copy, TRUE)) {
+          DeleteObject(copy);
+        }
+        return TRUE;
+      }, reinterpret_cast<LPARAM>(rgn));
+      // Apply to root last — SetWindowRgn takes ownership of rgn.
+      if (!SetWindowRgn(root, rgn, TRUE)) {
+        DeleteObject(rgn);
+      }
+    };
+
+    if (mask_rects.empty()) {
+      // Clear region — restore full window
+      SetWindowRgn(hwnd, nullptr, TRUE);
+      EnumChildWindows(hwnd, [](HWND child, LPARAM) -> BOOL {
+        SetWindowRgn(child, nullptr, TRUE);
+        return TRUE;
+      }, 0);
+      return;
+    }
+
+    // Start with the full window rect
+    RECT wr;
+    GetClientRect(hwnd, &wr);
+    HRGN full = CreateRectRgnIndirect(&wr);
+
+    // Subtract each mask rect (punch holes)
+    for (const auto& mr : mask_rects) {
+      RECT surface_relative = {
+        mr.left - view->bounds.left,
+        mr.top - view->bounds.top,
+        mr.right - view->bounds.left,
+        mr.bottom - view->bounds.top
+      };
+      HRGN hole = CreateRectRgnIndirect(&surface_relative);
+      CombineRgn(full, full, hole, RGN_DIFF);
+      DeleteObject(hole);
+    }
+
+    applyRegionToTree(hwnd, full);
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_set_input_passthrough(uint32_t view_id, bool passthrough) {
+  runOnUiThreadSync<void>([view_id, passthrough]() {
+    auto* view = getViewHostById(view_id);
+    if (!view) return;
+    view->pending_passthrough = passthrough;
+    auto browser = view->browser;
+    if (!browser) return;
+    HWND hwnd = browser->GetHost()->GetWindowHandle();
+    if (!hwnd) return;
+    // Disabled windows are skipped by WindowFromPoint(), so OLE DragDrop
+    // (HTML5 DnD) passes through to the host BrowserView underneath.
+    // The surface stays visible — only input routing changes.
+    EnableWindow(hwnd, passthrough ? FALSE : TRUE);
   });
 }
 
@@ -2651,17 +2817,67 @@ extern "C" BUNITE_EXPORT void bunite_view_set_bounds(
     if (!view) {
       return;
     }
-    auto browser = view->browser;
-    if (!browser) {
-      return;
-    }
-    view->anchor_mode = ANCHOR_NONE;
-    view->bounds = RECT{
+    const RECT new_bounds = RECT{
       static_cast<LONG>(x),
       static_cast<LONG>(y),
       static_cast<LONG>(x + width),
       static_cast<LONG>(y + height)
     };
+    auto browser = view->browser;
+    if (!browser) {
+      view->has_pending_bounds = true;
+      view->pending_bounds = new_bounds;
+      view->anchor_mode = ANCHOR_NONE;
+      return;
+    }
+    view->anchor_mode = ANCHOR_NONE;
+    view->bounds = new_bounds;
+    HWND browser_hwnd = browser->GetHost()->GetWindowHandle();
+    if (browser_hwnd) {
+      SetWindowPos(
+        browser_hwnd,
+        nullptr,
+        view->bounds.left,
+        view->bounds.top,
+        view->bounds.right - view->bounds.left,
+        view->bounds.bottom - view->bounds.top,
+        SWP_NOZORDER | SWP_NOACTIVATE
+      );
+    }
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_set_bounds_async(
+  uint32_t view_id,
+  double x,
+  double y,
+  double width,
+  double height
+) {
+  // Fire-and-forget variant for surface overlay resize.
+  // Avoids blocking the bun thread while the UI thread is in a modal resize
+  // loop.  JS-side rAF coalescing ensures at most one call per surface per
+  // frame, so UI-queue backlog is not a concern.
+  postUiTask([view_id, x, y, width, height]() {
+    auto* view = getViewHostById(view_id);
+    if (!view) {
+      return;
+    }
+    const RECT new_bounds = RECT{
+      static_cast<LONG>(x),
+      static_cast<LONG>(y),
+      static_cast<LONG>(x + width),
+      static_cast<LONG>(y + height)
+    };
+    auto browser = view->browser;
+    if (!browser) {
+      view->has_pending_bounds = true;
+      view->pending_bounds = new_bounds;
+      view->anchor_mode = ANCHOR_NONE;
+      return;
+    }
+    view->anchor_mode = ANCHOR_NONE;
+    view->bounds = new_bounds;
     HWND browser_hwnd = browser->GetHost()->GetWindowHandle();
     if (browser_hwnd) {
       SetWindowPos(

@@ -1,8 +1,9 @@
+import { ptr } from "bun:ffi";
 import { buildViewPreloadScript } from "../preload/inline";
 import { log } from "../../shared/log";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import { defineBuniteRPC, type BuniteRPCConfig, type BuniteRPCSchema, type RPCWithTransport } from "../../shared/rpc";
-import { ensureNativeRuntime, getNativeLibrary, toCString } from "../proc/native";
+import { ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady } from "../proc/native";
 import { attachBrowserViewRegistry, getRPCPort, sendMessageToView } from "./Socket";
 import { randomBytes } from "node:crypto";
 import { resolveDefaultAppResRoot } from "../../shared/paths";
@@ -51,6 +52,7 @@ const defaultOptions: BrowserViewOptions = {
 export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
   id = nextWebviewId++;
   private nativeAttached = false;
+  private _readyPromise: Promise<void>;
   windowId: number;
   url: string | null;
   html: string | null;
@@ -98,6 +100,9 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
 
     BrowserViewMap[this.id] = this;
     this.rpc?.setTransport(this.createTransport());
+    // Register ready waiter BEFORE native create — OnAfterCreated can fire
+    // on the CEF UI thread before bunite_view_create returns to JS.
+    this._readyPromise = waitForViewReady(this.id);
     this.nativeAttached =
       getNativeLibrary()?.symbols.bunite_view_create(
         this.id,
@@ -114,6 +119,29 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
         this.autoResize,
         this.sandbox
       ) ?? false;
+
+    if (this.nativeAttached) {
+      // Clean up owned surfaces when this view navigates (page refresh/navigation
+      // destroys the JS context without firing disconnectedCallback).
+      // Uses did-navigate (not will-navigate) because will-navigate fires even
+      // when navigation is denied by navigationRules.
+      this.on("did-navigate", () => {
+        removeSurfacesForHostView(this.id);
+      });
+    } else {
+      cancelWaitForViewReady(this.id);
+      this._readyPromise = Promise.reject(new Error("Native view creation failed"));
+      this._readyPromise.catch(() => {}); // prevent unhandled rejection
+    }
+  }
+
+  whenReady(timeoutMs = 8000): Promise<void> {
+    return Promise.race([
+      this._readyPromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Browser creation timed out for view ${this.id}`)), timeoutMs)
+      )
+    ]);
   }
 
   static getById(id: number) {
@@ -177,6 +205,30 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
     }
   }
 
+  setInputPassthrough(passthrough: boolean) {
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_view_set_input_passthrough(this.id, passthrough);
+    }
+  }
+
+  setMaskRegion(rects: Array<{ x: number; y: number; w: number; h: number }>) {
+    if (!this.nativeAttached) return;
+    if (rects.length === 0) {
+      getNativeLibrary()?.symbols.bunite_view_set_mask_region(this.id, null as any, 0);
+      return;
+    }
+    const buf = new Float64Array(rects.length * 4);
+    for (let i = 0; i < rects.length; i++) {
+      buf[i * 4] = rects[i].x;
+      buf[i * 4 + 1] = rects[i].y;
+      buf[i * 4 + 2] = rects[i].w;
+      buf[i * 4 + 3] = rects[i].h;
+    }
+    getNativeLibrary()?.symbols.bunite_view_set_mask_region(
+      this.id, ptr(buf.buffer), rects.length
+    );
+  }
+
   bringToFront() {
     if (this.nativeAttached) {
       getNativeLibrary()?.symbols.bunite_view_bring_to_front(this.id);
@@ -187,6 +239,14 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
     this.frame = { x, y, width, height };
     if (this.nativeAttached) {
       getNativeLibrary()?.symbols.bunite_view_set_bounds(this.id, x, y, width, height);
+    }
+  }
+
+  /** Fire-and-forget setBounds — does not block on the UI thread. */
+  setBoundsAsync(x: number, y: number, width: number, height: number) {
+    this.frame = { x, y, width, height };
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_view_set_bounds_async(this.id, x, y, width, height);
     }
   }
 
@@ -231,6 +291,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
 
   detachFromNative() {
     removeSurfacesForHostView(this.id);
+    cancelWaitForViewReady(this.id);
     this.nativeAttached = false;
     for (const eventName of [
       "will-navigate",

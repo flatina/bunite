@@ -83,8 +83,11 @@ type NativeSymbols = {
   bunite_unregister_appres_route: (path: CStringPointer) => void;
   bunite_complete_route_request: (requestId: number, html: CStringPointer) => void;
   bunite_view_set_visible: (viewId: number, visible: boolean) => void;
+  bunite_view_set_input_passthrough: (viewId: number, passthrough: boolean) => void;
+  bunite_view_set_mask_region: (viewId: number, rects: Pointer, count: number) => void;
   bunite_view_bring_to_front: (viewId: number) => void;
   bunite_view_set_bounds: (viewId: number, x: number, y: number, width: number, height: number) => void;
+  bunite_view_set_bounds_async: (viewId: number, x: number, y: number, width: number, height: number) => void;
   bunite_view_set_anchor: (viewId: number, mode: number, inset: number) => void;
   bunite_view_go_back: (viewId: number) => void;
   bunite_view_reload: (viewId: number) => void;
@@ -244,11 +247,23 @@ const nativeSymbolDefinitions = {
     args: [FFIType.u32, FFIType.bool],
     returns: FFIType.void
   },
+  bunite_view_set_input_passthrough: {
+    args: [FFIType.u32, FFIType.bool],
+    returns: FFIType.void
+  },
+  bunite_view_set_mask_region: {
+    args: [FFIType.u32, FFIType.pointer, FFIType.u32],
+    returns: FFIType.void
+  },
   bunite_view_bring_to_front: {
     args: [FFIType.u32],
     returns: FFIType.void
   },
   bunite_view_set_bounds: {
+    args: [FFIType.u32, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64],
+    returns: FFIType.void
+  },
+  bunite_view_set_bounds_async: {
     args: [FFIType.u32, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64],
     returns: FFIType.void
   },
@@ -339,6 +354,19 @@ let routeRequestHandler: ((requestId: number, path: string) => void) | null = nu
 
 export function setRouteRequestHandler(handler: (requestId: number, path: string) => void) {
   routeRequestHandler = handler;
+}
+
+// Per-view deferred resolvers for "view-ready" (OnAfterCreated).
+const viewReadyResolvers = new Map<number, () => void>();
+
+export function waitForViewReady(viewId: number): Promise<void> {
+  return new Promise((resolve) => {
+    viewReadyResolvers.set(viewId, resolve);
+  });
+}
+
+export function cancelWaitForViewReady(viewId: number) {
+  viewReadyResolvers.delete(viewId);
 }
 
 export function toCString(value: string): CStringPointer {
@@ -459,6 +487,14 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
           case "route-request": {
             const parsed = maybeParsePayload(payload) as { requestId: number; path: string };
             routeRequestHandler?.(parsed.requestId, parsed.path);
+            break;
+          }
+          case "view-ready": {
+            const resolver = viewReadyResolvers.get(viewId);
+            if (resolver) {
+              viewReadyResolvers.delete(viewId);
+              resolver();
+            }
             break;
           }
         }
