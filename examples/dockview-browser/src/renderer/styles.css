@@ -7,6 +7,12 @@ body {
   background: #0b1220;
 }
 
+button {
+  font: inherit; color: inherit; cursor: pointer;
+  background: #162238; border: 1px solid #243450;
+  border-radius: 4px; padding: 2px 8px;
+}
+
 #app {
   height: 100vh;
   display: flex;
@@ -15,31 +21,32 @@ body {
   gap: 8px;
 }
 
-.topbar {
+.topbar, .browser-nav {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
+  padding: 6px 8px;
   background: #10192b;
-  border-radius: 6px;
 }
 
+.topbar { border-radius: 6px; }
 .topbar strong { margin-right: auto; }
+.browser-nav { gap: 4px; border-bottom: 1px solid #243450; }
 
-.topbar button {
-  font: inherit; color: inherit; cursor: pointer;
-  background: #162238; border: 1px solid #243450;
-  border-radius: 4px; padding: 3px 8px;
+.browser-nav__url {
+  flex: 1;
+  font: 12px/1.4 monospace;
+  color: #c0cee0;
+  background: #0b1220;
+  border: 1px solid #243450;
+  border-radius: 4px;
+  padding: 3px 8px;
+  outline: none;
 }
 
 .dockview-shell { flex: 1; min-height: 0; }
 
-.browser-panel { height: 100%; }
-
-.browser-panel__surface {
-  display: block;
-  width: 100%; height: 100%;
-  border: 0;
-}
+.browser-panel { height: 100%; display: flex; flex-direction: column; }
+.browser-panel__surface { display: block; width: 100%; flex: 1; min-height: 0; border: 0; }
 
 .fatal { margin: auto; padding: 16px; color: #ff6b6b; white-space: pre-wrap; }

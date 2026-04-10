@@ -1,50 +1,14 @@
 import { BrowserView } from "./BrowserView";
+import {
+  trackSurface, untrackSurface, getOwnedSurface,
+  getHostSurfaceIds, getSurfaceRecord,
+  MAX_SURFACES_PER_HOST
+} from "./SurfaceRegistry";
 
 import type { GlobalIPCHandler } from "./App";
 
-type SurfaceRecord = {
-  view: BrowserView;
-  hostViewId: number;
-  hidden: boolean;
-};
+// --- Helpers ---
 
-const MAX_SURFACES_PER_HOST = 32;
-
-const surfaces = new Map<number, SurfaceRecord>();
-const hostSurfaceIds = new Map<number, Set<number>>();
-
-function trackSurface(surfaceId: number, record: SurfaceRecord) {
-  surfaces.set(surfaceId, record);
-  let ids = hostSurfaceIds.get(record.hostViewId);
-  if (!ids) {
-    ids = new Set();
-    hostSurfaceIds.set(record.hostViewId, ids);
-  }
-  ids.add(surfaceId);
-}
-
-function untrackSurface(surfaceId: number) {
-  const record = surfaces.get(surfaceId);
-  if (!record) return;
-  surfaces.delete(surfaceId);
-  const ids = hostSurfaceIds.get(record.hostViewId);
-  if (ids) {
-    ids.delete(surfaceId);
-    if (ids.size === 0) hostSurfaceIds.delete(record.hostViewId);
-  }
-}
-
-function getOwnedSurface(surfaceId: number, ctx: { viewId: number }): SurfaceRecord | null {
-  const record = surfaces.get(surfaceId);
-  if (!record) return null;
-  if (record.hostViewId !== ctx.viewId) throw new Error("Surface access denied.");
-  return record;
-}
-
-// NOTE: hostView.frame is only updated via JS setBounds(), not when native
-// anchoring resizes the view. This is correct for fill-anchored host views
-// at (0,0), but will be stale if the host view moves independently.
-// A proper fix requires native→JS frame-change events.
 function applyHostOffset(hostView: BrowserView, x: number, y: number) {
   return { x: x + hostView.frame.x, y: y + hostView.frame.y };
 }
@@ -54,13 +18,13 @@ function assertNum(v: unknown, label: string): number {
   return v;
 }
 
-function assertStr(v: unknown, label: string): string {
-  if (typeof v !== "string") throw new Error(`Invalid ${label}`);
+function assertBool(v: unknown, label: string): boolean {
+  if (typeof v !== "boolean") throw new Error(`Invalid ${label}`);
   return v;
 }
 
-function assertBool(v: unknown, label: string): boolean {
-  if (typeof v !== "boolean") throw new Error(`Invalid ${label}`);
+function assertStr(v: unknown, label: string): string {
+  if (typeof v !== "string") throw new Error(`Invalid ${label}`);
   return v;
 }
 
@@ -69,17 +33,16 @@ function assertObj(v: unknown, label: string): Record<string, unknown> {
   return v as Record<string, unknown>;
 }
 
-export function removeSurfacesForHostView(hostViewId: number) {
-  const ids = hostSurfaceIds.get(hostViewId);
-  if (!ids || ids.size === 0) return;
+// --- Surface lifecycle callbacks (called by SurfaceBrowserIPC after init) ---
 
-  for (const surfaceId of Array.from(ids)) {
-    const record = surfaces.get(surfaceId);
-    if (!record) continue;
-    untrackSurface(surfaceId);
-    record.view.remove();
-  }
+type SurfaceInitCallback = (surfaceId: number, hostViewId: number, view: BrowserView) => void;
+const initCallbacks: SurfaceInitCallback[] = [];
+
+export function onSurfaceInit(cb: SurfaceInitCallback) {
+  initCallbacks.push(cb);
 }
+
+// --- Handlers ---
 
 const handleSurfaceInit: GlobalIPCHandler = async (params, ctx) => {
   const p = assertObj(params, "surface.init params");
@@ -94,7 +57,7 @@ const handleSurfaceInit: GlobalIPCHandler = async (params, ctx) => {
   if (!hostView) throw new Error(`Host view not found: ${ctx.viewId}`);
   if (!hostView.windowId) throw new Error(`Host window not found for view: ${ctx.viewId}`);
 
-  const hostIds = hostSurfaceIds.get(ctx.viewId);
+  const hostIds = getHostSurfaceIds(ctx.viewId);
   if (hostIds && hostIds.size >= MAX_SURFACES_PER_HOST) {
     throw new Error(`Surface limit reached (${MAX_SURFACES_PER_HOST}) for host view ${ctx.viewId}`);
   }
@@ -115,6 +78,9 @@ const handleSurfaceInit: GlobalIPCHandler = async (params, ctx) => {
     view.remove();
     throw new Error("Surface browser creation failed or timed out");
   }
+
+  for (const cb of initCallbacks) cb(view.id, ctx.viewId, view);
+
   if (hidden) {
     view.setVisible(false);
   } else {
@@ -170,18 +136,6 @@ const handleSurfaceSetHidden: GlobalIPCHandler = async (params, ctx) => {
   return {};
 };
 
-const handleSurfaceUpdateSrc: GlobalIPCHandler = async (params, ctx) => {
-  const p = assertObj(params, "surface.updateSrc params");
-  const surfaceId = assertNum(p.surfaceId, "surfaceId");
-  const src = assertStr(p.src, "src");
-
-  const record = getOwnedSurface(surfaceId, ctx);
-  if (!record) return {};
-
-  record.view.loadURL(src);
-  return {};
-};
-
 const handleSurfaceSetMasks: GlobalIPCHandler = async (params, ctx) => {
   const p = assertObj(params, "surface.setMasks params");
   const surfaceId = assertNum(p.surfaceId, "surfaceId");
@@ -193,7 +147,6 @@ const handleSurfaceSetMasks: GlobalIPCHandler = async (params, ctx) => {
   const hostView = BrowserView.getById(ctx.viewId);
   if (!hostView) return {};
 
-  // Convert host-page-relative mask rects to window-relative
   const offset = applyHostOffset(hostView, 0, 0);
   const rects = masksRaw.map((r: any) => ({
     x: assertNum(r.x, "mask.x") + offset.x,
@@ -210,11 +163,11 @@ const handleSurfaceSetAllPassthrough: GlobalIPCHandler = async (params, ctx) => 
   const p = assertObj(params, "surface.setAllPassthrough params");
   const passthrough = assertBool(p.passthrough, "passthrough");
 
-  const ids = hostSurfaceIds.get(ctx.viewId);
+  const ids = getHostSurfaceIds(ctx.viewId);
   if (!ids) return {};
 
   for (const surfaceId of ids) {
-    const record = surfaces.get(surfaceId);
+    const record = getSurfaceRecord(surfaceId);
     if (record) {
       record.view.setInputPassthrough(passthrough);
     }
@@ -223,11 +176,11 @@ const handleSurfaceSetAllPassthrough: GlobalIPCHandler = async (params, ctx) => 
 };
 
 const handleSurfaceBringAllVisiblesToFront: GlobalIPCHandler = async (_params, ctx) => {
-  const ids = hostSurfaceIds.get(ctx.viewId);
+  const ids = getHostSurfaceIds(ctx.viewId);
   if (!ids) return {};
 
   for (const surfaceId of ids) {
-    const record = surfaces.get(surfaceId);
+    const record = getSurfaceRecord(surfaceId);
     if (record && !record.hidden) {
       record.view.bringToFront();
     }
@@ -241,7 +194,6 @@ export function getSurfaceIPCHandlers(): Map<string, GlobalIPCHandler> {
     ["__bunite:surface.resize", handleSurfaceResize],
     ["__bunite:surface.remove", handleSurfaceRemove],
     ["__bunite:surface.setHidden", handleSurfaceSetHidden],
-    ["__bunite:surface.updateSrc", handleSurfaceUpdateSrc],
     ["__bunite:surface.setMasks", handleSurfaceSetMasks],
     ["__bunite:surface.setAllPassthrough", handleSurfaceSetAllPassthrough],
     ["__bunite:surface.bringAllVisiblesToFront", handleSurfaceBringAllVisiblesToFront]

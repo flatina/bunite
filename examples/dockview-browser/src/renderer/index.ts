@@ -9,34 +9,23 @@ import {
 import "./styles.css";
 import { setupDropIndicatorMasks } from "./maskHelper";
 
-const fixtures = [
-  { id: "counter", title: "Counter" },
-  { id: "form", title: "Form" },
-  { id: "list", title: "List" }
-] as const;
-
 declare global {
   interface Window {
     bunite?: { invoke: (method: string, params?: unknown) => Promise<unknown> };
   }
 }
 
-const root = document.getElementById("app")!;
-const shell = document.createElement("div");
-shell.className = "dockview-shell";
-root.append(shell);
+const shell = document.querySelector<HTMLElement>(".dockview-shell")!;
+const panelTpl = document.getElementById("browser-panel-tpl") as HTMLTemplateElement;
 
 let demoOrigin = "";
 let api: DockviewApi;
 
 void bootstrap().catch((e) => {
-  root.innerHTML = `<pre class="fatal">${String(e)}</pre>`;
+  document.getElementById("app")!.innerHTML = `<pre class="fatal">${String(e)}</pre>`;
 });
 
 // --- Panel ---
-// Visibility is managed automatically: dockview sets display:none on hidden
-// panels, which makes getBoundingClientRect() return zeros, and
-// <bunite-webview>'s OverlaySyncController auto-hides the native surface.
 
 class BrowserPanel implements IContentRenderer {
   readonly element = document.createElement("div");
@@ -47,10 +36,29 @@ class BrowserPanel implements IContentRenderer {
 
   init(params: GroupPanelPartInitParameters) {
     const source = (params.params as { source?: string })?.source ?? "/counter.html";
-    const wv = document.createElement("bunite-webview");
-    wv.className = "browser-panel__surface";
-    wv.setAttribute("src", `${demoOrigin}${source}`);
-    this.element.append(wv);
+    const fullUrl = `${demoOrigin}${source}`;
+
+    this.element.append(panelTpl.content.cloneNode(true));
+
+    const urlInput = this.element.querySelector<HTMLInputElement>(".browser-nav__url")!;
+    const wv = this.element.querySelector("bunite-webview")! as HTMLElement & {
+      goBack(): void; reload(): void; navigate(url: string): void;
+    };
+    urlInput.value = fullUrl;
+    wv.setAttribute("src", fullUrl);
+
+    this.element.querySelector('[data-action="back"]')!.addEventListener("click", () => wv.goBack());
+    this.element.querySelector('[data-action="reload"]')!.addEventListener("click", () => wv.reload());
+    urlInput.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      let url = urlInput.value.trim();
+      if (!url) return;
+      if (!url.includes("://")) url = `https://${url}`;
+      wv.navigate(url);
+    });
+    wv.addEventListener("did-navigate", ((e: CustomEvent<{ url: string }>) => {
+      urlInput.value = e.detail.url;
+    }) as EventListener);
   }
 }
 
@@ -63,7 +71,24 @@ async function bootstrap() {
   const config = (await invoke("dockviewBrowser.getConfig")) as { demoOrigin: string };
   demoOrigin = config.demoOrigin;
 
-  renderToolbar();
+  document.querySelectorAll<HTMLButtonElement>("[data-fixture]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.fixture!;
+      const ref = api.activePanel;
+      api.addPanel({
+        id: `p_${crypto.randomUUID()}`,
+        component: "browser",
+        title: id[0].toUpperCase() + id.slice(1),
+        params: { source: `/${id}.html` },
+        position: ref ? { referencePanel: ref, direction: "right" } : undefined
+      });
+    });
+  });
+
+  document.querySelector('[data-action="reset"]')!.addEventListener("click", () => {
+    api.clear();
+    createDefaultLayout();
+  });
 
   api = createDockview(shell, {
     theme: themeAbyss,
@@ -73,35 +98,6 @@ async function bootstrap() {
 
   createDefaultLayout();
   setupDropIndicatorMasks();
-}
-
-function renderToolbar() {
-  const bar = document.createElement("header");
-  bar.className = "topbar";
-  bar.innerHTML = "<strong>dockview-browser</strong>";
-
-  for (const f of fixtures) {
-    const btn = document.createElement("button");
-    btn.textContent = `+ ${f.title}`;
-    btn.addEventListener("click", () => {
-      const ref = api.activePanel;
-      api.addPanel({
-        id: `p_${crypto.randomUUID()}`,
-        component: "browser",
-        title: f.title,
-        params: { source: `/${f.id}.html` },
-        position: ref ? { referencePanel: ref, direction: "right" } : undefined
-      });
-    });
-    bar.append(btn);
-  }
-
-  const reset = document.createElement("button");
-  reset.textContent = "Reset";
-  reset.addEventListener("click", () => { api.clear(); createDefaultLayout(); });
-  bar.append(reset);
-
-  root.prepend(bar);
 }
 
 function createDefaultLayout() {
