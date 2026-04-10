@@ -1,4 +1,6 @@
 import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { dlopen, FFIType } from "bun:ffi";
 import { BuniteEvent } from "../events/event";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import {
@@ -199,6 +201,32 @@ class AppRuntime {
 
   get runtime() {
     return getNativeRuntimeState();
+  }
+
+  get version(): string {
+    const { createRequire } = require("node:module");
+    const req = createRequire(import.meta.url);
+    const pkg = req("bunite-core/package.json");
+    return pkg.version ?? "unknown";
+  }
+
+  private cachedCefVersion: string | null | undefined;
+
+  get cefVersion(): string | null {
+    if (this.cachedCefVersion !== undefined) return this.cachedCefVersion;
+    this.cachedCefVersion = null;
+    const arts = getNativeRuntimeState()?.artifacts;
+    if (!arts?.cefDir) return null;
+    const libcefPath = join(arts.cefDir, "libcef.dll");
+    if (!existsSync(libcefPath)) return null;
+    try {
+      const lib = dlopen(libcefPath, {
+        cef_version_info: { returns: FFIType.i32, args: [FFIType.i32] },
+      });
+      const v = (entry: number) => lib.symbols.cef_version_info(entry);
+      this.cachedCefVersion = `${v(0)}.${v(1)}.${v(2)}+chromium-${v(4)}.${v(5)}.${v(6)}.${v(7)}`;
+    } catch { /* leave as null */ }
+    return this.cachedCefVersion;
   }
 }
 

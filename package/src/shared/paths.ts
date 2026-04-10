@@ -41,11 +41,6 @@ export function resolveFallbackCefDir(): string | null {
     return localVendorPath;
   }
 
-  const upstreamVendorPath = "C:\\project\\electrobun\\package\\vendors\\cef";
-  if (existsSync(upstreamVendorPath)) {
-    return upstreamVendorPath;
-  }
-
   return null;
 }
 
