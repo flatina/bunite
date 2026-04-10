@@ -8,6 +8,7 @@ import { attachBrowserViewRegistry, getRPCPort, sendMessageToView } from "./Sock
 import { randomBytes } from "node:crypto";
 import { resolveDefaultAppResRoot } from "../../shared/paths";
 import { removeSurfacesForHostView } from "./SurfaceRegistry";
+import { cancelPendingMessageBoxesForView } from "./Utils";
 
 const BrowserViewMap: Record<number, BrowserView<any>> = {};
 let nextWebviewId = 1;
@@ -127,6 +128,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
       // when navigation is denied by navigationRules.
       this.on("did-navigate", (event: any) => {
         this.url = event.data?.detail ?? this.url;
+        cancelPendingMessageBoxesForView(this.id);
         removeSurfacesForHostView(this.id);
       });
     } else {
@@ -185,6 +187,12 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
     const modeInt = { none: 0, fill: 1, top: 2, "below-top": 3 }[mode];
     if (this.nativeAttached) {
       getNativeLibrary()?.symbols.bunite_view_set_anchor(this.id, modeInt, inset);
+    }
+  }
+
+  executeJavaScript(script: string) {
+    if (this.nativeAttached) {
+      getNativeLibrary()?.symbols.bunite_view_execute_javascript(this.id, toCString(script));
     }
   }
 
@@ -291,6 +299,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
   }
 
   detachFromNative() {
+    cancelPendingMessageBoxesForView(this.id);
     removeSurfacesForHostView(this.id);
     cancelWaitForViewReady(this.id);
     this.nativeAttached = false;
@@ -299,8 +308,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
       "did-navigate",
       "dom-ready",
       "new-window-open",
-      "permission-requested",
-      "message-box-response"
+      "permission-requested"
     ]) {
       buniteEventEmitter.removeAllListeners(`${eventName}-${this.id}`);
     }
@@ -313,8 +321,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
       | "did-navigate"
       | "dom-ready"
       | "new-window-open"
-      | "permission-requested"
-      | "message-box-response",
+      | "permission-requested",
     handler: (event: unknown) => void
   ) {
     const specificName = `${name}-${this.id}`;

@@ -7,7 +7,5 @@ export default {
   newWindowOpen: (data: { detail: string | { url: string } }) =>
     new BuniteEvent("new-window-open", data),
   permissionRequested: (data: { requestId: number; kind: number; url?: string }) =>
-    new BuniteEvent("permission-requested", data),
-  messageBoxResponse: (data: { requestId: number; response: number }) =>
-    new BuniteEvent("message-box-response", data)
+    new BuniteEvent("permission-requested", data)
 };
