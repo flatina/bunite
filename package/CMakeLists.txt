@@ -35,7 +35,11 @@ if(WIN32)
   add_subdirectory("${CEF_ROOT}/libcef_dll" "${CMAKE_BINARY_DIR}/cef_wrapper")
 
   add_library(BuniteNative SHARED
-    src/native/win/native_host.cpp
+    src/native/win/native_host_runtime.cpp
+    src/native/win/native_host_utils.cpp
+    src/native/win/native_host_appres.cpp
+    src/native/win/native_host_cef.cpp
+    src/native/win/native_host_ffi.cpp
   )
   target_include_directories(BuniteNative PRIVATE
     src/native/shared
