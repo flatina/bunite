@@ -78,11 +78,6 @@ struct PendingPermissionRequest {
   CefRefPtr<CefMediaAccessCallback> media_callback;
 };
 
-struct PendingMessageBoxRequest {
-  uint32_t view_id = 0;
-  int32_t cancel_id = -1;
-};
-
 struct WindowHost;
 
 struct ViewHost {
@@ -151,10 +146,6 @@ struct RuntimeState {
   std::map<uint32_t, PendingPermissionRequest> pending_permissions;
   uint32_t next_permission_request_id = 1;
 
-  std::mutex message_box_mutex;
-  std::map<uint32_t, PendingMessageBoxRequest> pending_message_boxes;
-  uint32_t next_message_box_request_id = 1;
-
   std::mutex route_mutex;
   struct PendingRouteRequest {
     std::string path;
@@ -196,22 +187,6 @@ std::string escapeJsonString(const std::string& value);
 std::vector<std::string> splitButtonLabels(const std::string& buttons_csv);
 std::string trimAsciiWhitespace(const std::string& value);
 std::string toLowerAscii(std::string value);
-std::string buildButtonLabelsJson(const std::vector<std::string>& labels);
-std::optional<std::pair<uint32_t, int32_t>> parseMessageBoxResponseUrl(const std::string& url);
-bool tryResolvePendingMessageBoxRequest(uint32_t view_id, uint32_t request_id, int32_t response);
-void cancelPendingMessageBoxesForView(uint32_t view_id);
-void cancelPendingMessageBoxRequest(uint32_t request_id);
-ViewHost* getPreferredMessageBoxView();
-std::string buildBrowserMessageBoxScript(
-  uint32_t request_id,
-  const std::string& type,
-  const std::string& title,
-  const std::string& message,
-  const std::string& detail,
-  const std::vector<std::string>& buttons,
-  int32_t default_id,
-  int32_t cancel_id
-);
 bool globMatchCaseInsensitive(const std::string& pattern, const std::string& value);
 std::vector<std::string> parseNavigationRulesJson(const std::string& rules_json);
 std::map<std::string, std::string> parseChromiumFlagsJson(const std::string& json);

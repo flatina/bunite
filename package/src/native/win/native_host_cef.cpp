@@ -158,7 +158,6 @@ public:
     const bool should_allow = !is_main_frame || bunite_win::shouldAllowNavigation(view_, url);
 
     if (is_main_frame) {
-      bunite_win::cancelPendingMessageBoxesForView(view_->id);
       bunite_win::emitWebviewEvent(view_->id, "will-navigate", url);
     }
 
@@ -390,7 +389,6 @@ void finalizeViewHost(ViewHost* view) {
     return;
   }
 
-  cancelPendingMessageBoxesForView(view->id);
   bunite::WebviewContentStorage::instance().remove(view->id);
 
   WindowHost* window = nullptr;

@@ -50,6 +50,12 @@ const defaultOptions: WindowOptionsType = {
 
 const BrowserWindowMap: Record<number, BrowserWindow<any>> = {};
 
+let lastFocusedWindowId: number | null = null;
+
+export function getLastFocusedWindowId(): number | null {
+  return lastFocusedWindowId;
+}
+
 export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
   id = getNextWindowId();
   private nativeAttached = false;
@@ -107,6 +113,9 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     }
     this.closed = true;
     this.nativeAttached = false;
+    if (lastFocusedWindowId === this.id) {
+      lastFocusedWindowId = null;
+    }
     BrowserView.getById(this.webviewId)?.detachFromNative();
     delete BrowserWindowMap[this.id];
     buniteEventEmitter.off(`move-${this.id}`, this.handleNativeMove);
@@ -160,6 +169,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
       ) ?? false;
 
     BrowserWindowMap[this.id] = this;
+    buniteEventEmitter.on(`focus-${this.id}`, () => { lastFocusedWindowId = this.id; });
     buniteEventEmitter.on(`move-${this.id}`, this.handleNativeMove);
     buniteEventEmitter.on(`resize-${this.id}`, this.handleNativeResize);
     buniteEventEmitter.on(`close-${this.id}`, this.handleNativeClose);

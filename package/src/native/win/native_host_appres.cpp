@@ -11,22 +11,6 @@ public:
     CEF_REQUIRE_IO_THREAD();
     handle_request = true;
 
-    if (request) {
-      const auto message_box_response = bunite_win::parseMessageBoxResponseUrl(request->GetURL().ToString());
-      if (message_box_response) {
-        bunite_win::tryResolvePendingMessageBoxRequest(
-          view_id_,
-          message_box_response->first,
-          message_box_response->second
-        );
-        status_code_ = 204;
-        status_text_ = "No Content";
-        mime_type_ = "text/plain";
-        data_.clear();
-        return true;
-      }
-    }
-
     const std::string url = request ? request->GetURL().ToString() : "";
 
     CefURLParts url_parts;
