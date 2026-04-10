@@ -28,7 +28,7 @@ await app.init();
 app.handle("getServerUrl", () => `http://localhost:${server.port}`);
 
 new BrowserWindow({
-  title: "Webview Surface Test",
+  title: `Webview Surface Test v${app.version} — CEF ${app.cefVersion ?? "unknown"}`,
   url: "./index.html",
   frame: { x: 80, y: 80, width: 900, height: 650 }
 });

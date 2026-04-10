@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 
 if(NOT DEFINED BUNITE_TARGET_ARCH)
   set(BUNITE_TARGET_ARCH x64)
@@ -20,13 +21,12 @@ if(WIN32)
       set(BUNITE_CEF_ROOT "$ENV{BUNITE_CEF_ROOT}")
     elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendors/cef")
       set(BUNITE_CEF_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/vendors/cef")
-    elseif(EXISTS "C:/project/electrobun/package/vendors/cef")
-      set(BUNITE_CEF_ROOT "C:/project/electrobun/package/vendors/cef")
     endif()
   endif()
 
   if(NOT BUNITE_CEF_ROOT OR NOT EXISTS "${BUNITE_CEF_ROOT}/cmake/FindCEF.cmake")
-    message(FATAL_ERROR "BUNITE_CEF_ROOT must point at a CEF binary distribution. Checked vendors/cef and C:/project/electrobun/package/vendors/cef.")
+    message(FATAL_ERROR "CEF binary distribution not found.\n"
+      "Set BUNITE_CEF_ROOT via cmake -D or env var, or place it at ${CMAKE_CURRENT_SOURCE_DIR}/vendors/cef.")
   endif()
 
   set(CEF_ROOT "${BUNITE_CEF_ROOT}")

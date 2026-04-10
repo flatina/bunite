@@ -26,7 +26,7 @@ app.handle("dockviewBrowser.getConfig", () => ({
 }));
 
 const win = new BrowserWindow({
-  title: "bunite dockview browser",
+  title: `bunite dockview browser v${app.version} — CEF ${app.cefVersion ?? "unknown"}`,
   frame: { x: 80, y: 80, width: 1024, height: 600 },
   url: "appres://app.internal/index.html",
   appresRoot: distDir

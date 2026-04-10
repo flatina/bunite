@@ -216,7 +216,7 @@ app.getAppRes("about", () => `
 `);
 
 const win = new BrowserWindow({
-  title: "bunite multi-tab browser",
+  title: `bunite multi-tab browser v${app.version} — CEF ${app.cefVersion ?? "unknown"}`,
   frame: { x: 80, y: 80, width: 1280, height: 900 },
   url: "appres://app.internal/shell",
   appresRoot: rendererDir,

@@ -8,3 +8,4 @@ dist/
 *.built.js
 *.built.css
 *.tsbuildinfo
+vendors/
