@@ -16,7 +16,13 @@ export type RPCMessagePacket = {
   payload: unknown;
 };
 
-export type RPCPacket = RPCRequestPacket | RPCResponsePacket | RPCMessagePacket;
+export type RPCEventPacket = {
+  type: "event";
+  channel: string;
+  data: unknown;
+};
+
+export type RPCPacket = RPCRequestPacket | RPCResponsePacket | RPCMessagePacket | RPCEventPacket;
 
 type BaseRPCRequestsSchema = Record<string, { params: unknown; response: unknown }>;
 type BaseRPCMessagesSchema = Record<string, unknown>;

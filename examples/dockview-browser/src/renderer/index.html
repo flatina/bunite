@@ -6,7 +6,26 @@
   <title>dockview browser</title>
 </head>
 <body>
-  <div id="app"></div>
+  <div id="app">
+    <header class="topbar">
+      <strong>dockview-browser</strong>
+      <button data-fixture="counter">+ Counter</button>
+      <button data-fixture="form">+ Form</button>
+      <button data-fixture="list">+ List</button>
+      <button data-action="reset">Reset</button>
+    </header>
+    <div class="dockview-shell"></div>
+  </div>
+
+  <template id="browser-panel-tpl">
+    <div class="browser-nav">
+      <button class="browser-nav__btn" data-action="back" title="Back">&#x25C0;</button>
+      <button class="browser-nav__btn" data-action="reload" title="Reload">&#x21BB;</button>
+      <input class="browser-nav__url" type="text" spellcheck="false">
+    </div>
+    <bunite-webview class="browser-panel__surface"></bunite-webview>
+  </template>
+
   <script type="module" src="./index.ts"></script>
 </body>
 </html>
