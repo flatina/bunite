@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { dlopen, FFIType } from "bun:ffi";
 import { BuniteEvent } from "../events/event";
 import { buniteEventEmitter } from "../events/eventEmitter";
+import { handleMessageBoxResponse } from "./Utils";
 import {
   getNativeLibrary,
   initNativeRuntime,
@@ -71,6 +72,12 @@ class AppRuntime {
         for (const [channel, handler] of getWebviewIPCHandlers()) {
           this.globalIPCHandlers.set(channel, handler);
         }
+
+        this.globalIPCHandlers.set("__bunite:messageBoxResponse", (params) => {
+          const { requestId, response } = params as { requestId: number; response: number };
+          handleMessageBoxResponse(requestId, response);
+          return {};
+        });
 
         setRouteRequestHandler((requestId, path) => this.handleRouteRequest(requestId, path));
 

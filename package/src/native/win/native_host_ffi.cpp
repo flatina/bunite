@@ -445,6 +445,18 @@ extern "C" BUNITE_EXPORT bool bunite_view_create(
   });
 }
 
+extern "C" BUNITE_EXPORT void bunite_view_execute_javascript(uint32_t view_id, const char* script) {
+  bunite_win::postCefUiTask([view_id, code = std::string(script ? script : "")]() {
+    auto* view = bunite_win::getViewHostById(view_id);
+    if (!view || !view->browser || !view->browser->GetMainFrame()) {
+      return;
+    }
+    view->browser->GetMainFrame()->ExecuteJavaScript(
+      code, view->browser->GetMainFrame()->GetURL(), 0
+    );
+  });
+}
+
 extern "C" BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char* url) {
   bunite_win::postCefUiTask([view_id, next_url = std::string(url ? url : "")]() {
     auto* view = bunite_win::getViewHostById(view_id);
@@ -796,6 +808,7 @@ extern "C" BUNITE_EXPORT void bunite_complete_permission_request(uint32_t reques
 }
 
 extern "C" BUNITE_EXPORT int32_t bunite_show_message_box(
+  uint32_t window_id,
   const char* type,
   const char* title,
   const char* message,
@@ -857,7 +870,45 @@ extern "C" BUNITE_EXPORT int32_t bunite_show_message_box(
 
     const std::wstring window_title = bunite_win::utf8ToWide(title ? title : "");
     const std::wstring window_message = bunite_win::utf8ToWide(composed_message);
-    const int result = MessageBoxW(GetActiveWindow(), window_message.c_str(), window_title.c_str(), flags);
+    HWND owner = nullptr;
+    if (window_id != 0) {
+      auto* window = bunite_win::getWindowHostById(window_id);
+      if (window && window->hwnd && IsWindow(window->hwnd)) {
+        owner = window->hwnd;
+      }
+    }
+
+    // Center the message box on the owner window via CBT hook.
+    static thread_local HWND s_center_on = nullptr;
+    static thread_local HHOOK s_cbt_hook = nullptr;
+    s_center_on = owner;
+    if (owner) {
+      s_cbt_hook = SetWindowsHookExW(WH_CBT, [](int code, WPARAM wp, LPARAM) -> LRESULT {
+        if (code == HCBT_ACTIVATE && s_center_on) {
+          HWND dlg = reinterpret_cast<HWND>(wp);
+          RECT owner_rect{}, dlg_rect{};
+          if (GetWindowRect(s_center_on, &owner_rect) && GetWindowRect(dlg, &dlg_rect)) {
+            int dw = dlg_rect.right - dlg_rect.left;
+            int dh = dlg_rect.bottom - dlg_rect.top;
+            int ow = owner_rect.right - owner_rect.left;
+            int oh = owner_rect.bottom - owner_rect.top;
+            SetWindowPos(dlg, nullptr,
+              owner_rect.left + (ow - dw) / 2,
+              owner_rect.top + (oh - dh) / 2,
+              0, 0, SWP_NOSIZE | SWP_NOZORDER);
+          }
+          s_center_on = nullptr;
+        }
+        return CallNextHookEx(s_cbt_hook, code, wp, 0);
+      }, nullptr, GetCurrentThreadId());
+    }
+
+    const int result = MessageBoxW(owner, window_message.c_str(), window_title.c_str(), flags);
+
+    if (s_cbt_hook) {
+      UnhookWindowsHookEx(s_cbt_hook);
+      s_cbt_hook = nullptr;
+    }
 
     switch (result) {
       case IDOK:
@@ -873,61 +924,3 @@ extern "C" BUNITE_EXPORT int32_t bunite_show_message_box(
   });
 }
 
-extern "C" BUNITE_EXPORT uint32_t bunite_show_browser_message_box(
-  const char* type,
-  const char* title,
-  const char* message,
-  const char* detail,
-  const char* buttons,
-  int32_t default_id,
-  int32_t cancel_id
-) {
-  return runOnCefUiThreadSync<uint32_t>([=]() -> uint32_t {
-    ViewHost* view = bunite_win::getPreferredMessageBoxView();
-    if (!view || !view->browser || !view->browser->GetMainFrame()) {
-      return 0;
-    }
-
-    const uint32_t request_id = [&]() {
-      std::lock_guard<std::mutex> lock(g_runtime.message_box_mutex);
-      uint32_t id = g_runtime.next_message_box_request_id++;
-      if (id == 0) {
-        id = g_runtime.next_message_box_request_id++;
-      }
-      g_runtime.pending_message_boxes.emplace(
-        id,
-        PendingMessageBoxRequest{
-          view->id,
-          cancel_id
-        }
-      );
-      return id;
-    }();
-
-    const std::vector<std::string> labels = bunite_win::splitButtonLabels(buttons ? buttons : "");
-    const std::vector<std::string> browser_labels = labels.empty()
-      ? std::vector<std::string>{ "OK" }
-      : labels;
-
-    view->browser->GetMainFrame()->ExecuteJavaScript(
-      bunite_win::buildBrowserMessageBoxScript(
-        request_id,
-        type ? type : "info",
-        title ? title : "",
-        message ? message : "",
-        detail ? detail : "",
-        browser_labels,
-        default_id,
-        cancel_id
-      ),
-      view->browser->GetMainFrame()->GetURL(),
-      0
-    );
-
-    return request_id;
-  });
-}
-
-extern "C" BUNITE_EXPORT void bunite_cancel_browser_message_box(uint32_t request_id) {
-  runOnUiThreadSync<void>([=]() { bunite_win::cancelPendingMessageBoxRequest(request_id); });
-}

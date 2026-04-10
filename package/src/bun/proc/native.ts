@@ -91,6 +91,7 @@ type NativeSymbols = {
   bunite_view_set_anchor: (viewId: number, mode: number, inset: number) => void;
   bunite_view_go_back: (viewId: number) => void;
   bunite_view_reload: (viewId: number) => void;
+  bunite_view_execute_javascript: (viewId: number, script: CStringPointer) => void;
   bunite_view_load_url: (viewId: number, url: CStringPointer) => void;
   bunite_view_load_html: (viewId: number, html: CStringPointer) => void;
   bunite_view_remove: (viewId: number) => void;
@@ -99,6 +100,7 @@ type NativeSymbols = {
   bunite_view_toggle_devtools: (viewId: number) => void;
   bunite_complete_permission_request: (requestId: number, state: number) => void;
   bunite_show_message_box: (
+    windowId: number,
     type: CStringPointer,
     title: CStringPointer,
     message: CStringPointer,
@@ -107,16 +109,6 @@ type NativeSymbols = {
     defaultId: number,
     cancelId: number
   ) => number;
-  bunite_show_browser_message_box: (
-    type: CStringPointer,
-    title: CStringPointer,
-    message: CStringPointer,
-    detail: CStringPointer,
-    buttons: CStringPointer,
-    defaultId: number,
-    cancelId: number
-  ) => number;
-  bunite_cancel_browser_message_box: (requestId: number) => void;
   bunite_set_webview_event_handler: (handler: JSCallback) => void;
   bunite_set_window_event_handler: (handler: JSCallback) => void;
 };
@@ -279,6 +271,10 @@ const nativeSymbolDefinitions = {
     args: [FFIType.u32],
     returns: FFIType.void
   },
+  bunite_view_execute_javascript: {
+    args: [FFIType.u32, FFIType.cstring],
+    returns: FFIType.void
+  },
   bunite_view_load_url: {
     args: [FFIType.u32, FFIType.cstring],
     returns: FFIType.void
@@ -309,6 +305,7 @@ const nativeSymbolDefinitions = {
   },
   bunite_show_message_box: {
     args: [
+      FFIType.u32,
       FFIType.cstring,
       FFIType.cstring,
       FFIType.cstring,
@@ -318,22 +315,6 @@ const nativeSymbolDefinitions = {
       FFIType.i32
     ],
     returns: FFIType.i32
-  },
-  bunite_show_browser_message_box: {
-    args: [
-      FFIType.cstring,
-      FFIType.cstring,
-      FFIType.cstring,
-      FFIType.cstring,
-      FFIType.cstring,
-      FFIType.i32,
-      FFIType.i32
-    ],
-    returns: FFIType.u32
-  },
-  bunite_cancel_browser_message_box: {
-    args: [FFIType.u32],
-    returns: FFIType.void
   },
   bunite_set_webview_event_handler: {
     args: [FFIType.function],
@@ -472,14 +453,6 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.webview.permissionRequested(
                 maybeParsePayload(payload) as { requestId: number; kind: number; url?: string }
-              ),
-              viewId
-            );
-            break;
-          case "message-box-response":
-            buniteEventEmitter.emitEvent(
-              buniteEventEmitter.events.webview.messageBoxResponse(
-                maybeParsePayload(payload) as { requestId: number; response: number }
               ),
               viewId
             );
@@ -687,7 +660,7 @@ export function completePermissionRequest(requestId: number, stateValue: number)
   nativeLibrary?.symbols.bunite_complete_permission_request(requestId, stateValue);
 }
 
-export function showNativeMessageBox(params: {
+export function showNativeMessageBox(windowId: number, params: {
   type?: string;
   title?: string;
   message?: string;
@@ -702,6 +675,7 @@ export function showNativeMessageBox(params: {
   }
 
   return native.symbols.bunite_show_message_box(
+    windowId,
     toCString(params.type ?? "info"),
     toCString(params.title ?? ""),
     toCString(params.message ?? ""),
@@ -712,31 +686,3 @@ export function showNativeMessageBox(params: {
   );
 }
 
-export function requestBrowserMessageBox(params: {
-  type?: string;
-  title?: string;
-  message?: string;
-  detail?: string;
-  buttons?: string[];
-  defaultId?: number;
-  cancelId?: number;
-}): number {
-  const native = getNativeLibrary();
-  if (!native) {
-    return 0;
-  }
-
-  return native.symbols.bunite_show_browser_message_box(
-    toCString(params.type ?? "info"),
-    toCString(params.title ?? ""),
-    toCString(params.message ?? ""),
-    toCString(params.detail ?? ""),
-    toCString((params.buttons ?? ["OK"]).join(messageBoxButtonSeparator)),
-    params.defaultId ?? 0,
-    params.cancelId ?? unsetCancelId
-  );
-}
-
-export function cancelBrowserMessageBoxRequest(requestId: number): void {
-  getNativeLibrary()?.symbols.bunite_cancel_browser_message_box(requestId);
-}

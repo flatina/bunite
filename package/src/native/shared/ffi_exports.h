@@ -76,6 +76,7 @@ BUNITE_EXPORT bool bunite_view_create(
 	bool auto_resize,
 	bool sandbox
 );
+BUNITE_EXPORT void bunite_view_execute_javascript(uint32_t view_id, const char* script);
 BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char* url);
 BUNITE_EXPORT void bunite_view_load_html(uint32_t view_id, const char* html);
 BUNITE_EXPORT void bunite_register_appres_route(const char* path);
@@ -106,6 +107,7 @@ BUNITE_EXPORT void bunite_view_close_devtools(uint32_t view_id);
 BUNITE_EXPORT void bunite_view_toggle_devtools(uint32_t view_id);
 BUNITE_EXPORT void bunite_complete_permission_request(uint32_t request_id, uint32_t state);
 BUNITE_EXPORT int32_t bunite_show_message_box(
+	uint32_t window_id,
 	const char* type,
 	const char* title,
 	const char* message,
@@ -114,17 +116,6 @@ BUNITE_EXPORT int32_t bunite_show_message_box(
 	int32_t default_id,
 	int32_t cancel_id
 );
-BUNITE_EXPORT uint32_t bunite_show_browser_message_box(
-	const char* type,
-	const char* title,
-	const char* message,
-	const char* detail,
-	const char* buttons,
-	int32_t default_id,
-	int32_t cancel_id
-);
-BUNITE_EXPORT void bunite_cancel_browser_message_box(uint32_t request_id);
-
 #ifdef __cplusplus
 }
 #endif
