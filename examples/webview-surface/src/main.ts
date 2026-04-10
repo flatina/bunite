@@ -2,7 +2,7 @@ import { app, BrowserWindow } from "bunite-core";
 
 const server = Bun.serve({
   port: 0,
-  fetch() {
+  fetch(_req, srv) {
     return new Response(`<!doctype html>
 <html><head><meta charset="utf-8"><style>
   body { margin:0; display:flex; align-items:center; justify-content:center;
@@ -17,7 +17,7 @@ const server = Bun.serve({
   <h1>Surface B</h1>
   <div id="count">0</div>
   <button onclick="document.getElementById('count').textContent=++n">Click me</button>
-  <p>Served from localhost:${server.port}</p>
+  <p>Served from localhost:${srv.port}</p>
   <script>var n=0;</script>
 </body></html>`, { headers: { "Content-Type": "text/html" } });
   }
@@ -30,8 +30,7 @@ app.handle("getServerUrl", () => `http://localhost:${server.port}`);
 new BrowserWindow({
   title: "Webview Surface Test",
   url: "./index.html",
-  width: 900,
-  height: 650
+  frame: { x: 80, y: 80, width: 900, height: 650 }
 });
 
 app.run();

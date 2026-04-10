@@ -2,64 +2,68 @@
 
 declare const bunite: { invoke: (method: string, params?: unknown) => Promise<any> };
 
-const POLL_INTERVAL = 100;
-
 // --- OverlaySyncController ---
+// Tracks element bounds and notifies when they change.
+// Uses ResizeObserver for size changes and rAF polling for position changes.
+// Dirty-flag coalescing ensures at most one IPC per animation frame.
+
+type Rect = { x: number; y: number; width: number; height: number };
 
 class OverlaySyncController {
   private element: HTMLElement;
-  private onBoundsChange: (rect: { x: number; y: number; width: number; height: number }) => void;
+  private onBoundsChange: (rect: Rect) => void;
   private observer: ResizeObserver | null = null;
-  private timer: ReturnType<typeof setTimeout> | null = null;
-  private lastRect = { x: 0, y: 0, width: 0, height: 0 };
+  private rafId = 0;
+  private lastRect: Rect = { x: 0, y: 0, width: 0, height: 0 };
+  private dirty = false;
   private stopped = false;
 
-  constructor(
-    element: HTMLElement,
-    onBoundsChange: (rect: { x: number; y: number; width: number; height: number }) => void
-  ) {
+  constructor(element: HTMLElement, onBoundsChange: (rect: Rect) => void) {
     this.element = element;
     this.onBoundsChange = onBoundsChange;
   }
 
   start() {
-    this.observer = new ResizeObserver(() => this.sync());
+    this.observer = new ResizeObserver(() => this.markDirty());
     this.observer.observe(this.element);
-    this.poll();
+    this.scheduleFrame();
   }
 
   stop() {
     this.stopped = true;
     this.observer?.disconnect();
     this.observer = null;
-    if (this.timer != null) {
-      clearTimeout(this.timer);
-      this.timer = null;
+    if (this.rafId) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = 0;
     }
   }
 
-  forceSync() {
-    this.sync(true);
+  private markDirty() {
+    this.dirty = true;
   }
 
-  private poll() {
+  private scheduleFrame() {
     if (this.stopped) return;
-    this.sync();
-    this.timer = setTimeout(() => this.poll(), POLL_INTERVAL);
+    this.rafId = requestAnimationFrame(() => {
+      this.flush();
+      this.scheduleFrame();
+    });
   }
 
-  private sync(force = false) {
+  private flush() {
     const dpr = window.devicePixelRatio || 1;
     const r = this.element.getBoundingClientRect();
-    const rect = {
+    const rect: Rect = {
       x: Math.round(r.x * dpr),
       y: Math.round(r.y * dpr),
       width: Math.round(r.width * dpr),
       height: Math.round(r.height * dpr)
     };
 
+    // Always check for position changes (not caught by ResizeObserver)
     if (
-      !force &&
+      !this.dirty &&
       rect.x === this.lastRect.x &&
       rect.y === this.lastRect.y &&
       rect.width === this.lastRect.width &&
@@ -68,6 +72,7 @@ class OverlaySyncController {
       return;
     }
 
+    this.dirty = false;
     this.lastRect = rect;
     this.onBoundsChange(rect);
   }
@@ -80,12 +85,14 @@ type SurfaceInitResponse = { surfaceId: number };
 class BuniteWebviewElement extends HTMLElement {
   static observedAttributes = ["src"];
 
-  private _surfaceId: number | null = null;
+  _surfaceId: number | null = null;
   private _syncCtrl: OverlaySyncController | null = null;
   private _initPromise: Promise<SurfaceInitResponse> | null = null;
   private _aborted = false;
   private _pendingSrc: string | null = null;
   private _syncHidden = false;
+  private _userHidden = false;
+  private _layoutObserver: ResizeObserver | null = null;
 
   constructor() {
     super();
@@ -94,18 +101,42 @@ class BuniteWebviewElement extends HTMLElement {
 
   connectedCallback() {
     this._aborted = false;
-    requestAnimationFrame(() => {
-      if (!this.isConnected || this._aborted) return;
-      const src = this.getAttribute("src") || this._pendingSrc || "";
-      if (src) {
-        this.initSurface();
+    this._syncHidden = false;
+    this._userHidden = false;
+    this._waitForLayout();
+  }
+
+  private _waitForLayout() {
+    if (this._layoutObserver) return; // already waiting
+
+    const tryInit = () => {
+      if (!this.isConnected || this._aborted) return true; // stop waiting
+      const r = this.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        const src = this.getAttribute("src") || this._pendingSrc || "";
+        if (src) this.initSurface();
+        return true;
       }
-      // If src is empty, initSurface will be called from attributeChangedCallback
+      return false;
+    };
+
+    requestAnimationFrame(() => {
+      if (tryInit()) return;
+      // Element has no layout yet — wait via ResizeObserver
+      this._layoutObserver = new ResizeObserver(() => {
+        if (tryInit()) {
+          this._layoutObserver?.disconnect();
+          this._layoutObserver = null;
+        }
+      });
+      this._layoutObserver.observe(this);
     });
   }
 
   disconnectedCallback() {
     this._aborted = true;
+    this._layoutObserver?.disconnect();
+    this._layoutObserver = null;
     this._syncCtrl?.stop();
     this._syncCtrl = null;
 
@@ -135,15 +166,20 @@ class BuniteWebviewElement extends HTMLElement {
       this._pendingSrc = newValue || "";
     } else if (this.isConnected && !this._aborted && newValue) {
       // No init started yet (was waiting for src) — start now
-      this.initSurface();
+      this._waitForLayout();
     }
   }
 
   setHidden(hidden: boolean) {
+    this._userHidden = hidden;
+    this._applySurfaceHidden();
+  }
+
+  private _applySurfaceHidden() {
     if (this._surfaceId == null) return;
     bunite.invoke("__bunite:surface.setHidden", {
       surfaceId: this._surfaceId,
-      hidden
+      hidden: this._userHidden || this._syncHidden
     }).catch(() => {});
   }
 
@@ -160,7 +196,8 @@ class BuniteWebviewElement extends HTMLElement {
       x: Math.round(r.x * dpr),
       y: Math.round(r.y * dpr),
       width: Math.round(r.width * dpr),
-      height: Math.round(r.height * dpr)
+      height: Math.round(r.height * dpr),
+      hidden: this._userHidden
     }) as Promise<SurfaceInitResponse>;
     this._initPromise = initPromise;
 
@@ -173,6 +210,11 @@ class BuniteWebviewElement extends HTMLElement {
         }
 
         this._surfaceId = response.surfaceId;
+
+        // Apply hidden state that was set during init
+        if (this._userHidden) {
+          this._applySurfaceHidden();
+        }
 
         // Apply src that was set before init completed
         if (this._pendingSrc != null) {
@@ -191,17 +233,13 @@ class BuniteWebviewElement extends HTMLElement {
           if (isZero) {
             if (!this._syncHidden) {
               this._syncHidden = true;
-              bunite.invoke("__bunite:surface.setHidden", {
-                surfaceId: this._surfaceId, hidden: true
-              }).catch(() => {});
+              this._applySurfaceHidden();
             }
             return;
           }
           if (this._syncHidden) {
             this._syncHidden = false;
-            bunite.invoke("__bunite:surface.setHidden", {
-              surfaceId: this._surfaceId, hidden: false
-            }).catch(() => {});
+            this._applySurfaceHidden();
           }
 
           bunite.invoke("__bunite:surface.resize", {
@@ -228,7 +266,16 @@ if (typeof customElements !== "undefined") {
 
   // When the host page gains focus (click on non-surface area), the host BrowserView
   // HWND comes to front and covers surface child HWNDs. Re-raise surfaces on focus.
-  document.addEventListener("pointerdown", () => {
-    bunite.invoke("__bunite:surface.bringAllToFront").catch(() => {});
+  const raiseAll = () => bunite.invoke("__bunite:surface.bringAllVisiblesToFront").catch(() => {});
+  document.addEventListener("pointerdown", raiseAll, true);
+
+  // During host-page drag (e.g. dockview tab drag), send surfaces behind host
+  // via Z-order swap so OLE DragDrop reaches the host's IDropTarget.
+  document.addEventListener("dragstart", () => {
+    bunite.invoke("__bunite:surface.setAllPassthrough", { passthrough: true }).catch(() => {});
+  }, true);
+  document.addEventListener("dragend", () => {
+    bunite.invoke("__bunite:surface.setAllPassthrough", { passthrough: false }).catch(() => {});
+    raiseAll();
   }, true);
 }

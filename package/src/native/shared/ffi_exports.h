@@ -90,6 +90,13 @@ BUNITE_EXPORT void bunite_view_set_bounds(
 	double width,
 	double height
 );
+BUNITE_EXPORT void bunite_view_set_bounds_async(
+	uint32_t view_id,
+	double x,
+	double y,
+	double width,
+	double height
+);
 BUNITE_EXPORT void bunite_view_set_anchor(uint32_t view_id, int mode, double inset);
 BUNITE_EXPORT void bunite_view_go_back(uint32_t view_id);
 BUNITE_EXPORT void bunite_view_reload(uint32_t view_id);
