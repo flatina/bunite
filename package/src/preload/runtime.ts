@@ -147,50 +147,72 @@ w.__buniteRpcSocketPort = __buniteRpcSocketPort;
 w.__bunite_encrypt = buniteEncrypt;
 w.__bunite_decrypt = buniteDecrypt;
 
-// --- bunite.invoke: global IPC ---
+// --- Shared WebSocket transport ---
+
+const eventListeners = new Map<string, Set<(data: any) => void>>();
+const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timeout: ReturnType<typeof setTimeout> }>();
+let socket: WebSocket | null = null;
+let listenerAttached = false;
+
+function attachListener(ws: WebSocket) {
+  if (listenerAttached) return;
+  listenerAttached = true;
+  ws.addEventListener("message", async (event) => {
+    try {
+      const decrypted = await buniteDecrypt(new Uint8Array(event.data as ArrayBuffer));
+      const packet = mpDecode(decrypted) as any;
+      if (packet?.type === "response" && packet.scope === "global") {
+        const p = pending.get(packet.id);
+        if (p) {
+          pending.delete(packet.id);
+          clearTimeout(p.timeout);
+          packet.success ? p.resolve(packet.payload) : p.reject(new Error(packet.error || "Unknown error"));
+        }
+      } else if (packet?.type === "event") {
+        const set = eventListeners.get(packet.channel);
+        if (set) for (const fn of set) fn(packet.data);
+      }
+    } catch { /* ignore malformed frames */ }
+  });
+  ws.addEventListener("close", () => { listenerAttached = false; socket = null; });
+}
+
+function ensureSocket(): WebSocket {
+  const existing = w.__bunite?._socket;
+  if (existing && existing.readyState <= WebSocket.OPEN && existing !== socket) {
+    socket = existing;
+    attachListener(existing);
+    return existing;
+  }
+  if (socket && socket.readyState <= WebSocket.OPEN) return socket;
+  socket = new WebSocket(
+    `ws://localhost:${__buniteRpcSocketPort}/socket?webviewId=${__buniteWebviewId}`
+  );
+  socket.binaryType = "arraybuffer";
+  w.__bunite._socket = socket;
+  attachListener(socket);
+  return socket;
+}
+
+// --- bunite.on/off: main→renderer events ---
 
 w.bunite = w.__bunite;
-w.bunite.invoke = (() => {
-  let socket: WebSocket | null = null;
-  let nextId = 1;
-  const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timeout: ReturnType<typeof setTimeout> }>();
+w.bunite.on = (channel: string, handler: (data: any) => void) => {
+  ensureSocket();
+  let set = eventListeners.get(channel);
+  if (!set) { set = new Set(); eventListeners.set(channel, set); }
+  set.add(handler);
+  return () => { set!.delete(handler); };
+};
+w.bunite.off = (channel: string, handler: (data: any) => void) => {
+  eventListeners.get(channel)?.delete(handler);
+};
 
-  function ensureSocket(): WebSocket {
-    // Reuse socket opened by BuniteView if available
-    const existing = w.__bunite?._socket;
-    if (existing && existing.readyState <= WebSocket.OPEN && existing !== socket) {
-      socket = existing;
-      attachListener(existing);
-      return existing;
-    }
-    if (socket && socket.readyState <= WebSocket.OPEN) return socket;
-    socket = new WebSocket(
-      `ws://localhost:${__buniteRpcSocketPort}/socket?webviewId=${__buniteWebviewId}`
-    );
-    socket.binaryType = "arraybuffer";
-    w.__bunite._socket = socket;
-    attachListener(socket);
-    return socket;
-  }
+// --- bunite.invoke: global IPC ---
 
-  function attachListener(ws: WebSocket) {
-    ws.addEventListener("message", async (event) => {
-      try {
-        const decrypted = await buniteDecrypt(new Uint8Array(event.data as ArrayBuffer));
-        const packet = mpDecode(decrypted) as any;
-        if (packet?.type === "response" && packet.scope === "global") {
-          const p = pending.get(packet.id);
-          if (p) {
-            pending.delete(packet.id);
-            clearTimeout(p.timeout);
-            packet.success ? p.resolve(packet.payload) : p.reject(new Error(packet.error || "Unknown error"));
-          }
-        }
-      } catch { /* ignore malformed frames */ }
-    });
-  }
+let nextId = 1;
 
-  return (method: string, params?: unknown) =>
+w.bunite.invoke = (method: string, params?: unknown) =>
     new Promise((resolve, reject) => {
       const ws = ensureSocket();
       const id = nextId++;
@@ -212,6 +234,5 @@ w.bunite.invoke = (() => {
         ws.addEventListener("open", () => doSend(), { once: true });
       }
     });
-})();
 
 import "./webviewElement";

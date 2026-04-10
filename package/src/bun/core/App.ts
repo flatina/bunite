@@ -15,6 +15,7 @@ import {
 import { attachGlobalIPCResolver, ensureRPCServer } from "./Socket";
 import { BrowserWindow } from "./BrowserWindow";
 import { getSurfaceIPCHandlers } from "./SurfaceManager";
+import { getWebviewIPCHandlers } from "./SurfaceBrowserIPC";
 import { log, logLevelToInt } from "../../shared/log";
 
 import type { LogLevel } from "../../shared/log";
@@ -65,6 +66,9 @@ class AppRuntime {
         attachGlobalIPCResolver((channel) => this.getGlobalIPCHandler(channel));
 
         for (const [channel, handler] of getSurfaceIPCHandlers()) {
+          this.globalIPCHandlers.set(channel, handler);
+        }
+        for (const [channel, handler] of getWebviewIPCHandlers()) {
           this.globalIPCHandlers.set(channel, handler);
         }
 

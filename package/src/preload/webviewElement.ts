@@ -1,6 +1,10 @@
 // <bunite-webview> custom element — registered in every appres:// page via preload.
 
-declare const bunite: { invoke: (method: string, params?: unknown) => Promise<any> };
+declare const bunite: {
+  invoke: (method: string, params?: unknown) => Promise<any>;
+  on: (channel: string, handler: (data: any) => void) => (() => void);
+  off: (channel: string, handler: (data: any) => void) => void;
+};
 
 // --- OverlaySyncController ---
 // Tracks element bounds and notifies when they change.
@@ -93,6 +97,7 @@ class BuniteWebviewElement extends HTMLElement {
   private _syncHidden = false;
   private _userHidden = false;
   private _layoutObserver: ResizeObserver | null = null;
+  private _unsubNavigate: (() => void) | null = null;
 
   constructor() {
     super();
@@ -103,6 +108,11 @@ class BuniteWebviewElement extends HTMLElement {
     this._aborted = false;
     this._syncHidden = false;
     this._userHidden = false;
+    this._unsubNavigate = bunite.on("__bunite:webview.didNavigate", (data: any) => {
+      if (data?.surfaceId === this._surfaceId) {
+        this.dispatchEvent(new CustomEvent("did-navigate", { detail: { url: data.url } }));
+      }
+    });
     this._waitForLayout();
   }
 
@@ -135,6 +145,8 @@ class BuniteWebviewElement extends HTMLElement {
 
   disconnectedCallback() {
     this._aborted = true;
+    this._unsubNavigate?.();
+    this._unsubNavigate = null;
     this._layoutObserver?.disconnect();
     this._layoutObserver = null;
     this._syncCtrl?.stop();
@@ -157,9 +169,9 @@ class BuniteWebviewElement extends HTMLElement {
   attributeChangedCallback(name: string, _oldValue: string | null, newValue: string | null) {
     if (name !== "src") return;
     if (this._surfaceId != null) {
-      bunite.invoke("__bunite:surface.updateSrc", {
+      bunite.invoke("__bunite:webview.navigate", {
         surfaceId: this._surfaceId,
-        src: newValue || ""
+        url: newValue || ""
       }).catch(() => {});
     } else if (this._initPromise) {
       // Init in progress — queue for after completion
@@ -173,6 +185,20 @@ class BuniteWebviewElement extends HTMLElement {
   setHidden(hidden: boolean) {
     this._userHidden = hidden;
     this._applySurfaceHidden();
+  }
+
+  goBack() {
+    if (this._surfaceId != null)
+      bunite.invoke("__bunite:webview.goBack", { surfaceId: this._surfaceId }).catch(() => {});
+  }
+
+  reload() {
+    if (this._surfaceId != null)
+      bunite.invoke("__bunite:webview.reload", { surfaceId: this._surfaceId }).catch(() => {});
+  }
+
+  navigate(url: string) {
+    this.setAttribute("src", url);
   }
 
   private _applySurfaceHidden() {
@@ -220,9 +246,9 @@ class BuniteWebviewElement extends HTMLElement {
         if (this._pendingSrc != null) {
           const pending = this._pendingSrc;
           this._pendingSrc = null;
-          bunite.invoke("__bunite:surface.updateSrc", {
+          bunite.invoke("__bunite:webview.navigate", {
             surfaceId: this._surfaceId,
-            src: pending
+            url: pending
           }).catch(() => {});
         }
 

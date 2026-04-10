@@ -7,7 +7,7 @@ import { ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, can
 import { attachBrowserViewRegistry, getRPCPort, sendMessageToView } from "./Socket";
 import { randomBytes } from "node:crypto";
 import { resolveDefaultAppResRoot } from "../../shared/paths";
-import { removeSurfacesForHostView } from "./SurfaceManager";
+import { removeSurfacesForHostView } from "./SurfaceRegistry";
 
 const BrowserViewMap: Record<number, BrowserView<any>> = {};
 let nextWebviewId = 1;
@@ -125,7 +125,8 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
       // destroys the JS context without firing disconnectedCallback).
       // Uses did-navigate (not will-navigate) because will-navigate fires even
       // when navigation is denied by navigationRules.
-      this.on("did-navigate", () => {
+      this.on("did-navigate", (event: any) => {
+        this.url = event.data?.detail ?? this.url;
         removeSurfacesForHostView(this.id);
       });
     } else {
