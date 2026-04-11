@@ -1,0 +1,17 @@
+{
+  "name": "bunite-dev",
+  "description": "Build tooling for bunite apps",
+  "version": "0.0.2",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "bunite-build": "scripts/build.ts",
+    "bunite-setup-cef": "scripts/setup-cef.ts"
+  },
+  "files": [
+    "scripts"
+  ],
+  "dependencies": {
+    "bunite-core": "workspace:*"
+  }
+}
