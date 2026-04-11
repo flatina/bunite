@@ -13,25 +13,24 @@ import {
   mkdirSync, cpSync, existsSync, readdirSync, statSync, rmSync,
   readFileSync, writeFileSync
 } from "node:fs";
-import { join, resolve, basename, dirname } from "node:path";
+import { join, basename } from "node:path";
 import { $ } from "bun";
 import { parseArgs } from "node:util";
-import { createRequire } from "node:module";
+import { assertPlatform, findBuniteCoreRoot, findNativeBuildRoot, findCefSource } from "./resolve";
 
-const require = createRequire(import.meta.url);
-
-function findBuniteCoreRoot(): string {
-  const workspacePath = resolve(import.meta.dirname, "..", "..", "..", "package");
-  if (existsSync(join(workspacePath, "native-build"))) return workspacePath;
-  try {
-    return dirname(require.resolve("bunite-core/package.json"));
-  } catch {}
-  throw new Error("bunite-core not found.");
-}
+assertPlatform();
 
 const coreRoot = findBuniteCoreRoot();
-const nativeBuild = join(coreRoot, "native-build", "win-x64");
-const cefSrc = join(nativeBuild, "cef");
+const nativeBuild = findNativeBuildRoot(coreRoot);
+const cefSrc = findCefSource(coreRoot);
+
+// Auto-download CEF if not present
+if (!existsSync(join(cefSrc, "libcef.dll")) && !existsSync(join(cefSrc, "Release", "libcef.dll"))) {
+  console.log("0. CEF not found — downloading...");
+  await $`bun ${join(import.meta.dirname, "setup-cef.ts")}`.cwd(coreRoot).env({
+    ...process.env, BUNITE_CORE_ROOT: coreRoot
+  });
+}
 
 // App config
 const appDir = process.cwd();
@@ -68,14 +67,14 @@ if (compile) {
   const exeName = `${appName}.exe`;
   const exePath = join(dist, exeName);
   console.log(`1. compile ${entry} → ${exeName}`);
-  await $`bun build ${join(appDir, entry)} --compile --outfile ${exePath}`.cwd(appDir);
+  await $`bun build ${join(appDir, entry)} --compile --minify --outfile ${exePath}`.cwd(appDir);
 
   // PE patch: CUI → GUI (no console window on launch)
   const pe = readFileSync(exePath);
-  if (pe[0] === 0x4D && pe[1] === 0x5A) { // MZ signature
+  if (pe[0] === 0x4D && pe[1] === 0x5A) {
     const peOffset = pe.readUInt32LE(0x3c);
     if (peOffset + 0x5e <= pe.length
-      && pe[peOffset] === 0x50 && pe[peOffset + 1] === 0x45 // PE\0\0
+      && pe[peOffset] === 0x50 && pe[peOffset + 1] === 0x45
       && pe.readUInt16LE(peOffset + 0x5c) === 3) {
       pe.writeUInt16LE(2, peOffset + 0x5c);
       writeFileSync(exePath, pe);
@@ -84,36 +83,76 @@ if (compile) {
 } else {
   const outFile = join(dist, "main.js");
   console.log(`1. bundle ${entry} → main.js`);
-  await $`bun build ${join(appDir, entry)} --target bun --outfile ${outFile}`.cwd(appDir);
+  await $`bun build ${join(appDir, entry)} --target bun --minify --outfile ${outFile}`.cwd(appDir);
 }
 
 // 2. Native artifacts
 console.log("2. native artifacts");
-cpSync(join(nativeBuild, "libBuniteNative.dll"), join(dist, "libBuniteNative.dll"));
-cpSync(join(nativeBuild, "process_helper.exe"), join(dist, "process_helper.exe"));
+const nativeFiles = ["libBuniteNative.dll", "process_helper.exe"];
+for (const f of nativeFiles) {
+  const src = join(nativeBuild, f);
+  if (!existsSync(src)) {
+    console.error(`   ERROR: ${f} not found at ${nativeBuild}`);
+    console.error("   Run 'bun run build:native:win' in the bunite-core package first.");
+    process.exit(1);
+  }
+  cpSync(src, join(dist, f));
+}
 
 // 3. CEF minimal
 console.log("3. cef minimal");
+
+// Resolve file from flat or Release/Resources subdirectory layout
+function findCefFile(name: string): string | null {
+  const effectiveSrc = findCefSource(coreRoot);
+  for (const dir of [effectiveSrc, join(effectiveSrc, "Release"), join(effectiveSrc, "Resources")]) {
+    const p = join(dir, name);
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+const requiredCefFiles = [
+  "libcef.dll", "chrome_elf.dll", "icudtl.dat", "v8_context_snapshot.bin",
+  "resources.pak", "chrome_100_percent.pak", "chrome_200_percent.pak",
+];
+const optionalCefFiles = [
+  "d3dcompiler_47.dll", "dxcompiler.dll", "dxil.dll",
+  "libEGL.dll", "libGLESv2.dll",
+];
+
 const cefDist = join(dist, "cef");
 mkdirSync(cefDist, { recursive: true });
 
-const requiredFiles = [
-  "libcef.dll", "chrome_elf.dll", "d3dcompiler_47.dll",
-  "dxcompiler.dll", "dxil.dll", "libEGL.dll", "libGLESv2.dll",
-  "icudtl.dat", "v8_context_snapshot.bin",
-  "resources.pak", "chrome_100_percent.pak", "chrome_200_percent.pak",
-];
-for (const f of requiredFiles) {
-  const src = join(cefSrc, f);
-  if (existsSync(src)) cpSync(src, join(cefDist, f));
+for (const f of requiredCefFiles) {
+  const src = findCefFile(f);
+  if (!src) {
+    console.error(`   ERROR: required CEF file '${f}' not found.`);
+    process.exit(1);
+  }
+  cpSync(src, join(cefDist, f));
+}
+for (const f of optionalCefFiles) {
+  const src = findCefFile(f);
+  if (src) cpSync(src, join(cefDist, f));
 }
 
-const localesSrc = join(cefSrc, "Resources", "locales");
+// Locales
+const localesDirs = [
+  join(cefSrc, "Resources", "locales"),
+  join(cefSrc, "locales"),
+];
+const localesSrcDir = localesDirs.find(d => existsSync(d));
 const localesDist = join(cefDist, "Resources", "locales");
 mkdirSync(localesDist, { recursive: true });
 for (const locale of locales) {
-  const src = join(localesSrc, `${locale}.pak`);
-  if (existsSync(src)) cpSync(src, join(localesDist, `${locale}.pak`));
+  const pak = `${locale}.pak`;
+  const src = localesSrcDir ? join(localesSrcDir, pak) : null;
+  if (!src || !existsSync(src)) {
+    console.warn(`   WARN: locale '${locale}' not found, skipping.`);
+    continue;
+  }
+  cpSync(src, join(localesDist, pak));
 }
 
 // 4. Size report

@@ -23,7 +23,9 @@ const PLATFORM_MAP: Record<string, string> = {
   "linux-arm64": "linuxarm64",
 };
 
-const VENDORS_CEF = join(import.meta.dir, "..", "vendors", "cef");
+import { findBuniteCoreRoot } from "./resolve";
+
+const VENDORS_CEF = join(findBuniteCoreRoot(), "vendors", "cef");
 const VERSION_STAMP = join(VENDORS_CEF, ".cef-version");
 
 // --- args ---
