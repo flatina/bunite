@@ -1,12 +1,11 @@
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { existsSync } from "node:fs";
 import { BuniteEvent } from "../events/event";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import { ensureNativeRuntime, getNativeLibrary, toCString } from "../proc/native";
 import { BrowserView, type BrowserViewOptions } from "./BrowserView";
 import type { RPCWithTransport } from "../../shared/rpc";
 import { getNextWindowId } from "./windowIds";
-import { resolveDefaultAppResRoot } from "../../shared/paths";
+import { getBaseDir, resolveDefaultAppResRoot } from "../../shared/paths";
 
 export type WindowOptionsType<T = undefined> = {
   title: string;
@@ -133,18 +132,19 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     this.html = options.html ?? defaultOptions.html;
     this.preload = options.preload ?? defaultOptions.preload;
 
-    // Resolve relative URL against entry script directory.
-    // In compiled binaries Bun.main is a virtual path — fall back to exe dir.
+    const baseDir = getBaseDir();
+
     let url = options.url ?? defaultOptions.url;
     let appresRoot = options.appresRoot ?? defaultOptions.appresRoot;
+    if (appresRoot && !isAbsolute(appresRoot)) {
+      appresRoot = resolve(baseDir, appresRoot);
+    }
     if (url && !url.includes("://")) {
-      const mainDir = dirname(Bun.main);
-      const baseDir = existsSync(mainDir) ? mainDir : dirname(process.execPath);
       const resolved = isAbsolute(url) ? url : resolve(baseDir, url);
       if (!appresRoot) {
         appresRoot = dirname(resolved);
       }
-      const rel = relative(appresRoot, resolved).replaceAll(sep, "/");
+      const rel = relative(appresRoot!, resolved).replaceAll(sep, "/");
       url = `appres://app.internal/${rel}`;
     }
     this.url = url;
