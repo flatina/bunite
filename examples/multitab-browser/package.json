@@ -3,12 +3,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bunx vite build && bun src/main.ts"
+    "dev": "bunx vite build && bun src/main.ts",
+    "build": "bunite-build && bunx vite build"
   },
   "dependencies": {
-    "bunite-core": "workspace:*"
+    "bunite-core": "workspace:*",
+    "bunite-native-win-x64": "workspace:*"
   },
   "devDependencies": {
+    "bunite-dev": "workspace:*",
     "vite": "^6"
   }
 }

@@ -4,7 +4,7 @@
   "version": "0.0.2",
   "type": "module",
   "scripts": {
-    "setup:cef": "bun run scripts/download-cef.ts",
+    "setup:cef": "bun ../tools/bunite-dev/scripts/setup-cef.ts",
     "build:native:win": "cmake -S . -B build/win -DBUNITE_TARGET_ARCH=x64 && cmake --build build/win --config Release",
     "build:preload": "bun build src/preload/runtime.ts --outfile src/preload/runtime.built.js --target browser --minify"
   },

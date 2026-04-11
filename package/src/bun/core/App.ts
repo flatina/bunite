@@ -1,5 +1,6 @@
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
+import { getBaseDir } from "../../shared/paths";
 import { dlopen, FFIType } from "bun:ffi";
 import { BuniteEvent } from "../events/event";
 import { buniteEventEmitter } from "../events/eventEmitter";
@@ -55,7 +56,29 @@ class AppRuntime {
         if (options.userDataDir) {
           process.env.BUNITE_USER_DATA_DIR = options.userDataDir;
         } else if (!process.env.BUNITE_USER_DATA_DIR) {
-          process.env.BUNITE_USER_DATA_DIR = join(process.cwd(), ".bunite");
+          // XDG_DATA_HOME takes priority on any platform, then OS convention
+          const appDataDir = process.env.XDG_DATA_HOME
+            ?? (process.platform === "win32"
+              ? (process.env.APPDATA ?? join(process.env.USERPROFILE ?? "", "AppData", "Roaming"))
+              : process.platform === "darwin"
+                ? join(process.env.HOME ?? "", "Library", "Application Support")
+                : join(process.env.HOME ?? "", ".local", "share"));
+          let name = "bunite-app";
+          try {
+            // Walk up from entry script to find nearest package.json
+            let dir = getBaseDir();
+            while (dir) {
+              const pkgPath = join(dir, "package.json");
+              if (existsSync(pkgPath)) {
+                name = JSON.parse(require("node:fs").readFileSync(pkgPath, "utf8")).name ?? name;
+                break;
+              }
+              const parent = resolve(dir, "..");
+              if (parent === dir) break;
+              dir = parent;
+            }
+          } catch {}
+          process.env.BUNITE_USER_DATA_DIR = join(appDataDir, name);
         }
 
         const runtime = await initNativeRuntime({
@@ -213,6 +236,12 @@ class AppRuntime {
       html = "<html><body>Route handler error: " + (error instanceof Error ? error.message : String(error)) + "</body></html>";
     }
     getNativeLibrary()?.symbols.bunite_complete_route_request(requestId, toCString(html));
+  }
+
+  /** Resolve a path relative to the entry script (dev) or executable (compiled). */
+  resolve(relativePath: string): string {
+    if (isAbsolute(relativePath)) return relativePath;
+    return resolve(getBaseDir(), relativePath);
   }
 
   get runtime() {

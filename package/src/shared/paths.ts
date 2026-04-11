@@ -94,6 +94,13 @@ function resolveCefDir(searchDirs: string[]): string | null {
   return null;
 }
 
+/** Entry script dir (dev) or exe dir (compiled binary). */
+export function getBaseDir(): string {
+  const main = Bun.main;
+  if (main && existsSync(main)) return dirname(main);
+  return dirname(process.execPath);
+}
+
 export function resolveDefaultAppResRoot(): string | null {
   const candidate = join(process.cwd(), "appres");
   return existsSync(candidate) ? candidate : null;

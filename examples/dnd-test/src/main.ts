@@ -1,12 +1,13 @@
 import { BrowserWindow, app } from "bunite-core";
+import indexHtml from "./index.html" with { type: "text" };
+const html = indexHtml as unknown as string;
 
 await app.init();
 
 const win = new BrowserWindow({
   title: `dnd-test v${app.version} — CEF ${app.cefVersion ?? "unknown"}`,
-  url: "./index.html",
-  width: 700,
-  height: 500
+  html,
+  frame: { x: 80, y: 80, width: 700, height: 500 }
 });
 
 win.show();
