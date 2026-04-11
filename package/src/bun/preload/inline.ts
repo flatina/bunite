@@ -53,20 +53,13 @@ function readCustomPreload(preload: string | null, appresRoot: string | null) {
   }
 }
 
-// Pre-built preload runtime (built via `bun run build:preload` in package/)
-const runtimePath = resolve(import.meta.dirname, "../../preload/runtime.built.js");
-let cachedRuntime: string | null = null;
+// Pre-built preload runtime (built via `bun run build:preload` in package/).
+// Embedded at bundle time so bun --compile includes it without filesystem access.
+// @ts-ignore — text import attribute
+import embeddedPreloadRuntime from "../../preload/runtime.built.js" with { type: "text" };
 
 function getPreloadRuntime(): string {
-  if (cachedRuntime === null) {
-    if (!existsSync(runtimePath)) {
-      throw new Error(
-        `Preload runtime not found at ${runtimePath}. Run "bun run build:preload" in the package directory.`
-      );
-    }
-    cachedRuntime = readFileSync(runtimePath, "utf8");
-  }
-  return cachedRuntime;
+  return embeddedPreloadRuntime;
 }
 
 export function buildViewPreloadScript(options: {

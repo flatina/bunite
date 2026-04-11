@@ -23,6 +23,7 @@ import type { LogLevel } from "../../shared/log";
 
 type AppInitOptions = NativeBootstrapOptions & {
   userDataDir?: string;
+  cefDir?: string;
   exitOnLastWindowClosed?: boolean;
   logLevel?: LogLevel;
 };
@@ -45,6 +46,10 @@ class AppRuntime {
 
         if (options.logLevel) {
           log.setLevel(options.logLevel);
+        }
+
+        if (options.cefDir) {
+          process.env.BUNITE_CEF_DIR = options.cefDir;
         }
 
         if (options.userDataDir) {
@@ -215,10 +220,14 @@ class AppRuntime {
   }
 
   get version(): string {
-    const { createRequire } = require("node:module");
-    const req = createRequire(import.meta.url);
-    const pkg = req("bunite-core/package.json");
-    return pkg.version ?? "unknown";
+    try {
+      const { createRequire } = require("node:module");
+      const req = createRequire(import.meta.url);
+      const pkg = req("bunite-core/package.json");
+      return pkg.version ?? "unknown";
+    } catch {
+      return "unknown";
+    }
   }
 
   private cachedCefVersion: string | null | undefined;
