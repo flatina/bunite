@@ -1,14 +1,9 @@
 {
+  "extends": "../../../../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "ES2022",
-    "moduleResolution": "bundler",
+    "rootDir": ".",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "strict": true,
-    "skipLibCheck": true,
-    "paths": {
-      "bunite/*": ["../../../../package/src/*/index.ts"]
-    }
+    "noUncheckedSideEffectImports": false
   },
-  "include": ["*.ts"]
+  "include": ["index.ts"]
 }

@@ -1,11 +1,14 @@
 {
-  "name": "bunite-multitab-browser",
+  "name": "multitab-browser",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bunx vite build && bun src/main.ts"
+  },
   "dependencies": {
     "bunite-core": "workspace:*"
   },
-  "private": true,
-  "scripts": {
-    "dev": "bun src/main.ts"
-  },
-  "type": "module"
+  "devDependencies": {
+    "vite": "^6"
+  }
 }
