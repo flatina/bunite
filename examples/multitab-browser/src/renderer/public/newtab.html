@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { margin: 0; background: #202124; color: #e8eaed; font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; gap: 32px; }
+    .watermark { font-size: 48px; font-weight: 200; opacity: 0.25; }
+    .links { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; max-width: 640px; }
+    .links a { display: flex; align-items: center; justify-content: center; width: 120px; height: 72px; background: #292b2e; border-radius: 12px; color: #9aa0a6; text-decoration: none; font-size: 12px; text-align: center; padding: 8px; }
+    .links a:hover { background: #35363a; color: #e8eaed; }
+  </style>
+</head>
+<body>
+  <div class="watermark">bunite</div>
+  <div class="links" id="links"></div>
+  <script>
+    async function init() {
+      const config = await bunite.invoke("multitabBrowser.getConfig");
+      document.getElementById("links").innerHTML = [
+        [config.localOrigin + "/fast", "Local Fast"],
+        [config.localOrigin + "/slow?delay=2000", "Local 2s"],
+        ["https://google.com", "Google"],
+        ["https://github.com", "GitHub"]
+      ].map(([href, label]) => `<a href="${href}">${label}</a>`).join("");
+    }
+    init();
+  </script>
+</body>
+</html>

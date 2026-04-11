@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>multitab browser</title>
+</head>
+<body>
+  <div id="tab-bar">
+    <button id="new-tab-btn" title="New tab">+</button>
+  </div>
+  <div id="toolbar">
+    <button data-action="back" title="Back">&#x25C0;</button>
+    <button data-action="reload" title="Reload">&#x21BB;</button>
+    <input id="url-input" type="text" spellcheck="false" placeholder="Search or enter URL" />
+  </div>
+  <div id="content"></div>
+  <script type="module" src="./index.ts"></script>
+</body>
+</html>
