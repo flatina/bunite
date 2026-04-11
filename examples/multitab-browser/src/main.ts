@@ -1,10 +1,6 @@
-import { fileURLToPath } from "node:url";
-import { join } from "node:path";
 import { BrowserWindow, Utils, app } from "bunite-core";
 
 process.env.BUNITE_REMOTE_DEBUGGING_PORT ??= "9222";
-
-const distDir = fileURLToPath(new URL("../dist", import.meta.url));
 
 const server = Bun.serve({
   port: 0,
@@ -42,7 +38,7 @@ const win = new BrowserWindow({
   title: `bunite multi-tab browser v${app.version} — CEF ${app.cefVersion ?? "unknown"}`,
   frame: { x: 80, y: 80, width: 1280, height: 900 },
   url: "appres://app.internal/index.html",
-  appresRoot: distDir
+  appresRoot: "../dist/renderer"
 });
 
 win.on("close-requested", (event: any) => {
