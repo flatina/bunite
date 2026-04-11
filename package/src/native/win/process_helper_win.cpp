@@ -50,6 +50,15 @@ public:
     const auto it = preload_scripts_.find(browser->GetIdentifier());
     if (it == preload_scripts_.end() || it->second.empty()) return;
 
+    // Skip isolated-world contexts (DevTools overlay, extensions, etc.) that
+    // lack full Web APIs. The page's main-world context has customElements;
+    // DevTools-injected contexts do not.
+    context->Enter();
+    CefRefPtr<CefV8Value> ce = context->GetGlobal()->GetValue("customElements");
+    bool is_main_world = ce && !ce->IsNull() && !ce->IsUndefined();
+    context->Exit();
+    if (!is_main_world) return;
+
     CefRefPtr<CefV8Value> retval;
     CefRefPtr<CefV8Exception> exception;
     bool ok = context->Eval(it->second, "bunite://preload", 0, retval, exception);
