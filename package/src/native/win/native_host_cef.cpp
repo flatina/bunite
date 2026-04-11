@@ -59,6 +59,25 @@ private:
   IMPLEMENT_REFCOUNTING(BuniteCefApp);
 };
 
+class BuniteDevToolsClient : public CefClient, public CefLifeSpanHandler {
+public:
+  CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
+
+  void OnAfterCreated(CefRefPtr<CefBrowser>) override {
+    CEF_REQUIRE_UI_THREAD();
+    g_runtime.devtools_browser_count.fetch_add(1);
+  }
+
+  void OnBeforeClose(CefRefPtr<CefBrowser>) override {
+    CEF_REQUIRE_UI_THREAD();
+    g_runtime.devtools_browser_count.fetch_sub(1);
+    bunite_win::maybeCompleteShutdownOnUiThread();
+  }
+
+private:
+  IMPLEMENT_REFCOUNTING(BuniteDevToolsClient);
+};
+
 class BuniteCefClient
   : public CefClient,
     public CefLifeSpanHandler,
@@ -74,6 +93,19 @@ public:
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
+
+  void OnBeforeDevToolsPopup(
+    CefRefPtr<CefBrowser>,
+    CefWindowInfo&,
+    CefRefPtr<CefClient>& client,
+    CefBrowserSettings&,
+    CefRefPtr<CefDictionaryValue>&,
+    bool*
+  ) override {
+    // Inject our tracked client so F12, Ctrl+Shift+I, and Inspect Element
+    // all go through BuniteDevToolsClient for proper shutdown sequencing.
+    client = new BuniteDevToolsClient();
+  }
 
   CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
     CefRefPtr<CefBrowser>,
@@ -282,24 +314,6 @@ private:
   IMPLEMENT_REFCOUNTING(BuniteCefClient);
 };
 
-class BuniteDevToolsClient : public CefClient, public CefLifeSpanHandler {
-public:
-  CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
-
-  void OnAfterCreated(CefRefPtr<CefBrowser>) override {
-    CEF_REQUIRE_UI_THREAD();
-    g_runtime.devtools_browser_count.fetch_add(1);
-  }
-
-  void OnBeforeClose(CefRefPtr<CefBrowser>) override {
-    CEF_REQUIRE_UI_THREAD();
-    g_runtime.devtools_browser_count.fetch_sub(1);
-    bunite_win::maybeCompleteShutdownOnUiThread();
-  }
-
-private:
-  IMPLEMENT_REFCOUNTING(BuniteDevToolsClient);
-};
 
 } // namespace
 
@@ -425,7 +439,11 @@ void closeViewHost(ViewHost* view) {
 
   if (view->browser) {
     postCefUiTask([view]() {
-      closeDevToolsForView(view);
+      if (!view->browser) {
+        return;
+      }
+      // closeDevToolsForView() bails on closing views — call CloseDevTools directly.
+      view->browser->GetHost()->CloseDevTools();
       view->browser->GetHost()->CloseBrowser(true);
     });
     return;
