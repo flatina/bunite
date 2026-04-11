@@ -1,0 +1,12 @@
+{
+  "name": "bunite-native-win-x64",
+  "description": "Bunite native binaries for Windows x64",
+  "version": "0.0.2",
+  "private": true,
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": [
+    "libBuniteNative.dll",
+    "process_helper.exe"
+  ]
+}

@@ -13,15 +13,21 @@
       "name": "bunite-dnd-test",
       "dependencies": {
         "bunite-core": "workspace:*",
+        "bunite-native-win-x64": "workspace:*",
+      },
+      "devDependencies": {
+        "bunite-dev": "workspace:*",
       },
     },
     "examples/dockview-browser": {
       "name": "dockview-browser",
       "dependencies": {
         "bunite-core": "workspace:*",
+        "bunite-native-win-x64": "workspace:*",
         "dockview-core": "^5.1.0",
       },
       "devDependencies": {
+        "bunite-dev": "workspace:*",
         "vite": "^6",
       },
     },
@@ -29,6 +35,7 @@
       "name": "hello-bunite",
       "dependencies": {
         "bunite-core": "workspace:*",
+        "bunite-native-win-x64": "workspace:*",
       },
       "devDependencies": {
         "bunite-dev": "workspace:*",
@@ -38,8 +45,10 @@
       "name": "multitab-browser",
       "dependencies": {
         "bunite-core": "workspace:*",
+        "bunite-native-win-x64": "workspace:*",
       },
       "devDependencies": {
+        "bunite-dev": "workspace:*",
         "vite": "^6",
       },
     },
@@ -47,14 +56,15 @@
       "name": "webview-surface",
       "dependencies": {
         "bunite-core": "workspace:*",
+        "bunite-native-win-x64": "workspace:*",
+      },
+      "devDependencies": {
+        "bunite-dev": "workspace:*",
       },
     },
     "package": {
       "name": "bunite-core",
       "version": "0.0.2",
-      "bin": {
-        "bunite-build": "./scripts/build.ts",
-      },
       "dependencies": {
         "msgpackr": "^1.11.9",
       },
@@ -72,9 +82,13 @@
         "bunite-build": "scripts/build.ts",
         "bunite-setup-cef": "scripts/setup-cef.ts",
       },
-      "dependencies": {
-        "bunite-core": "workspace:*",
+      "peerDependencies": {
+        "bunite-core": "*",
       },
+    },
+    "tools/bunite-native-win-x64": {
+      "name": "bunite-native-win-x64",
+      "version": "0.0.2",
     },
   },
   "packages": {
@@ -205,6 +219,8 @@
     "bunite-dev": ["bunite-dev@workspace:tools/bunite-dev"],
 
     "bunite-dnd-test": ["bunite-dnd-test@workspace:examples/dnd-test"],
+
+    "bunite-native-win-x64": ["bunite-native-win-x64@workspace:tools/bunite-native-win-x64"],
 
     "bunite-smoke-test": ["bunite-smoke-test@workspace:tests/smoke"],
 

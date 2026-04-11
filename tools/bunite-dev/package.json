@@ -11,7 +11,7 @@
   "files": [
     "scripts"
   ],
-  "dependencies": {
-    "bunite-core": "workspace:*"
+  "peerDependencies": {
+    "bunite-core": "*"
   }
 }
