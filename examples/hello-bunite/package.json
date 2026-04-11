@@ -4,10 +4,11 @@
   "type": "module",
   "scripts": {
     "dev": "bun src/main.ts",
-    "build": "bunite-build || bun node_modules/bunite-dev/scripts/build.ts"
+    "build": "bunite-build"
   },
   "dependencies": {
-    "bunite-core": "workspace:*"
+    "bunite-core": "workspace:*",
+    "bunite-native-win-x64": "workspace:*"
   },
   "devDependencies": {
     "bunite-dev": "workspace:*"

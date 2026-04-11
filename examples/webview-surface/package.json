@@ -3,9 +3,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun src/main.ts"
+    "dev": "bun src/main.ts",
+    "build": "bunite-build"
   },
   "dependencies": {
-    "bunite-core": "workspace:*"
+    "bunite-core": "workspace:*",
+    "bunite-native-win-x64": "workspace:*"
+  },
+  "devDependencies": {
+    "bunite-dev": "workspace:*"
   }
 }
