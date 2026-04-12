@@ -18,6 +18,7 @@ export type BrowserViewOptions<T = undefined> = {
   html: string | null;
   preload: string | null;
   appresRoot: string | null;
+  preloadOrigins?: string[];
   partition: string | null;
   frame: {
     x: number;
@@ -37,6 +38,7 @@ const defaultOptions: BrowserViewOptions = {
   html: null,
   preload: null,
   appresRoot: null,
+  preloadOrigins: undefined,
   partition: null,
   frame: {
     x: 0,
@@ -59,6 +61,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
   html: string | null;
   preload: string | null;
   appresRoot: string | null;
+  preloadOrigins?: string[];
   partition: string | null;
   frame: BrowserViewOptions["frame"];
   rpc?: T;
@@ -76,6 +79,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
     this.html = options.html ?? defaultOptions.html;
     this.preload = options.preload ?? defaultOptions.preload;
     this.appresRoot = options.appresRoot ?? defaultOptions.appresRoot ?? resolveDefaultAppResRoot();
+    this.preloadOrigins = options.preloadOrigins ?? defaultOptions.preloadOrigins;
     this.partition = options.partition ?? defaultOptions.partition;
     this.frame = options.frame ?? defaultOptions.frame;
     this.rpc = options.rpc;
@@ -118,7 +122,8 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
         this.frame.width,
         this.frame.height,
         this.autoResize,
-        this.sandbox
+        this.sandbox,
+        toCString(this.preloadOrigins ? JSON.stringify(this.preloadOrigins) : "")
       ) ?? false;
 
     if (this.nativeAttached) {

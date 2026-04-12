@@ -15,6 +15,7 @@
 extern "C" {
 #endif
 
+BUNITE_EXPORT int32_t bunite_abi_version(void);
 BUNITE_EXPORT void bunite_set_log_level(int32_t level);
 BUNITE_EXPORT bool bunite_init(
 	const char* process_helper_path,
@@ -74,7 +75,8 @@ BUNITE_EXPORT bool bunite_view_create(
 	double width,
 	double height,
 	bool auto_resize,
-	bool sandbox
+	bool sandbox,
+	const char* preload_origins_json
 );
 BUNITE_EXPORT void bunite_view_execute_javascript(uint32_t view_id, const char* script);
 BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char* url);
