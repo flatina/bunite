@@ -805,9 +805,18 @@ bool createBrowserForView(ViewHost* view) {
   CefBrowserSettings browser_settings;
 
   CefRefPtr<CefDictionaryValue> extra_info;
-  if (!view->preload_script.empty()) {
+  if (!view->preload_script.empty() || !view->preload_origins.empty()) {
     extra_info = CefDictionaryValue::Create();
-    extra_info->SetString("preloadScript", view->preload_script);
+    if (!view->preload_script.empty()) {
+      extra_info->SetString("preloadScript", view->preload_script);
+    }
+    if (!view->preload_origins.empty()) {
+      auto list = CefListValue::Create();
+      for (size_t i = 0; i < view->preload_origins.size(); ++i) {
+        list->SetString(i, view->preload_origins[i]);
+      }
+      extra_info->SetList("preloadOrigins", list);
+    }
   }
 
   // CreateBrowser (async) — can be called from any browser process thread.

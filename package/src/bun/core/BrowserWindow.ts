@@ -21,6 +21,7 @@ export type WindowOptionsType<T = undefined> = {
   html: string | null;
   preload: string | null;
   appresRoot: string | null;
+  preloadOrigins?: string[];
   rpc?: T;
   titleBarStyle: "hidden" | "hiddenInset" | "default";
   transparent: boolean;
@@ -41,6 +42,7 @@ const defaultOptions: WindowOptionsType = {
   html: null,
   preload: null,
   appresRoot: null,
+  preloadOrigins: undefined,
   titleBarStyle: "default",
   transparent: false,
   hidden: false,
@@ -65,6 +67,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
   html: string | null;
   preload: string | null;
   appresRoot: string | null;
+  preloadOrigins?: string[];
   titleBarStyle: WindowOptionsType["titleBarStyle"];
   transparent: boolean;
   hidden: boolean;
@@ -131,6 +134,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     this.frame = { ...defaultOptions.frame, ...options.frame };
     this.html = options.html ?? defaultOptions.html;
     this.preload = options.preload ?? defaultOptions.preload;
+    this.preloadOrigins = options.preloadOrigins ?? defaultOptions.preloadOrigins;
 
     const baseDir = getBaseDir();
 
@@ -182,6 +186,7 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
       html: this.html,
       preload: this.preload,
       appresRoot: this.appresRoot,
+      preloadOrigins: this.preloadOrigins,
       frame: {
         x: 0,
         y: 0,
