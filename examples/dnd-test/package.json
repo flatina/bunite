@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "bun src/main.ts",
-    "build": "bunite-build"
+    "build": "bunite-build",
+    "typecheck": "bun x tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "bunite-core": "workspace:*",
