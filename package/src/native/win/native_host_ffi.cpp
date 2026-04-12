@@ -3,6 +3,12 @@
 using bunite_win::runOnUiThreadSync;
 using bunite_win::runOnCefUiThreadSync;
 
+static constexpr int32_t BUNITE_ABI_VERSION = 2;
+
+extern "C" BUNITE_EXPORT int32_t bunite_abi_version(void) {
+  return BUNITE_ABI_VERSION;
+}
+
 extern "C" BUNITE_EXPORT void bunite_set_log_level(int32_t level) {
   buniteSetLogLevel(static_cast<BuniteLogLevel>(level));
 }
@@ -398,9 +404,12 @@ extern "C" BUNITE_EXPORT bool bunite_view_create(
   double width,
   double height,
   bool auto_resize,
-  bool sandbox
+  bool sandbox,
+  const char* preload_origins_json
 ) {
-  return runOnUiThreadSync<bool>([=]() -> bool {
+  auto origins = bunite_win::parseNavigationRulesJson(preload_origins_json ? preload_origins_json : "");
+
+  return runOnUiThreadSync<bool>([=, origins = std::move(origins)]() -> bool {
     auto* window = bunite_win::getWindowHostById(window_id);
     if (!window || !window->hwnd) {
       return false;
@@ -422,7 +431,8 @@ extern "C" BUNITE_EXPORT bool bunite_view_create(
       bunite_win::parseNavigationRulesJson(navigation_rules_json ? navigation_rules_json : ""),
       auto_resize ? static_cast<int>(ViewAnchorMode::Fill) : static_cast<int>(ViewAnchorMode::None),
       0.0,
-      sandbox
+      sandbox,
+      origins
     };
 
     {
@@ -923,4 +933,3 @@ extern "C" BUNITE_EXPORT int32_t bunite_show_message_box(
     }
   });
 }
-

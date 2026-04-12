@@ -92,6 +92,7 @@ struct ViewHost {
   int anchor_mode = static_cast<int>(ViewAnchorMode::Fill);
   double anchor_inset = 0;
   bool sandbox = false;
+  std::vector<std::string> preload_origins;
   std::atomic<bool> closing = false;
   CefRefPtr<CefBrowser> browser;
   CefRefPtr<CefClient> client;
