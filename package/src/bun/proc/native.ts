@@ -22,6 +22,7 @@ export type NativeRuntimeState = {
 type CStringPointer = Pointer;
 
 type NativeSymbols = {
+  bunite_abi_version: () => number;
   bunite_set_log_level: (level: number) => void;
   bunite_init: (
     processHelperPath: CStringPointer,
@@ -77,7 +78,8 @@ type NativeSymbols = {
     width: number,
     height: number,
     autoResize: boolean,
-    sandbox: boolean
+    sandbox: boolean,
+    preloadOriginsJson: CStringPointer
   ) => boolean;
   bunite_register_appres_route: (path: CStringPointer) => void;
   bunite_unregister_appres_route: (path: CStringPointer) => void;
@@ -121,6 +123,10 @@ const messageBoxButtonSeparator = "\x1f";
 const unsetCancelId = -1;
 
 const nativeSymbolDefinitions = {
+  bunite_abi_version: {
+    args: [],
+    returns: FFIType.i32
+  },
   bunite_set_log_level: {
     args: [FFIType.i32],
     returns: FFIType.void
@@ -219,7 +225,8 @@ const nativeSymbolDefinitions = {
       FFIType.f64,
       FFIType.f64,
       FFIType.bool,
-      FFIType.bool
+      FFIType.bool,
+      FFIType.cstring
     ],
     returns: FFIType.bool
   },
@@ -604,6 +611,14 @@ export async function initNativeRuntime(
   nativeLibrary = hasNativeArtifacts ? tryLoadNativeLibrary(artifacts) : null;
 
   if (nativeLibrary) {
+    const EXPECTED_ABI = 2;
+    const nativeAbi = nativeLibrary.symbols.bunite_abi_version();
+    if (nativeAbi !== EXPECTED_ABI) {
+      throw new Error(
+        `bunite native ABI mismatch: JS expects ${EXPECTED_ABI}, native reports ${nativeAbi}. ` +
+        `Rebuild native binaries with 'bun run build:native:win'.`
+      );
+    }
     registerNativeCallbacks(nativeLibrary);
     const chromiumFlagsJson = options.chromiumFlags
       ? JSON.stringify(options.chromiumFlags)
@@ -685,4 +700,3 @@ export function showNativeMessageBox(windowId: number, params: {
     params.cancelId ?? unsetCancelId
   );
 }
-
