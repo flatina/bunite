@@ -1,72 +1,70 @@
+import "bunite-core/webview-polyfill";
 import "./styles.css";
+import { BuniteView, type RPCSchema } from "bunite-core/view";
 
-declare global {
-  interface Window {
-    bunite?: { invoke: (method: string, params?: unknown) => Promise<unknown> };
-  }
-}
+type MultitabRPCSchema = {
+  bun: RPCSchema<{
+    requests: {
+      getQuickLinks: { params: undefined; response: { url: string; label: string }[] };
+      createTab: { params: { url?: string }; response: { id: string; url: string; title: string } };
+      closeTab: { params: { id: string }; response: void };
+      navigateTo: { params: { id: string; url: string }; response: void };
+    };
+  }>;
+  webview: RPCSchema;
+};
 
-type Tab = { id: number; webview: HTMLElement; url: string };
+type Tab = { id: string; webview: HTMLElement; url: string; title: string };
 
 const tabBar = document.getElementById("tab-bar")!;
 const newTabBtn = document.getElementById("new-tab-btn")!;
 const urlInput = document.getElementById("url-input") as HTMLInputElement;
 const content = document.getElementById("content")!;
 
-const tabs = new Map<number, Tab>();
-let nextId = 1;
-let activeId: number | null = null;
-let localOrigin = "";
+const tabs = new Map<string, Tab>();
+let activeId: string | null = null;
 
-void bootstrap().catch(e => {
-  document.body.innerHTML = `<pre style="color:#ff6b6b;padding:32px">${e}</pre>`;
-});
+const rpc = BuniteView.defineRPC<MultitabRPCSchema>({ handlers: {} });
 
-async function bootstrap() {
-  const invoke = window.bunite?.invoke;
-  if (!invoke) throw new Error("bunite runtime not available");
+newTabBtn.addEventListener("click", () => createTab());
+document.querySelector('[data-action="back"]')!.addEventListener("click", () => activeWebview()?.goBack());
+document.querySelector('[data-action="reload"]')!.addEventListener("click", () => activeWebview()?.reload());
+urlInput.addEventListener("keydown", e => { if (e.key === "Enter") navigate(); });
 
-  const config = (await invoke("multitabBrowser.getConfig")) as { localOrigin: string };
-  localOrigin = config.localOrigin;
+createTab();
 
-  newTabBtn.addEventListener("click", () => createTab(""));
-  document.querySelector('[data-action="back"]')!.addEventListener("click", () => activeWebview()?.goBack());
-  document.querySelector('[data-action="reload"]')!.addEventListener("click", () => activeWebview()?.reload());
-  urlInput.addEventListener("keydown", e => { if (e.key === "Enter") navigate(); });
+async function createTab(url?: string) {
+  const tab = await rpc.requestProxy.createTab({ url });
 
-  createTab("");
-}
-
-function createTab(url: string) {
-  const id = nextId++;
   const webview = document.createElement("bunite-webview") as HTMLElement & { goBack(): void; reload(): void };
-  const src = url || `appres://app.internal/newtab.html`;
-  webview.setAttribute("src", src);
+  webview.setAttribute("src", tab.url);
   webview.hidden = true;
   content.appendChild(webview);
 
   webview.addEventListener("did-navigate", ((e: CustomEvent<{ url: string }>) => {
-    const tab = tabs.get(id);
-    if (tab) {
-      tab.url = e.detail.url;
+    const t = tabs.get(tab.id);
+    if (t) {
+      t.url = e.detail.url;
+      rpc.requestProxy.navigateTo({ id: tab.id, url: e.detail.url });
       renderTabs();
     }
   }) as EventListener);
 
-  tabs.set(id, { id, webview, url: url || "New Tab" });
-  switchTo(id);
+  tabs.set(tab.id, { id: tab.id, webview, url: tab.url, title: tab.title });
+  switchTo(tab.id);
 }
 
-function switchTo(id: number) {
+function switchTo(id: string) {
   if (!tabs.has(id)) return;
   for (const [tid, tab] of tabs) tab.webview.hidden = tid !== id;
   activeId = id;
   renderTabs();
 }
 
-function closeTab(id: number) {
+async function closeTab(id: string) {
   const tab = tabs.get(id);
   if (!tab) return;
+  await rpc.requestProxy.closeTab({ id });
   tab.webview.remove();
   tabs.delete(id);
   if (activeId === id) {
@@ -87,6 +85,7 @@ function navigate() {
     if (tab) {
       tab.webview.setAttribute("src", url);
       tab.url = url;
+      rpc.requestProxy.navigateTo({ id: activeId, url });
       renderTabs();
       return;
     }
@@ -99,7 +98,7 @@ function activeWebview(): any {
 }
 
 function shortUrl(url: string): string {
-  if (!url || url === "New Tab") return "New Tab";
+  if (!url || url.endsWith("/newtab.html")) return "New Tab";
   try { const u = new URL(url); return u.hostname + (u.pathname !== "/" ? u.pathname : ""); }
   catch { return url; }
 }
@@ -126,6 +125,6 @@ function renderTabs() {
       else switchTo(id);
     });
 
-    if (id === activeId) urlInput.value = tab.url === "New Tab" ? "" : tab.url;
+    if (id === activeId) urlInput.value = tab.url.endsWith("/newtab.html") ? "" : tab.url;
   }
 }

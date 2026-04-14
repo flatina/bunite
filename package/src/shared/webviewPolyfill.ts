@@ -1,11 +1,4 @@
-/**
- * <bunite-webview> iframe polyfill — registered automatically via the
- * bunite-dev vite plugin when the native bunite runtime is not available.
- *
- * In desktop CEF the native element is already registered by the preload
- * runtime, so this module does nothing.
- */
-
+// Iframe-based fallback for web browsers. No-op when the native element is already registered by the CEF preload.
 if (
   typeof customElements !== "undefined" &&
   !customElements.get("bunite-webview")
