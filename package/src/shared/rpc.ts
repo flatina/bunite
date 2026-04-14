@@ -343,6 +343,16 @@ export function createRPC<
     ) => void;
   };
 
+  function dispose() {
+    for (const [id, pending] of pendingRequests) {
+      clearTimeout(pending.timeout);
+      pending.reject(new Error("RPC disposed"));
+    }
+    pendingRequests.clear();
+    transport.unregisterHandler?.();
+    transport = {};
+  }
+
   return {
     setTransport,
     setRequestHandler,
@@ -352,6 +362,7 @@ export function createRPC<
     sendProxy,
     addMessageListener,
     removeMessageListener,
+    dispose,
     proxy: {
       request: requestProxy,
       send: sendProxy
