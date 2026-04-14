@@ -1,8 +1,7 @@
 {
   "name": "bunite-dev",
   "description": "Build tooling for bunite apps",
-  "version": "0.0.2",
-  "private": true,
+  "version": "0.0.6",
   "type": "module",
   "bin": {
     "bunite-build": "scripts/build.ts",

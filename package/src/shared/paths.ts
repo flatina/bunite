@@ -82,7 +82,7 @@ function resolveCefDir(searchDirs: string[]): string | null {
     } catch {}
   }
 
-  // 3. vendors/cef inside bunite-core package
+  // 3. vendors/cef inside bunite-core package (monorepo dev)
   const packageRoot = resolveBunitePackageRoot();
   if (packageRoot) {
     const vendorPath = join(packageRoot, "vendors", "cef");
@@ -126,9 +126,9 @@ export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
 
   const packageRoot = resolveBunitePackageRoot();
 
-  // 2. Optional npm packages (@bunite/native-*, @bunite/cef-*)
-  const nativePackageName = `@bunite/native-${PLATFORM_TAG}-${ARCH}`;
-  const cefPackageName = `@bunite/cef-${PLATFORM_TAG}-${ARCH}`;
+  // 2. Optional npm packages (bunite-native-*, bunite-cef-*)
+  const nativePackageName = `bunite-native-${PLATFORM_TAG}-${ARCH}`;
+  const cefPackageName = `bunite-cef-${PLATFORM_TAG}-${ARCH}`;
   const nativePackageRoot = resolvePackageRoot(nativePackageName);
   const cefPackageRoot = resolvePackageRoot(cefPackageName);
 
@@ -153,7 +153,9 @@ export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
       cefPackageName: packagedCefDir && existsSync(packagedCefDir) ? cefPackageName : null,
       nativeLibPath: packagedNativeLibPath,
       processHelperPath: packagedProcessHelperPath,
-      cefDir: packagedCefDir && existsSync(packagedCefDir) ? packagedCefDir : null
+      cefDir: (packagedCefDir && existsSync(packagedCefDir))
+        ? packagedCefDir
+        : resolveCefDir([nativePackageRoot, packageRoot].filter(Boolean) as string[])
     };
   }
 

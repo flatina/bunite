@@ -7,7 +7,7 @@
  *   bun run setup:cef -- --version 145.0.23 # specific version (resolves chromium ver from index)
  */
 
-import { existsSync, mkdirSync, rmSync, renameSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, renameSync, readFileSync, writeFileSync, cpSync } from "node:fs";
 import { join } from "node:path";
 import { CryptoHasher } from "bun";
 
@@ -23,10 +23,10 @@ const PLATFORM_MAP: Record<string, string> = {
   "linux-arm64": "linuxarm64",
 };
 
-import { findBuniteCoreRoot } from "./resolve";
+import { findBuniteCoreRoot, resolveCefDownloadDir } from "./resolve";
 
-const VENDORS_CEF = join(findBuniteCoreRoot(), "vendors", "cef");
-const VERSION_STAMP = join(VENDORS_CEF, ".cef-version");
+const CEF_DIR = resolveCefDownloadDir(findBuniteCoreRoot());
+const VERSION_STAMP = join(CEF_DIR, ".cef-version");
 
 // --- args ---
 
@@ -181,7 +181,7 @@ async function main() {
 
   const url = `${CEF_CDN_BASE}/${minimalFile.name}`;
   const tmpArchive = join(import.meta.dir, "..", `cef-download.tar.bz2`);
-  const tmpExtract = VENDORS_CEF + ".tmp";
+  const tmpExtract = CEF_DIR + ".tmp";
 
   try {
     await download(url, tmpArchive);
@@ -201,11 +201,34 @@ async function main() {
     if (existsSync(tmpExtract)) rmSync(tmpExtract, { recursive: true, force: true });
     await extract(tmpArchive, tmpExtract);
 
-    if (existsSync(VENDORS_CEF)) rmSync(VENDORS_CEF, { recursive: true, force: true });
-    renameSync(tmpExtract, VENDORS_CEF);
+    if (existsSync(CEF_DIR)) rmSync(CEF_DIR, { recursive: true, force: true });
+    mkdirSync(CEF_DIR, { recursive: true });
+
+    // Flatten runtime files from Release/ + Resources/ into a single dir
+    const runtimeFiles = [
+      "libcef.dll", "chrome_elf.dll", "icudtl.dat", "v8_context_snapshot.bin",
+      "resources.pak", "chrome_100_percent.pak", "chrome_200_percent.pak",
+      "d3dcompiler_47.dll", "dxcompiler.dll", "dxil.dll",
+      "libEGL.dll", "libGLESv2.dll",
+      "libcef.so",
+    ];
+    for (const f of runtimeFiles) {
+      for (const sub of [tmpExtract, join(tmpExtract, "Release"), join(tmpExtract, "Resources")]) {
+        const src = join(sub, f);
+        if (existsSync(src)) { cpSync(src, join(CEF_DIR, f)); break; }
+      }
+    }
+    // Locales
+    const localesSrc = [join(tmpExtract, "Resources", "locales"), join(tmpExtract, "locales")]
+      .find(d => existsSync(d));
+    if (localesSrc) {
+      const localesDest = join(CEF_DIR, "locales");
+      mkdirSync(localesDest, { recursive: true });
+      cpSync(localesSrc, localesDest, { recursive: true });
+    }
 
     writeFileSync(VERSION_STAMP, fullVersion + "\n");
-    console.log(`Done. CEF installed at ${VENDORS_CEF}`);
+    console.log(`Done. CEF installed at ${CEF_DIR}`);
   } finally {
     if (existsSync(tmpArchive)) rmSync(tmpArchive);
     if (existsSync(tmpExtract)) rmSync(tmpExtract, { recursive: true, force: true });
