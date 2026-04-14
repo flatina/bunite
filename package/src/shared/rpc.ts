@@ -80,6 +80,8 @@ export type BuniteRPCSchema = {
   webview: RPCSchema;
 };
 
+type RemoteSideOf<S extends "bun" | "webview"> = S extends "bun" ? "webview" : "bun";
+
 export type BuniteRPCConfig<
   Schema extends BuniteRPCSchema,
   Side extends "bun" | "webview"
@@ -88,13 +90,13 @@ export type BuniteRPCConfig<
   handlers: {
     requests?: RPCRequestHandler<Schema[Side]["requests"]>;
     messages?: {
-      [K in keyof Schema[Side]["messages"]]?: (
-        payload: MessagePayload<Schema[Side]["messages"], K>
+      [K in keyof Schema[RemoteSideOf<Side>]["messages"]]?: (
+        payload: MessagePayload<Schema[RemoteSideOf<Side>]["messages"], K>
       ) => void;
     } & {
       "*"?: (
-        messageName: keyof Schema[Side]["messages"],
-        payload: MessagePayload<Schema[Side]["messages"], keyof Schema[Side]["messages"]>
+        messageName: keyof Schema[RemoteSideOf<Side>]["messages"],
+        payload: MessagePayload<Schema[RemoteSideOf<Side>]["messages"], keyof Schema[RemoteSideOf<Side>]["messages"]>
       ) => void;
     };
   };
