@@ -2,13 +2,16 @@ import { decodeRPCPacket, encodeRPCPacket, asUint8Array } from "./rpcWire";
 
 type WebRPCHandlers = Record<string, (params?: unknown) => unknown>;
 
+/** Minimal ws interface compatible with Bun's ServerWebSocket. */
+type WebRPCSocket = { send(data: Uint8Array): void | number };
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 export function createWebRPCHandler(handlers: WebRPCHandlers) {
   return {
-    message(ws: { send(data: Uint8Array): void }, raw: string | Buffer) {
+    message(ws: WebRPCSocket, raw: string | Buffer) {
       if (typeof raw === "string") return;
 
       let packet;
