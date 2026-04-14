@@ -3,6 +3,12 @@
  * so the DOM-rendered indicators remain visible during tab drag.
  */
 
+declare global {
+  interface Window {
+    bunite?: { invoke: (method: string, params?: unknown) => Promise<unknown> };
+  }
+}
+
 type WebviewElement = HTMLElement & { _surfaceId?: number | null };
 
 export function setupDropIndicatorMasks() {
