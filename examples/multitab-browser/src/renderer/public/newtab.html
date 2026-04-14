@@ -12,18 +12,11 @@
 </head>
 <body>
   <div class="watermark">bunite</div>
-  <div class="links" id="links"></div>
-  <script>
-    async function init() {
-      const config = await bunite.invoke("multitabBrowser.getConfig");
-      document.getElementById("links").innerHTML = [
-        [config.localOrigin + "/fast", "Local Fast"],
-        [config.localOrigin + "/slow?delay=2000", "Local 2s"],
-        ["https://google.com", "Google"],
-        ["https://github.com", "GitHub"]
-      ].map(([href, label]) => `<a href="${href}">${label}</a>`).join("");
-    }
-    init();
-  </script>
+  <div class="links">
+    <a href="/fast">Local Fast</a>
+    <a href="/slow?delay=2000">Local 2s</a>
+    <a href="https://google.com">Google</a>
+    <a href="https://github.com">GitHub</a>
+  </div>
 </body>
 </html>
