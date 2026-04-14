@@ -51,6 +51,10 @@ export function findCefSource(coreRoot: string): string {
   return candidates[0]; // caller should check and trigger download
 }
 
+export function resolveCefDownloadDir(coreRoot: string): string {
+  return join(findNativeBuildRoot(coreRoot), "cef");
+}
+
 export function assertPlatform(): void {
   if (process.platform !== "win32") {
     console.error(`bunite-dev: only Windows is supported currently (got ${process.platform})`);
