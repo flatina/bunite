@@ -22,7 +22,7 @@ import { log, logLevelToInt } from "../../shared/log";
 
 import type { LogLevel } from "../../shared/log";
 
-type AppInitOptions = NativeBootstrapOptions & {
+type AppOptions = NativeBootstrapOptions & {
   userDataDir?: string;
   cefDir?: string;
   exitOnLastWindowClosed?: boolean;
@@ -31,123 +31,116 @@ type AppInitOptions = NativeBootstrapOptions & {
 
 export type GlobalIPCHandler = (params: unknown, ctx: { viewId: number }) => unknown | Promise<unknown>;
 
-class AppRuntime {
-  private initPromise: Promise<void> | null = null;
+export class AppRuntime {
   private stubKeepAliveTimer: ReturnType<typeof setInterval> | null = null;
   private readonly globalIPCHandlers = new Map<string, GlobalIPCHandler>();
   private exitOnLastWindowClosed = true;
   private quitting = false;
 
-  async init(options: AppInitOptions = {}) {
-    if (!this.initPromise) {
-      this.initPromise = (async () => {
-        if (options.exitOnLastWindowClosed !== undefined) {
-          this.exitOnLastWindowClosed = options.exitOnLastWindowClosed;
-        }
+  readonly ready: Promise<void>;
 
-        if (options.logLevel) {
-          log.setLevel(options.logLevel);
-        }
+  constructor(options: AppOptions = {}) {
+    this.ready = this.bootstrap(options);
+  }
 
-        if (options.cefDir) {
-          process.env.BUNITE_CEF_DIR = options.cefDir;
-        }
-
-        if (options.userDataDir) {
-          process.env.BUNITE_USER_DATA_DIR = options.userDataDir;
-        } else if (!process.env.BUNITE_USER_DATA_DIR) {
-          // XDG_DATA_HOME takes priority on any platform, then OS convention
-          const appDataDir = process.env.XDG_DATA_HOME
-            ?? (process.platform === "win32"
-              ? (process.env.APPDATA ?? join(process.env.USERPROFILE ?? "", "AppData", "Roaming"))
-              : process.platform === "darwin"
-                ? join(process.env.HOME ?? "", "Library", "Application Support")
-                : join(process.env.HOME ?? "", ".local", "share"));
-          let name = "bunite-app";
-          try {
-            // Walk up from entry script to find nearest package.json
-            let dir = getBaseDir();
-            while (dir) {
-              const pkgPath = join(dir, "package.json");
-              if (existsSync(pkgPath)) {
-                name = JSON.parse(require("node:fs").readFileSync(pkgPath, "utf8")).name ?? name;
-                break;
-              }
-              const parent = resolve(dir, "..");
-              if (parent === dir) break;
-              dir = parent;
-            }
-          } catch {}
-          process.env.BUNITE_USER_DATA_DIR = join(appDataDir, name);
-        }
-
-        const runtime = await initNativeRuntime({
-          allowStub: options.allowStub,
-          hideConsole: options.hideConsole,
-          popupBlocking: options.popupBlocking,
-          chromiumFlags: options.chromiumFlags
-        });
-
-        if (options.logLevel && runtime.nativeLoaded) {
-          setNativeLogLevel(logLevelToInt(options.logLevel));
-        }
-
-        attachGlobalIPCResolver((channel) => this.getGlobalIPCHandler(channel));
-
-        for (const [channel, handler] of getSurfaceIPCHandlers()) {
-          this.globalIPCHandlers.set(channel, handler);
-        }
-        for (const [channel, handler] of getWebviewIPCHandlers()) {
-          this.globalIPCHandlers.set(channel, handler);
-        }
-
-        this.globalIPCHandlers.set("__bunite:messageBoxResponse", (params) => {
-          const { requestId, response } = params as { requestId: number; response: number };
-          handleMessageBoxResponse(requestId, response);
-          return {};
-        });
-
-        setRouteRequestHandler((requestId, path) => this.handleRouteRequest(requestId, path));
-
-        // Replay appres routes registered before init
-        for (const path of this.appresHandlers.keys()) {
-          getNativeLibrary()?.symbols.bunite_register_appres_route(toCString(path));
-        }
-
-
-        if (this.exitOnLastWindowClosed && runtime.nativeLoaded) {
-          buniteEventEmitter.on("all-windows-closed", () => {
-            if (this.quitting) {
-              return;
-            }
-            queueMicrotask(() => {
-              if (this.quitting) {
-                return;
-              }
-              // Recheck: a new window may have been created since the event
-              if (BrowserWindow.getAll().length === 0) {
-                this.quit();
-              }
-            });
-          });
-        }
-
-        ensureRPCServer();
-        buniteEventEmitter.emitEvent(
-          new BuniteEvent("ready", {
-            usingStub: runtime.usingStub,
-            artifacts: runtime.artifacts
-          })
-        );
-      })();
+  private async bootstrap(options: AppOptions) {
+    if (options.exitOnLastWindowClosed !== undefined) {
+      this.exitOnLastWindowClosed = options.exitOnLastWindowClosed;
     }
 
-    await this.initPromise;
+    if (options.logLevel) {
+      log.setLevel(options.logLevel);
+    }
+
+    if (options.cefDir) {
+      process.env.BUNITE_CEF_DIR = options.cefDir;
+    }
+
+    if (options.userDataDir) {
+      process.env.BUNITE_USER_DATA_DIR = options.userDataDir;
+    } else if (!process.env.BUNITE_USER_DATA_DIR) {
+      const appDataDir = process.env.XDG_DATA_HOME
+        ?? (process.platform === "win32"
+          ? (process.env.APPDATA ?? join(process.env.USERPROFILE ?? "", "AppData", "Roaming"))
+          : process.platform === "darwin"
+            ? join(process.env.HOME ?? "", "Library", "Application Support")
+            : join(process.env.HOME ?? "", ".local", "share"));
+      let name = "bunite-app";
+      try {
+        let dir = getBaseDir();
+        while (dir) {
+          const pkgPath = join(dir, "package.json");
+          if (existsSync(pkgPath)) {
+            name = JSON.parse(require("node:fs").readFileSync(pkgPath, "utf8")).name ?? name;
+            break;
+          }
+          const parent = resolve(dir, "..");
+          if (parent === dir) break;
+          dir = parent;
+        }
+      } catch {}
+      process.env.BUNITE_USER_DATA_DIR = join(appDataDir, name);
+    }
+
+    const runtime = await initNativeRuntime({
+      allowStub: options.allowStub,
+      hideConsole: options.hideConsole,
+      popupBlocking: options.popupBlocking,
+      chromiumFlags: options.chromiumFlags
+    });
+
+    if (options.logLevel && runtime.nativeLoaded) {
+      setNativeLogLevel(logLevelToInt(options.logLevel));
+    }
+
+    attachGlobalIPCResolver((channel) => this.getGlobalIPCHandler(channel));
+
+    for (const [channel, handler] of getSurfaceIPCHandlers()) {
+      this.globalIPCHandlers.set(channel, handler);
+    }
+    for (const [channel, handler] of getWebviewIPCHandlers()) {
+      this.globalIPCHandlers.set(channel, handler);
+    }
+
+    this.globalIPCHandlers.set("__bunite:messageBoxResponse", (params) => {
+      const { requestId, response } = params as { requestId: number; response: number };
+      handleMessageBoxResponse(requestId, response);
+      return {};
+    });
+
+    setRouteRequestHandler((requestId, path) => this.handleRouteRequest(requestId, path));
+
+    for (const path of this.appresHandlers.keys()) {
+      getNativeLibrary()?.symbols.bunite_register_appres_route(toCString(path));
+    }
+
+    if (this.exitOnLastWindowClosed && runtime.nativeLoaded) {
+      buniteEventEmitter.on("all-windows-closed", () => {
+        if (this.quitting) {
+          return;
+        }
+        queueMicrotask(() => {
+          if (this.quitting) {
+            return;
+          }
+          if (BrowserWindow.getAll().length === 0) {
+            this.quit();
+          }
+        });
+      });
+    }
+
+    ensureRPCServer();
+    buniteEventEmitter.emitEvent(
+      new BuniteEvent("ready", {
+        usingStub: runtime.usingStub,
+        artifacts: runtime.artifacts
+      })
+    );
   }
 
   on(name: string, handler: (payload: unknown) => void) {
     if (name === "before-quit") {
-      // before-quit listeners receive the BuniteEvent directly so they can set event.response
       buniteEventEmitter.on(name, handler);
       return () => buniteEventEmitter.off(name, handler);
     }
@@ -188,7 +181,6 @@ class AppRuntime {
       clearInterval(this.stubKeepAliveTimer);
       this.stubKeepAliveTimer = null;
     }
-    // bunite_quit() blocks until native shutdown completes or times out
     getNativeLibrary()?.symbols.bunite_quit();
     process.exitCode = code;
     process.exit(code);
@@ -238,7 +230,6 @@ class AppRuntime {
     getNativeLibrary()?.symbols.bunite_complete_route_request(requestId, toCString(html));
   }
 
-  /** Resolve a path relative to the entry script (dev) or executable (compiled). */
   resolve(relativePath: string): string {
     if (isAbsolute(relativePath)) return relativePath;
     return resolve(getBaseDir(), relativePath);
@@ -278,5 +269,3 @@ class AppRuntime {
     return this.cachedCefVersion;
   }
 }
-
-export const app = new AppRuntime();

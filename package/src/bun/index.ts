@@ -1,4 +1,4 @@
-import { app } from "./core/App";
+import { AppRuntime } from "./core/App";
 import { BrowserWindow, type WindowOptionsType } from "./core/BrowserWindow";
 import { BrowserView, type BrowserViewOptions } from "./core/BrowserView";
 import * as Utils from "./core/Utils";
@@ -17,7 +17,7 @@ import type { MessageBoxOptions, MessageBoxResponse } from "./core/Utils";
 import { log, type LogLevel } from "../shared/log";
 
 export {
-  app,
+  AppRuntime,
   BrowserWindow,
   BrowserView,
   Utils,

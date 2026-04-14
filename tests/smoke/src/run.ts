@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { BrowserWindow, app } from "bunite-core";
+import { BrowserWindow, AppRuntime } from "bunite-core";
 import { rpcDefinition, attachNavigationChecks, checkIPC } from "./ipc";
 import { runWindowTests, checkWindow } from "./window";
 
@@ -12,7 +12,8 @@ function resolveRendererRoot() {
   return candidate;
 }
 
-await app.init();
+const app = new AppRuntime();
+await app.ready;
 
 const appresRoot = resolveRendererRoot();
 

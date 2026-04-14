@@ -1,8 +1,9 @@
-import { BrowserWindow, app } from "bunite-core";
+import { BrowserWindow, AppRuntime } from "bunite-core";
 import indexHtml from "./index.html" with { type: "text" };
 const html = indexHtml as unknown as string;
 
-await app.init();
+const app = new AppRuntime();
+await app.ready;
 
 const win = new BrowserWindow({
   title: `dnd-test v${app.version} — CEF ${app.cefVersion ?? "unknown"}`,
