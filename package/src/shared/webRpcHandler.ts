@@ -81,9 +81,16 @@ export function createWebRPCHandler<Schema extends BuniteRPCSchema>(
 
     webClients: webClients as ReadonlySet<WebRPCClient<Schema>>,
 
-    broadcast(messageName: string, payload?: unknown) {
+    broadcast<M extends keyof Schema["bun"]["messages"]>(
+      messageName: M,
+      ...args: void extends Schema["bun"]["messages"][M]
+        ? []
+        : undefined extends Schema["bun"]["messages"][M]
+          ? [payload?: Schema["bun"]["messages"][M]]
+          : [payload: Schema["bun"]["messages"][M]]
+    ) {
       for (const client of webClients) {
-        (client.rpc.send as any)(messageName, payload);
+        (client.rpc.send as any)(messageName, ...args);
       }
     },
 
