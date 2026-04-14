@@ -73,7 +73,7 @@ export function createWebRPCHandler<Schema extends BuniteRPCSchema>(
       const client = connections.get(ws);
       if (!client) return;
 
-      client.rpc.setTransport({});
+      client.rpc.dispose();
       webClients.delete(client);
       connections.delete(ws);
       handler.onWebClientDisconnected?.(client);
