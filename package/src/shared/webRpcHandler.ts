@@ -1,48 +1,92 @@
+import {
+  defineBuniteRPC,
+  type BuniteRPCConfig,
+  type BuniteRPCSchema,
+  type RPCTransport,
+  type RPCPacket
+} from "./rpc";
 import { decodeRPCPacket, encodeRPCPacket, asUint8Array } from "./rpcWire";
 
-type WebRPCHandlers = Record<string, (params?: unknown) => unknown>;
+type WebRPCSocket = { send(data: Uint8Array | ArrayBuffer): void | number };
 
-/** Minimal ws interface compatible with Bun's ServerWebSocket. */
-type WebRPCSocket = { send(data: Uint8Array): void | number };
+export type WebRPCClient<Schema extends BuniteRPCSchema = BuniteRPCSchema> = {
+  ws: WebRPCSocket;
+  rpc: ReturnType<typeof defineBuniteRPC<Schema, "bun">>;
+  handlePacket: (packet: RPCPacket) => void | Promise<void>;
+};
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+export function createWebRPCHandler<Schema extends BuniteRPCSchema>(
+  config: BuniteRPCConfig<Schema, "bun"> & {
+    extraRequestHandlers?: Record<string, (...args: any[]) => unknown>;
+  }
+) {
+  const connections = new WeakMap<WebRPCSocket, WebRPCClient<Schema>>();
+  const webClients = new Set<WebRPCClient<Schema>>();
 
-export function createWebRPCHandler(handlers: WebRPCHandlers) {
-  return {
-    message(ws: WebRPCSocket, raw: string | Buffer) {
+  const handler = {
+    open(ws: WebRPCSocket) {
+      let handlePacket: ((packet: RPCPacket) => void | Promise<void>) | undefined;
+
+      const transport: RPCTransport = {
+        send(packet) {
+          ws.send(encodeRPCPacket(packet));
+        },
+        registerHandler(h) {
+          handlePacket = h;
+        },
+        unregisterHandler() {
+          handlePacket = undefined;
+        }
+      };
+
+      const rpc = defineBuniteRPC("bun", config);
+      rpc.setTransport(transport);
+
+      const client: WebRPCClient<Schema> = {
+        ws,
+        rpc: rpc as WebRPCClient<Schema>["rpc"],
+        handlePacket: (packet) => handlePacket?.(packet)
+      };
+
+      connections.set(ws, client);
+      webClients.add(client);
+      handler.onWebClientConnected?.(client);
+    },
+
+    message(ws: WebRPCSocket, raw: string | Buffer | ArrayBuffer | Uint8Array) {
       if (typeof raw === "string") return;
 
-      let packet;
+      const client = connections.get(ws);
+      if (!client) return;
+
       try {
-        packet = decodeRPCPacket(asUint8Array(raw));
+        client.handlePacket(decodeRPCPacket(asUint8Array(raw)));
       } catch {
-        return;
+        // malformed packet
       }
+    },
 
-      if (packet.type !== "request" || typeof packet.method !== "string") return;
+    close(ws: WebRPCSocket) {
+      const client = connections.get(ws);
+      if (!client) return;
 
-      const handler = handlers[packet.method];
-      if (!handler) {
-        ws.send(
-          encodeRPCPacket({ type: "response", id: packet.id, success: false, error: `Unknown method: ${packet.method}` })
-        );
-        return;
+      webClients.delete(client);
+      handler.onWebClientDisconnected?.(client);
+      client.rpc.setTransport({});
+      connections.delete(ws);
+    },
+
+    webClients: webClients as ReadonlySet<WebRPCClient<Schema>>,
+
+    broadcast(messageName: string, payload?: unknown) {
+      for (const client of webClients) {
+        (client.rpc.send as any)(messageName, payload);
       }
+    },
 
-      try {
-        Promise.resolve(handler(packet.params)).then(
-          (payload) =>
-            ws.send(encodeRPCPacket({ type: "response", id: packet.id, success: true, payload })),
-          (error) =>
-            ws.send(encodeRPCPacket({ type: "response", id: packet.id, success: false, error: errorMessage(error) }))
-        );
-      } catch (error) {
-        ws.send(
-          encodeRPCPacket({ type: "response", id: packet.id, success: false, error: errorMessage(error) })
-        );
-      }
-    }
+    onWebClientConnected: undefined as ((client: WebRPCClient<Schema>) => void) | undefined,
+    onWebClientDisconnected: undefined as ((client: WebRPCClient<Schema>) => void) | undefined,
   };
+
+  return handler;
 }
