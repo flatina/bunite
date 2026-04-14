@@ -2,7 +2,7 @@ import { ptr } from "bun:ffi";
 import { buildViewPreloadScript } from "../preload/inline";
 import { log } from "../../shared/log";
 import { buniteEventEmitter } from "../events/eventEmitter";
-import { defineBuniteRPC, type BuniteRPCConfig, type BuniteRPCSchema, type RPCWithTransport, type RPCRequestHandler } from "../../shared/rpc";
+import { defineBuniteRPC, type BuniteRPCConfig, type BuniteRPCSchema, type RPCWithTransport } from "../../shared/rpc";
 import { createWebRPCHandler } from "../../shared/webRpcHandler";
 import { ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady } from "../proc/native";
 import { attachBrowserViewRegistry, getRPCPort, sendMessageToView } from "./Socket";
@@ -165,8 +165,11 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
     config: BuniteRPCConfig<Schema, "bun">
   ) {
     const rpc = defineBuniteRPC("bun", config);
+    const webRpc = createWebRPCHandler<Schema>(config);
     return Object.assign(rpc, {
-      webHandler: createWebRPCHandler((config.handlers.requests ?? {}) as any)
+      webHandler: webRpc,
+      webClients: webRpc.webClients,
+      broadcast: webRpc.broadcast,
     });
   }
 
