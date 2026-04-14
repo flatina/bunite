@@ -6,6 +6,7 @@ import {
   type RPCPacket
 } from "./rpc";
 import { decodeRPCPacket, encodeRPCPacket, asUint8Array } from "./rpcWire";
+import { log } from "./log";
 
 type WebRPCSocket = { send(data: Uint8Array | ArrayBuffer): void | number };
 
@@ -60,9 +61,11 @@ export function createWebRPCHandler<Schema extends BuniteRPCSchema>(
       if (!client) return;
 
       try {
-        client.handlePacket(decodeRPCPacket(asUint8Array(raw)));
+        Promise.resolve(client.handlePacket(decodeRPCPacket(asUint8Array(raw)))).catch((error) => {
+          log.error("Web RPC packet handler error", error);
+        });
       } catch {
-        // malformed packet
+        // malformed packet — decode failure
       }
     },
 
@@ -70,10 +73,10 @@ export function createWebRPCHandler<Schema extends BuniteRPCSchema>(
       const client = connections.get(ws);
       if (!client) return;
 
-      webClients.delete(client);
-      handler.onWebClientDisconnected?.(client);
       client.rpc.setTransport({});
+      webClients.delete(client);
       connections.delete(ws);
+      handler.onWebClientDisconnected?.(client);
     },
 
     webClients: webClients as ReadonlySet<WebRPCClient<Schema>>,
