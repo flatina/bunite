@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "bunite-core";
+import { AppRuntime, BrowserWindow } from "bunite-core";
 
 const server = Bun.serve({
   port: 0,
@@ -23,7 +23,8 @@ const server = Bun.serve({
   }
 });
 
-await app.init();
+const app = new AppRuntime();
+await app.ready;
 
 app.handle("getServerUrl", () => `http://localhost:${server.port}`);
 
