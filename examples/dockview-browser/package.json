@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "bunx vite build && bun src/main.ts",
+    "dev:web": "bunx vite build && bun src/main.ts --web-port 4400",
     "build": "bunite-build && bunx vite build",
     "typecheck": "bun x tsc -p tsconfig.json --noEmit && bun x tsc -p src/renderer/tsconfig.json --noEmit"
   },

@@ -1,3 +1,4 @@
+import "bunite-core/webview-polyfill";
 import "dockview-core/dist/styles/dockview.css";
 import {
   createDockview,
@@ -9,21 +10,11 @@ import {
 import "./styles.css";
 import { setupDropIndicatorMasks } from "./maskHelper";
 
-declare global {
-  interface Window {
-    bunite?: { invoke: (method: string, params?: unknown) => Promise<unknown> };
-  }
-}
-
 const shell = document.querySelector<HTMLElement>(".dockview-shell")!;
 const panelTpl = document.getElementById("browser-panel-tpl") as HTMLTemplateElement;
 
 let demoOrigin = "";
 let api: DockviewApi;
-
-void bootstrap().catch((e) => {
-  document.getElementById("app")!.innerHTML = `<pre class="fatal">${String(e)}</pre>`;
-});
 
 // --- Panel ---
 
@@ -65,11 +56,7 @@ class BrowserPanel implements IContentRenderer {
 // --- Bootstrap ---
 
 async function bootstrap() {
-  const invoke = window.bunite?.invoke;
-  if (!invoke) throw new Error("bunite runtime not available");
-
-  const config = (await invoke("dockviewBrowser.getConfig")) as { demoOrigin: string };
-  demoOrigin = config.demoOrigin;
+  demoOrigin = location.origin;
 
   document.querySelectorAll<HTMLButtonElement>("[data-fixture]").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -126,3 +113,7 @@ function createDefaultLayout() {
 
   left.group.api.setSize({ width: 500 });
 }
+
+void bootstrap().catch((e) => {
+  document.getElementById("app")!.innerHTML = `<pre class="fatal">${String(e)}</pre>`;
+});
