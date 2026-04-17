@@ -1,0 +1,17 @@
+{
+  "name": "appres-demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun src/main.ts",
+    "build": "bunite-build",
+    "typecheck": "bun x tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "bunite-core": "workspace:*",
+    "bunite-native-win-x64": "workspace:*"
+  },
+  "devDependencies": {
+    "bunite-dev": "workspace:*"
+  }
+}
