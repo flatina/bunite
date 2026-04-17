@@ -31,6 +31,10 @@ type AppOptions = NativeBootstrapOptions & {
 
 export type GlobalIPCHandler = (params: unknown, ctx: { viewId: number }) => unknown | Promise<unknown>;
 
+function normalizeAppResPath(path: string): string {
+  return path.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
 export class AppRuntime {
   private stubKeepAliveTimer: ReturnType<typeof setInterval> | null = null;
   private readonly globalIPCHandlers = new Map<string, GlobalIPCHandler>();
@@ -209,13 +213,15 @@ export class AppRuntime {
   private readonly appresHandlers = new Map<string, () => string>();
 
   getAppRes(path: string, handler: () => string) {
-    this.appresHandlers.set(path, handler);
-    getNativeLibrary()?.symbols.bunite_register_appres_route(toCString(path));
+    const normalized = normalizeAppResPath(path);
+    this.appresHandlers.set(normalized, handler);
+    getNativeLibrary()?.symbols.bunite_register_appres_route(toCString(normalized));
   }
 
   removeAppRes(path: string) {
-    this.appresHandlers.delete(path);
-    getNativeLibrary()?.symbols.bunite_unregister_appres_route(toCString(path));
+    const normalized = normalizeAppResPath(path);
+    this.appresHandlers.delete(normalized);
+    getNativeLibrary()?.symbols.bunite_unregister_appres_route(toCString(normalized));
   }
 
   /** @internal */
