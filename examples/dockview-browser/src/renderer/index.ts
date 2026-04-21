@@ -80,6 +80,8 @@ async function bootstrap() {
   api = createDockview(shell, {
     theme: themeAbyss,
     disableFloatingGroups: true,
+    // up/down/within splits re-parent panel content and would tear down native webview surfaces — "always" keeps panels in a shared overlay container and repositions via style.
+    defaultRenderer: "always",
     createComponent: () => new BrowserPanel()
   });
 
