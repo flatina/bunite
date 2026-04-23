@@ -2,7 +2,7 @@ import {
   AppRuntime,
   BrowserWindow,
   createTransportDemuxer,
-  defineBuniteRPC,
+  defineBunRPC,
 } from "bunite-core";
 import indexHtml from "./index.html" with { type: "text" };
 import type { CalcSchema, ComputeParams, LogEntry, LogSchema } from "./schema";
@@ -20,7 +20,7 @@ if (!rendererBundle.success) {
 const rendererJs = await rendererBundle.outputs[0]!.text();
 const html = (indexHtml as unknown as string).replace("<!--RENDERER_BUNDLE-->", rendererJs);
 
-type LogRpc = ReturnType<typeof defineBuniteRPC<LogSchema, "bun">>;
+type LogRpc = ReturnType<typeof defineBunRPC<LogSchema>>;
 const logRpcs = new Set<LogRpc>();
 
 function broadcastLog(entry: LogEntry) {
@@ -36,7 +36,7 @@ function createDemoWindow(label: string, x: number) {
 
   const demux = createTransportDemuxer(win.view.transport);
 
-  const calcRpc = defineBuniteRPC<CalcSchema, "bun">("bun", {
+  const calcRpc = defineBunRPC<CalcSchema>({
     handlers: {
       requests: {
         compute: ({ a, b, op }: ComputeParams) => {
@@ -55,7 +55,7 @@ function createDemoWindow(label: string, x: number) {
   });
   calcRpc.setTransport(demux.channel("calc"));
 
-  const logRpc = defineBuniteRPC<LogSchema, "bun">("bun", { handlers: {} });
+  const logRpc = defineBunRPC<LogSchema>({ handlers: {} });
   logRpc.setTransport(demux.channel("log"));
   logRpcs.add(logRpc);
 

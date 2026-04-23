@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { BrowserView } from "../../package/src/bun/core/BrowserView";
 import { createWebRPCHandler, type WebRPCClient } from "../../package/src/shared/webRpcHandler";
-import { defineBuniteRPC, type RPCSchema } from "../../package/src/shared/rpc";
+import { type RPCSchema } from "../../package/src/shared/rpc";
 import { encodeRPCPacket, decodeRPCPacket } from "../../package/src/shared/rpcWire";
 import { pack, unpack } from "msgpackr";
 

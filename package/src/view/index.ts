@@ -1,6 +1,6 @@
 import "../shared/webviewPolyfill";
 import {
-  defineBuniteRPC,
+  defineWebviewRPC,
   type BuniteRPCConfig,
   type RPCPacket,
   type BuniteRPCSchema,
@@ -164,7 +164,7 @@ export class BuniteView<T extends RPCWithTransport = RPCWithTransport> {
   static defineRPC<Schema extends BuniteRPCSchema>(
     config: BuniteRPCConfig<Schema, "webview">
   ) {
-    const rpc = defineBuniteRPC("webview", config);
+    const rpc = defineWebviewRPC(config);
     new BuniteView({ rpc });
     return rpc;
   }
@@ -178,7 +178,7 @@ async function messageToUint8Array(data: unknown) {
 }
 
 export { log, type LogLevel } from "../shared/log";
-export { createTransportDemuxer, createWebSocketTransport, defineBuniteRPC };
+export { createTransportDemuxer, createWebSocketTransport, defineWebviewRPC };
 
 export type {
   BuniteRPCConfig,
