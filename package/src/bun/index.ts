@@ -7,7 +7,7 @@ import { BuniteEvent } from "./events/event";
 import { completePermissionRequest } from "./proc/native";
 import {
   createRPC,
-  defineBuniteRPC,
+  defineBunRPC,
   type BuniteRPCConfig,
   type BuniteRPCSchema,
   type RPCSchema,
@@ -28,7 +28,7 @@ export {
   createRPC,
   createTransportDemuxer,
   createWebSocketTransport,
-  defineBuniteRPC,
+  defineBunRPC,
   log
 };
 

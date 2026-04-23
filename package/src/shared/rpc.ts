@@ -370,11 +370,10 @@ export function createRPC<
   };
 }
 
-export function defineBuniteRPC<
+function defineSideRPC<
   Schema extends BuniteRPCSchema,
   Side extends "bun" | "webview"
 >(
-  side: Side,
   config: BuniteRPCConfig<Schema, Side> & {
     extraRequestHandlers?: Record<string, (...args: any[]) => unknown>;
   }
@@ -415,4 +414,20 @@ export function defineBuniteRPC<
   }
 
   return rpc;
+}
+
+export function defineBunRPC<Schema extends BuniteRPCSchema>(
+  config: BuniteRPCConfig<Schema, "bun"> & {
+    extraRequestHandlers?: Record<string, (...args: any[]) => unknown>;
+  }
+) {
+  return defineSideRPC<Schema, "bun">(config);
+}
+
+export function defineWebviewRPC<Schema extends BuniteRPCSchema>(
+  config: BuniteRPCConfig<Schema, "webview"> & {
+    extraRequestHandlers?: Record<string, (...args: any[]) => unknown>;
+  }
+) {
+  return defineSideRPC<Schema, "webview">(config);
 }
