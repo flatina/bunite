@@ -1,5 +1,5 @@
 import {
-  defineBuniteRPC,
+  defineBunRPC,
   type BuniteRPCConfig,
   type BuniteRPCSchema
 } from "./rpc";
@@ -8,7 +8,7 @@ import { log } from "./log";
 
 export type WebRPCClient<Schema extends BuniteRPCSchema = BuniteRPCSchema> = {
   ws: WebSocketLike;
-  rpc: ReturnType<typeof defineBuniteRPC<Schema, "bun">>;
+  rpc: ReturnType<typeof defineBunRPC<Schema>>;
 };
 
 export function createWebRPCHandler<Schema extends BuniteRPCSchema>(
@@ -24,7 +24,7 @@ export function createWebRPCHandler<Schema extends BuniteRPCSchema>(
   const handler = {
     open(ws: WebSocketLike) {
       const pipe = createWebSocketTransport(ws);
-      const rpc = defineBuniteRPC("bun", config);
+      const rpc = defineBunRPC(config);
       rpc.setTransport(pipe.transport);
 
       const client: WebRPCClient<Schema> = { ws, rpc: rpc as WebRPCClient<Schema>["rpc"] };
