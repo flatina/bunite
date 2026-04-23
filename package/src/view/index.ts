@@ -8,7 +8,7 @@ import {
   type RPCTransport,
   type RPCWithTransport
 } from "../shared/rpc";
-import { createTransportDemuxer, type TransportDemuxer } from "../shared/rpcDemux";
+import { createTransportDemuxer, type ChannelHandle, type TransportDemuxer, type TransportDemuxerOptions } from "../shared/rpcDemux";
 import { createWebSocketTransport, type WebSocketLike, type WebSocketTransportPipe } from "../shared/webSocketTransport";
 import { decodeRPCPacket, encodeRPCPacket } from "../shared/rpcWire";
 import { log } from "../shared/log";
@@ -176,8 +176,10 @@ export { createTransportDemuxer, createWebSocketTransport, defineWebviewRPC };
 export type {
   BuniteRPCConfig,
   BuniteRPCSchema,
+  ChannelHandle,
   RPCSchema,
   TransportDemuxer,
+  TransportDemuxerOptions,
   WebSocketLike,
   WebSocketTransportPipe
 };
