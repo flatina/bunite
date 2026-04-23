@@ -161,13 +161,6 @@ export class BuniteView<T extends RPCWithTransport = RPCWithTransport> {
     this.bunSocket.send(toArrayBuffer(encrypted));
   }
 
-  static defineRPC<Schema extends BuniteRPCSchema>(
-    config: BuniteRPCConfig<Schema, "webview">
-  ) {
-    const rpc = defineWebviewRPC(config);
-    new BuniteView({ rpc });
-    return rpc;
-  }
 }
 
 async function messageToUint8Array(data: unknown) {

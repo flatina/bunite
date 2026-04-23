@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { BrowserWindow, BrowserView, Utils, AppRuntime, type RPCSchema } from "bunite-core";
+import { BrowserWindow, Utils, AppRuntime, createWebRPCHandler, defineBunRPC, type RPCSchema } from "bunite-core";
 
 process.env.BUNITE_REMOTE_DEBUGGING_PORT ??= "9222";
 
@@ -45,9 +45,9 @@ const rpcHandlers = {
   }
 };
 
-const rendererRpc = BrowserView.defineRPC<MultitabRPCSchema>({
-  handlers: { requests: rpcHandlers }
-});
+const rpcConfig = { handlers: { requests: rpcHandlers } };
+const rendererRpc = defineBunRPC<MultitabRPCSchema>(rpcConfig);
+const webHandler = createWebRPCHandler<MultitabRPCSchema>(rpcConfig);
 
 const server = Bun.serve({
   port: webPort || 0,
@@ -73,7 +73,7 @@ const server = Bun.serve({
     if (!(await file.exists())) return new Response("Not Found", { status: 404 });
     return new Response(file);
   },
-  websocket: rendererRpc.webHandler
+  websocket: webHandler
 });
 
 origin = `http://127.0.0.1:${server.port}`;
