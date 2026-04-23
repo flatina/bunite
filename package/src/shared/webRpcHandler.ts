@@ -1,19 +1,14 @@
 import {
   defineBuniteRPC,
   type BuniteRPCConfig,
-  type BuniteRPCSchema,
-  type RPCTransport,
-  type RPCPacket
+  type BuniteRPCSchema
 } from "./rpc";
-import { decodeRPCPacket, encodeRPCPacket, asUint8Array } from "./rpcWire";
+import { createWebSocketTransport, type WebSocketLike } from "./webSocketTransport";
 import { log } from "./log";
 
-type WebRPCSocket = { send(data: Uint8Array | ArrayBuffer): void | number };
-
 export type WebRPCClient<Schema extends BuniteRPCSchema = BuniteRPCSchema> = {
-  ws: WebRPCSocket;
+  ws: WebSocketLike;
   rpc: ReturnType<typeof defineBuniteRPC<Schema, "bun">>;
-  handlePacket: (packet: RPCPacket) => void | Promise<void>;
 };
 
 export function createWebRPCHandler<Schema extends BuniteRPCSchema>(
@@ -21,62 +16,44 @@ export function createWebRPCHandler<Schema extends BuniteRPCSchema>(
     extraRequestHandlers?: Record<string, (...args: any[]) => unknown>;
   }
 ) {
-  const connections = new WeakMap<WebRPCSocket, WebRPCClient<Schema>>();
+  type Entry = { client: WebRPCClient<Schema>; receive: (raw: ArrayBuffer | Uint8Array) => void };
+
+  const connections = new WeakMap<WebSocketLike, Entry>();
   const webClients = new Set<WebRPCClient<Schema>>();
 
   const handler = {
-    open(ws: WebRPCSocket) {
-      let handlePacket: ((packet: RPCPacket) => void | Promise<void>) | undefined;
-
-      const transport: RPCTransport = {
-        send(packet) {
-          ws.send(encodeRPCPacket(packet));
-        },
-        registerHandler(h) {
-          handlePacket = h;
-        },
-        unregisterHandler() {
-          handlePacket = undefined;
-        }
-      };
-
+    open(ws: WebSocketLike) {
+      const pipe = createWebSocketTransport(ws);
       const rpc = defineBuniteRPC("bun", config);
-      rpc.setTransport(transport);
+      rpc.setTransport(pipe.transport);
 
-      const client: WebRPCClient<Schema> = {
-        ws,
-        rpc: rpc as WebRPCClient<Schema>["rpc"],
-        handlePacket: (packet) => handlePacket?.(packet)
-      };
+      const client: WebRPCClient<Schema> = { ws, rpc: rpc as WebRPCClient<Schema>["rpc"] };
 
-      connections.set(ws, client);
+      connections.set(ws, { client, receive: pipe.receive });
       webClients.add(client);
       handler.onWebClientConnected?.(client);
     },
 
-    message(ws: WebRPCSocket, raw: string | Buffer | ArrayBuffer | Uint8Array) {
+    message(ws: WebSocketLike, raw: string | Buffer | ArrayBuffer | Uint8Array) {
       if (typeof raw === "string") return;
-
-      const client = connections.get(ws);
-      if (!client) return;
+      const entry = connections.get(ws);
+      if (!entry) return;
 
       try {
-        Promise.resolve(client.handlePacket(decodeRPCPacket(asUint8Array(raw)))).catch((error) => {
-          log.error("Web RPC packet handler error", error);
-        });
-      } catch {
-        // malformed packet — decode failure
+        entry.receive(raw);
+      } catch (error) {
+        log.error("Web RPC packet handler error", error);
       }
     },
 
-    close(ws: WebRPCSocket) {
-      const client = connections.get(ws);
-      if (!client) return;
+    close(ws: WebSocketLike) {
+      const entry = connections.get(ws);
+      if (!entry) return;
 
-      client.rpc.dispose();
-      webClients.delete(client);
+      entry.client.rpc.dispose();
+      webClients.delete(entry.client);
       connections.delete(ws);
-      handler.onWebClientDisconnected?.(client);
+      handler.onWebClientDisconnected?.(entry.client);
     },
 
     webClients: webClients as ReadonlySet<WebRPCClient<Schema>>,
