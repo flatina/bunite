@@ -9,6 +9,7 @@ import {
   type RPCWithTransport
 } from "../shared/rpc";
 import { createTransportDemuxer, type TransportDemuxer } from "../shared/rpcDemux";
+import { createWebSocketTransport, type WebSocketLike, type WebSocketTransportPipe } from "../shared/webSocketTransport";
 import { decodeRPCPacket, encodeRPCPacket } from "../shared/rpcWire";
 import { log } from "../shared/log";
 
@@ -35,24 +36,37 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return copy.buffer;
 }
 
-export class BuniteView<T extends RPCWithTransport> {
+export class BuniteView<T extends RPCWithTransport = RPCWithTransport> {
   bunSocket?: WebSocket;
   rpc?: T;
-  rpcHandler?: (message: unknown) => void;
+  readonly transport: RPCTransport;
+
+  private handler?: (packet: RPCPacket) => void;
   private pendingPackets: RPCPacket[] = [];
 
-  constructor(config: { rpc: T }) {
-    this.rpc = config.rpc;
-    this.init();
-  }
+  constructor(config?: { rpc?: T }) {
+    this.rpc = config?.rpc;
 
-  init() {
+    this.transport = {
+      send: (packet) => {
+        if (this.bunSocket?.readyState === WebSocket.OPEN) {
+          this.sendPacket(packet);
+        } else if (this.bunSocket?.readyState === WebSocket.CONNECTING) {
+          this.pendingPackets.push(packet);
+        }
+      },
+      registerHandler: (h) => { this.handler = h; },
+      unregisterHandler: () => { this.handler = undefined; }
+    };
+
     this.initSocketToBun();
     if (isNative) {
       buniteWindow.__bunite ??= {};
-      buniteWindow.__bunite.receiveMessageFromBun = this.receiveMessageFromBun.bind(this);
+      buniteWindow.__bunite.receiveMessageFromBun = (message) => {
+        this.handler?.(message as RPCPacket);
+      };
     }
-    this.rpc?.setTransport(this.createTransport());
+    this.rpc?.setTransport(this.transport);
   }
 
   private sendPacket(packet: RPCPacket) {
@@ -73,10 +87,10 @@ export class BuniteView<T extends RPCWithTransport> {
       this.bunSocket = socket;
 
       socket.addEventListener("message", async (event) => {
-        const bytes = await this.messageToUint8Array(event.data);
+        const bytes = await messageToUint8Array(event.data);
         if (!bytes) return;
         try {
-          this.rpcHandler?.(decodeRPCPacket(bytes));
+          this.handler?.(decodeRPCPacket(bytes));
         } catch (error) {
           log.error("Failed to parse WebSocket message", error);
         }
@@ -98,7 +112,7 @@ export class BuniteView<T extends RPCWithTransport> {
       }
 
       this.bunSocket!.addEventListener("message", async (event) => {
-        const binaryMessage = await this.messageToUint8Array(event.data);
+        const binaryMessage = await messageToUint8Array(event.data);
         if (!binaryMessage) return;
 
         try {
@@ -110,7 +124,7 @@ export class BuniteView<T extends RPCWithTransport> {
           const decrypted = await decrypt(binaryMessage);
           const packet = decodeRPCPacket(decrypted);
           if ((packet as any).scope === "global") return;
-          this.rpcHandler?.(packet);
+          this.handler?.(packet);
         } catch (error) {
           log.error("Failed to parse message from Bun", error);
         }
@@ -132,35 +146,6 @@ export class BuniteView<T extends RPCWithTransport> {
         this.pendingPackets = [];
       }
     });
-  }
-
-  async messageToUint8Array(data: unknown) {
-    if (data instanceof ArrayBuffer) return new Uint8Array(data);
-    if (data instanceof Blob) return new Uint8Array(await data.arrayBuffer());
-    if (data instanceof Uint8Array) return data;
-    return null;
-  }
-
-  createTransport(): RPCTransport {
-    return {
-      send: (message) => {
-        if (this.bunSocket?.readyState === WebSocket.OPEN) {
-          this.sendPacket(message);
-        } else if (this.bunSocket?.readyState === WebSocket.CONNECTING) {
-          this.pendingPackets.push(message);
-        }
-      },
-      registerHandler: (handler: (packet: any) => void) => {
-        this.rpcHandler = handler;
-      },
-      unregisterHandler: () => {
-        this.rpcHandler = undefined;
-      }
-    };
-  }
-
-  receiveMessageFromBun(message: unknown) {
-    this.rpcHandler?.(message);
   }
 
   async bunBridge(message: RPCPacket) {
@@ -185,12 +170,21 @@ export class BuniteView<T extends RPCWithTransport> {
   }
 }
 
+async function messageToUint8Array(data: unknown) {
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (data instanceof Blob) return new Uint8Array(await data.arrayBuffer());
+  if (data instanceof Uint8Array) return data;
+  return null;
+}
+
 export { log, type LogLevel } from "../shared/log";
-export { createTransportDemuxer };
+export { createTransportDemuxer, createWebSocketTransport, defineBuniteRPC };
 
 export type {
   BuniteRPCConfig,
   BuniteRPCSchema,
   RPCSchema,
-  TransportDemuxer
+  TransportDemuxer,
+  WebSocketLike,
+  WebSocketTransportPipe
 };

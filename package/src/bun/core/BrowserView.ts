@@ -2,7 +2,7 @@ import { ptr } from "bun:ffi";
 import { buildViewPreloadScript } from "../preload/inline";
 import { log } from "../../shared/log";
 import { buniteEventEmitter } from "../events/eventEmitter";
-import { defineBuniteRPC, type BuniteRPCConfig, type BuniteRPCSchema, type RPCWithTransport } from "../../shared/rpc";
+import { defineBuniteRPC, type BuniteRPCConfig, type BuniteRPCSchema, type RPCPacket, type RPCTransport, type RPCWithTransport } from "../../shared/rpc";
 import { createWebRPCHandler } from "../../shared/webRpcHandler";
 import { ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady } from "../proc/native";
 import { attachBrowserViewRegistry, getRPCPort, sendMessageToView } from "./Socket";
@@ -13,6 +13,16 @@ import { cancelPendingMessageBoxesForView } from "./Utils";
 
 const BrowserViewMap: Record<number, BrowserView<any>> = {};
 let nextWebviewId = 1;
+
+function createNativeViewPipe(viewId: number) {
+  let handler: ((packet: RPCPacket) => void) | undefined;
+  const transport: RPCTransport = {
+    send: (packet) => { sendMessageToView(viewId, packet); },
+    registerHandler: (h) => { handler = h; },
+    unregisterHandler: () => { handler = undefined; }
+  };
+  return { transport, receive: (packet: RPCPacket) => handler?.(packet) };
+}
 
 export type BrowserViewOptions<T = undefined> = {
   url: string | null;
@@ -66,7 +76,8 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
   partition: string | null;
   frame: BrowserViewOptions["frame"];
   rpc?: T;
-  rpcHandler?: (message: unknown) => void;
+  readonly transport: RPCTransport;
+  private pipe: ReturnType<typeof createNativeViewPipe>;
   autoResize: boolean;
   navigationRules: string[] | null;
   sandbox: boolean;
@@ -74,6 +85,9 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
 
   constructor(options: Partial<BrowserViewOptions<T>>) {
     ensureNativeRuntime();
+
+    this.pipe = createNativeViewPipe(this.id);
+    this.transport = this.pipe.transport;
 
     this.windowId = options.windowId ?? defaultOptions.windowId;
     this.url = options.url ?? defaultOptions.url;
@@ -105,7 +119,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
     });
 
     BrowserViewMap[this.id] = this;
-    this.rpc?.setTransport(this.createTransport());
+    this.rpc?.setTransport(this.transport);
     // Register ready waiter BEFORE native create — OnAfterCreated can fire
     // on the CEF UI thread before bunite_view_create returns to JS.
     this._readyPromise = waitForViewReady(this.id);
@@ -173,22 +187,8 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
     });
   }
 
-  handleIncomingRPC(message: unknown) {
-    this.rpcHandler?.(message);
-  }
-
-  createTransport() {
-    return {
-      send: (message: any) => {
-        sendMessageToView(this.id, message);
-      },
-      registerHandler: (handler: (message: any) => void) => {
-        this.rpcHandler = handler;
-      },
-      unregisterHandler: () => {
-        this.rpcHandler = undefined;
-      }
-    };
+  handleIncomingRPC(packet: RPCPacket) {
+    this.pipe.receive(packet);
   }
 
   get rpcPort() {
