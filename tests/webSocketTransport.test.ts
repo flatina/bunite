@@ -69,17 +69,17 @@ describe("createWebSocketTransport", () => {
     const demuxA = createTransportDemuxer(pipeA.transport);
     const demuxB = createTransportDemuxer(pipeB.transport);
 
-    createRPC<PingSchema>({
-      transport: demuxB.channel("chat"),
-      requestHandler: { ping: ({ value }) => ({ pong: `chat:${value}` }) }
-    });
-    createRPC<PingSchema>({
-      transport: demuxB.channel("status"),
-      requestHandler: { ping: ({ value }) => ({ pong: `status:${value}` }) }
-    });
+    const chatServer = createRPC<PingSchema>({ requestHandler: { ping: ({ value }) => ({ pong: `chat:${value}` }) } });
+    const statusServer = createRPC<PingSchema>({ requestHandler: { ping: ({ value }) => ({ pong: `status:${value}` }) } });
+    demuxB.channel("chat").bindTo(chatServer);
+    demuxB.channel("status").bindTo(statusServer);
 
-    const chat = createRPC<PingSchema>({ transport: demuxA.channel("chat") });
-    const status = createRPC<PingSchema>({ transport: demuxA.channel("status") });
+    const chat = createRPC<PingSchema>();
+    const status = createRPC<PingSchema>();
+    await Promise.all([
+      demuxA.channel("chat").bindTo(chat),
+      demuxA.channel("status").bindTo(status),
+    ]);
 
     const [r1, r2] = await Promise.all([
       chat.request("ping", { value: "x" }),
