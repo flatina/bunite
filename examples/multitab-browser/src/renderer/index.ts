@@ -1,6 +1,6 @@
 import "bunite-core/webview-polyfill";
 import "./styles.css";
-import { BuniteView, type RPCSchema } from "bunite-core/view";
+import { BuniteView, defineWebviewRPC, type RPCSchema } from "bunite-core/view";
 
 type MultitabRPCSchema = {
   bun: RPCSchema<{
@@ -24,7 +24,8 @@ const content = document.getElementById("content")!;
 const tabs = new Map<string, Tab>();
 let activeId: string | null = null;
 
-const rpc = BuniteView.defineRPC<MultitabRPCSchema>({ handlers: {} });
+const rpc = defineWebviewRPC<MultitabRPCSchema>({ handlers: {} });
+new BuniteView({ rpc });
 
 newTabBtn.addEventListener("click", () => createTab());
 document.querySelector('[data-action="back"]')!.addEventListener("click", () => activeWebview()?.goBack());

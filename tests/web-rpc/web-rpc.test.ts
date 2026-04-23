@@ -1,5 +1,4 @@
 import { describe, test, expect } from "bun:test";
-import { BrowserView } from "../../package/src/bun/core/BrowserView";
 import { createWebRPCHandler, type WebRPCClient } from "../../package/src/shared/webRpcHandler";
 import { type RPCSchema } from "../../package/src/shared/rpc";
 import { encodeRPCPacket, decodeRPCPacket } from "../../package/src/shared/rpcWire";
@@ -21,7 +20,7 @@ function createTestServer() {
         ping: ({ value }: { value: string }) => ({ pong: value })
       }
     }
-  } satisfies Parameters<typeof BrowserView.defineRPC<TestSchema>>[0];
+  } satisfies Parameters<typeof createWebRPCHandler<TestSchema>>[0];
 
   const webRpc = createWebRPCHandler<TestSchema>(config);
   return webRpc;
