@@ -53,11 +53,15 @@ function createDemoWindow(label: string, x: number) {
       },
     },
   });
-  calcRpc.setTransport(demux.channel("calc"));
+  demux.channel("calc").bindTo(calcRpc).catch((err: Error) => {
+    console.error(`[${label}] calc channel: ${err.message}`);
+  });
 
   const logRpc = defineBunRPC<LogSchema>({ handlers: {} });
-  logRpc.setTransport(demux.channel("log"));
-  logRpcs.add(logRpc);
+  // Only broadcast after renderer registers the log channel — earlier entries would drop.
+  demux.channel("log").bindTo(logRpc).then(() => logRpcs.add(logRpc)).catch((err: Error) => {
+    console.error(`[${label}] log channel: ${err.message}`);
+  });
 
   win.on("close", () => {
     calcRpc.dispose();
