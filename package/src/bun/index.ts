@@ -13,7 +13,7 @@ import {
   type RPCSchema,
   type RPCWithTransport
 } from "../shared/rpc";
-import { createTransportDemuxer, type TransportDemuxer } from "../shared/rpcDemux";
+import { createTransportDemuxer, type ChannelHandle, type TransportDemuxer, type TransportDemuxerOptions } from "../shared/rpcDemux";
 import { createWebSocketTransport, type WebSocketLike, type WebSocketTransportPipe } from "../shared/webSocketTransport";
 import { createWebRPCHandler, type WebRPCClient } from "../shared/webRpcHandler";
 import type { MessageBoxOptions, MessageBoxResponse } from "./core/Utils";
@@ -40,11 +40,13 @@ export type {
   BuniteRPCConfig,
   BuniteRPCSchema,
   BrowserViewOptions,
+  ChannelHandle,
   MessageBoxOptions,
   MessageBoxResponse,
   RPCSchema,
   RPCWithTransport,
   TransportDemuxer,
+  TransportDemuxerOptions,
   WebRPCClient,
   WebSocketLike,
   WebSocketTransportPipe,
