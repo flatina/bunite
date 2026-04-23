@@ -202,6 +202,12 @@ export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
     this.webviewId = webview.id;
   }
 
+  get view(): BrowserView<T> {
+    const view = BrowserView.getById(this.webviewId);
+    if (!view) throw new Error(`BrowserWindow ${this.id} has no attached view`);
+    return view as BrowserView<T>;
+  }
+
   static getById(id: number) {
     return BrowserWindowMap[id];
   }
