@@ -9,8 +9,6 @@ const view = new BuniteView();
 const demux = createTransportDemuxer(view.transport);
 
 const calcRpc = defineWebviewRPC<CalcSchema>({ handlers: {} });
-calcRpc.setTransport(demux.channel("calc"));
-
 const logRpc = defineWebviewRPC<LogSchema>({
   handlers: {
     messages: {
@@ -18,7 +16,6 @@ const logRpc = defineWebviewRPC<LogSchema>({
     },
   },
 });
-logRpc.setTransport(demux.channel("log"));
 
 const aInput = document.getElementById("a") as HTMLInputElement;
 const bInput = document.getElementById("b") as HTMLInputElement;
@@ -26,6 +23,15 @@ const opSelect = document.getElementById("op") as HTMLSelectElement;
 const resultEl = document.getElementById("result")!;
 const logEl = document.getElementById("log")!;
 const goBtn = document.getElementById("go")!;
+
+// Disable the button until the main-side calc channel is up.
+goBtn.setAttribute("disabled", "true");
+demux.channel("calc").bindTo(calcRpc)
+  .then(() => goBtn.removeAttribute("disabled"))
+  .catch((err: Error) => { resultEl.textContent = `calc not ready: ${err.message}`; });
+
+// log is receive-only in the renderer — no need to await.
+demux.channel("log").bindTo(logRpc);
 
 goBtn.addEventListener("click", async () => {
   const a = Number(aInput.value);

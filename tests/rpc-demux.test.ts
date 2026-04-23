@@ -39,17 +39,17 @@ describe("rpcDemux", () => {
     const demuxL = createTransportDemuxer(left);
     const demuxR = createTransportDemuxer(right);
 
-    const serverA = createRPC<SchemaA>({
-      transport: demuxR.channel("A"),
-      requestHandler: { echo: ({ msg }) => ({ msg: `A:${msg}` }) }
-    });
-    const serverB = createRPC<SchemaB>({
-      transport: demuxR.channel("B"),
-      requestHandler: { add: ({ a, b }) => a + b }
-    });
+    const serverA = createRPC<SchemaA>({ requestHandler: { echo: ({ msg }) => ({ msg: `A:${msg}` }) } });
+    const serverB = createRPC<SchemaB>({ requestHandler: { add: ({ a, b }) => a + b } });
+    demuxR.channel("A").bindTo(serverA);
+    demuxR.channel("B").bindTo(serverB);
 
-    const clientA = createRPC<SchemaA>({ transport: demuxL.channel("A") });
-    const clientB = createRPC<SchemaB>({ transport: demuxL.channel("B") });
+    const clientA = createRPC<SchemaA>();
+    const clientB = createRPC<SchemaB>();
+    await Promise.all([
+      demuxL.channel("A").bindTo(clientA),
+      demuxL.channel("B").bindTo(clientB),
+    ]);
 
     const [a, b] = await Promise.all([
       clientA.request("echo", { msg: "hi" }),
@@ -58,9 +58,6 @@ describe("rpcDemux", () => {
 
     expect(a).toEqual({ msg: "A:hi" });
     expect(b).toBe(5);
-
-    // suppress unused server vars
-    void serverA; void serverB;
   });
 
   test("independent request id space — same id across channels does not collide", async () => {
@@ -70,23 +67,24 @@ describe("rpcDemux", () => {
 
     let delayedResolve: ((v: unknown) => void) | undefined;
 
-    createRPC<SchemaA>({
-      transport: demuxR.channel("A"),
+    const serverA = createRPC<SchemaA>({
       requestHandler: {
         echo: () => new Promise<{ msg: string }>(r => {
           delayedResolve = r as (v: unknown) => void;
         })
       }
     });
-    createRPC<SchemaB>({
-      transport: demuxR.channel("B"),
-      requestHandler: { add: ({ a, b }) => a + b }
-    });
+    const serverB = createRPC<SchemaB>({ requestHandler: { add: ({ a, b }) => a + b } });
+    demuxR.channel("A").bindTo(serverA);
+    demuxR.channel("B").bindTo(serverB);
 
-    const clientA = createRPC<SchemaA>({ transport: demuxL.channel("A") });
-    const clientB = createRPC<SchemaB>({ transport: demuxL.channel("B") });
+    const clientA = createRPC<SchemaA>();
+    const clientB = createRPC<SchemaB>();
+    await Promise.all([
+      demuxL.channel("A").bindTo(clientA),
+      demuxL.channel("B").bindTo(clientB),
+    ]);
 
-    // Both RPC instances assign id=1 to their first request. Demuxer must keep them separate.
     const pendingA = clientA.request("echo", { msg: "x" });
     const resultB = await clientB.request("add", { a: 10, b: 20 });
 
@@ -101,18 +99,17 @@ describe("rpcDemux", () => {
     const demuxL = createTransportDemuxer(left);
     const demuxR = createTransportDemuxer(right);
 
-    // Force an in-flight window so dispose races response delivery, not scheduling.
-    createRPC<SchemaA>({
-      transport: demuxR.channel("A"),
-      requestHandler: { echo: async ({ msg }) => { await tick(); return { msg }; } }
-    });
-    createRPC<SchemaB>({
-      transport: demuxR.channel("B"),
-      requestHandler: { add: ({ a, b }) => a + b }
-    });
+    const serverA = createRPC<SchemaA>({ requestHandler: { echo: async ({ msg }) => { await tick(); return { msg }; } } });
+    const serverB = createRPC<SchemaB>({ requestHandler: { add: ({ a, b }) => a + b } });
+    demuxR.channel("A").bindTo(serverA);
+    demuxR.channel("B").bindTo(serverB);
 
-    const clientA = createRPC<SchemaA>({ transport: demuxL.channel("A") });
-    const clientB = createRPC<SchemaB>({ transport: demuxL.channel("B") });
+    const clientA = createRPC<SchemaA>();
+    const clientB = createRPC<SchemaB>();
+    await Promise.all([
+      demuxL.channel("A").bindTo(clientA),
+      demuxL.channel("B").bindTo(clientB),
+    ]);
 
     const inflight = clientA.request("echo", { msg: "x" });
     clientA.dispose();
@@ -121,12 +118,14 @@ describe("rpcDemux", () => {
     expect(await clientB.request("add", { a: 1, b: 2 })).toBe(3);
   });
 
-  test("duplicate channel registration throws instead of silently overwriting", () => {
+  test("duplicate bindTo on same channel throws", () => {
     const { left } = createLoopbackPair();
     const demux = createTransportDemuxer(left);
 
-    createRPC<SchemaA>({ transport: demux.channel("A") });
-    expect(() => createRPC<SchemaB>({ transport: demux.channel("A") })).toThrow(/already has a handler/);
+    const rpc1 = createRPC<SchemaA>();
+    const rpc2 = createRPC<SchemaB>();
+    demux.channel("A").bindTo(rpc1);
+    expect(() => demux.channel("A").bindTo(rpc2)).toThrow(/already has a handler/);
   });
 
   test("same channel supports concurrent pending requests with independent ids", async () => {
@@ -134,26 +133,25 @@ describe("rpcDemux", () => {
     const demuxL = createTransportDemuxer(left);
     const demuxR = createTransportDemuxer(right);
 
-    let resolve1: ((v: { msg: string }) => void) | undefined;
-    let resolve2: ((v: { msg: string }) => void) | undefined;
     const calls: Array<{ msg: string; r: (v: { msg: string }) => void }> = [];
 
-    createRPC<SchemaA>({
-      transport: demuxR.channel("A"),
+    const server = createRPC<SchemaA>({
       requestHandler: {
         echo: ({ msg }) => new Promise<{ msg: string }>((r) => {
           calls.push({ msg, r });
         })
       }
     });
+    demuxR.channel("A").bindTo(server);
 
-    const client = createRPC<SchemaA>({ transport: demuxL.channel("A") });
+    const client = createRPC<SchemaA>();
+    await demuxL.channel("A").bindTo(client);
+
     const p1 = client.request("echo", { msg: "first" });
     const p2 = client.request("echo", { msg: "second" });
 
     await tick();
-    [resolve1, resolve2] = calls.map(c => c.r);
-    // Resolve out of order — different request ids must route correctly.
+    const [resolve1, resolve2] = calls.map(c => c.r);
     resolve2!({ msg: "SECOND" });
     resolve1!({ msg: "FIRST" });
 
@@ -167,44 +165,94 @@ describe("rpcDemux", () => {
     expect(() => createTransportDemuxer({ registerHandler: () => {} })).toThrow(/send/);
   });
 
-  test("unknown channel — packet dropped silently, no throw", async () => {
-    const { left, right } = createLoopbackPair();
-    const demuxL = createTransportDemuxer(left);
-    const demuxR = createTransportDemuxer(right);
-
-    createRPC<SchemaA>({
-      transport: demuxR.channel("A"),
-      requestHandler: { echo: ({ msg }) => ({ msg }) }
-    });
-
-    // Send to channel "B" which has no registered handler on the server side.
-    const ghost = demuxL.channel("B");
-    expect(() => ghost.send?.({ type: "message", id: "tick", payload: undefined })).not.toThrow();
-
-    await tick();
-    // No assertion needed — absence of crash is the contract.
-  });
-
-  test("demuxer dispose — unregisters base handler and clears channels", async () => {
+  test("demuxer dispose — unregisters base handler and blocks further sends", async () => {
     const { left, right } = createLoopbackPair();
     const demuxL = createTransportDemuxer(left);
     const demuxR = createTransportDemuxer(right);
 
     const receivedOnA: unknown[] = [];
-    createRPC<SchemaA>({
-      transport: demuxR.channel("A"),
-      requestHandler: { echo: () => ({ msg: "ok" }) }
-    }).addMessageListener("ping", (p: unknown) => receivedOnA.push(p));
+    const server = createRPC<SchemaA>({ requestHandler: { echo: () => ({ msg: "ok" }) } });
+    server.addMessageListener("ping", (p: unknown) => receivedOnA.push(p));
+    demuxR.channel("A").bindTo(server);
 
-    const clientA = createRPC<SchemaA>({ transport: demuxL.channel("A") });
-    clientA.send("ping", { n: 1 });
+    const client = createRPC<SchemaA>();
+    await demuxL.channel("A").bindTo(client);
+
+    client.send("ping", { n: 1 });
     await tick();
     expect(receivedOnA).toHaveLength(1);
 
-    demuxR.dispose();
-
-    clientA.send("ping", { n: 2 });
+    demuxL.dispose();
+    expect(() => client.send("ping", { n: 2 })).toThrow(/disposed/);
     await tick();
-    expect(receivedOnA).toHaveLength(1); // no new deliveries after dispose
+    expect(receivedOnA).toHaveLength(1);
+  });
+
+  describe("ready handshake", () => {
+    test("bindTo resolves when both sides register", async () => {
+      const { left, right } = createLoopbackPair();
+      const demuxL = createTransportDemuxer(left);
+      const demuxR = createTransportDemuxer(right);
+
+      const rpcL = createRPC<SchemaA>();
+      const rpcR = createRPC<SchemaA>({ requestHandler: { echo: ({ msg }) => ({ msg }) } });
+
+      await Promise.all([
+        demuxL.channel("A").bindTo(rpcL),
+        demuxR.channel("A").bindTo(rpcR),
+      ]);
+    });
+
+    test("bindTo resolves even when peer registered first (echo wakes late peer)", async () => {
+      const { left, right } = createLoopbackPair();
+      const demuxL = createTransportDemuxer(left);
+      const demuxR = createTransportDemuxer(right);
+
+      // R registers first; its HELLO is dropped by L (no handler yet).
+      const rpcR = createRPC<SchemaA>({ requestHandler: { echo: ({ msg }) => ({ msg }) } });
+      const readyR = demuxR.channel("A").bindTo(rpcR);
+
+      await tick();
+
+      // L registers later. L's HELLO wakes R which echoes back.
+      const rpcL = createRPC<SchemaA>();
+      const readyL = demuxL.channel("A").bindTo(rpcL);
+
+      await Promise.all([readyL, readyR]);
+    });
+
+    test("first request after awaiting bindTo reaches peer (no drop race)", async () => {
+      const { left, right } = createLoopbackPair();
+      const demuxL = createTransportDemuxer(left);
+      const demuxR = createTransportDemuxer(right);
+
+      const client = createRPC<SchemaA>();
+      const ready = demuxL.channel("A").bindTo(client);
+
+      // R registers asynchronously; L's HELLO is dropped initially.
+      setTimeout(() => {
+        const server = createRPC<SchemaA>({ requestHandler: { echo: ({ msg }) => ({ msg: `R:${msg}` }) } });
+        demuxR.channel("A").bindTo(server);
+      }, 20);
+
+      await ready;
+      expect(await client.request("echo", { msg: "hi" })).toEqual({ msg: "R:hi" });
+    });
+
+    test("bindTo rejects on timeout when peer never registers", async () => {
+      const { left } = createLoopbackPair();
+      const demux = createTransportDemuxer(left, { readyTimeout: 50 });
+      const rpc = createRPC<SchemaA>();
+      await expect(demux.channel("A").bindTo(rpc)).rejects.toThrow(/timed out/);
+    });
+
+    test("bindTo rejects on dispose", async () => {
+      const { left } = createLoopbackPair();
+      const demux = createTransportDemuxer(left, { readyTimeout: 60_000 });
+      const rpc = createRPC<SchemaA>();
+      const ready = demux.channel("A").bindTo(rpc);
+      demux.dispose();
+      await expect(ready).rejects.toThrow(/disposed/);
+    });
   });
 });
