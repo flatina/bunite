@@ -1,0 +1,16 @@
+{
+  "name": "multichannel-windows",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun src/main.ts",
+    "typecheck": "bun x tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "bunite-core": "workspace:*",
+    "bunite-native-win-x64": "workspace:*"
+  },
+  "devDependencies": {
+    "bunite-dev": "workspace:*"
+  }
+}
