@@ -15,6 +15,7 @@ import {
 } from "../shared/rpc";
 import { createTransportDemuxer, type TransportDemuxer } from "../shared/rpcDemux";
 import { createWebSocketTransport, type WebSocketLike, type WebSocketTransportPipe } from "../shared/webSocketTransport";
+import { createWebRPCHandler, type WebRPCClient } from "../shared/webRpcHandler";
 import type { MessageBoxOptions, MessageBoxResponse } from "./core/Utils";
 import { log, type LogLevel } from "../shared/log";
 
@@ -27,6 +28,7 @@ export {
   completePermissionRequest,
   createRPC,
   createTransportDemuxer,
+  createWebRPCHandler,
   createWebSocketTransport,
   defineBunRPC,
   log
@@ -43,6 +45,7 @@ export type {
   RPCSchema,
   RPCWithTransport,
   TransportDemuxer,
+  WebRPCClient,
   WebSocketLike,
   WebSocketTransportPipe,
   WindowOptionsType
