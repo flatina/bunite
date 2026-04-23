@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Multi-channel RPC</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font: 14px system-ui, sans-serif; padding: 24px; background: #0f172a; color: #e2e8f0; }
+    h1 { font-size: 16px; margin-bottom: 4px; }
+    .sub { color: #94a3b8; font-size: 11px; margin-bottom: 20px; font-family: monospace; }
+    .row { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+    input, select, button {
+      padding: 6px 10px; border: 1px solid #334155; border-radius: 4px;
+      background: #1e293b; color: #e2e8f0; font-size: 13px; font-family: monospace;
+    }
+    input { width: 80px; }
+    button { cursor: pointer; }
+    button:hover { background: #334155; }
+    .result { font-size: 18px; font-weight: bold; color: #fbbf24; min-height: 26px; margin-left: 4px; }
+    h2 { font-size: 11px; color: #94a3b8; margin: 20px 0 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    #log { max-height: 240px; overflow-y: auto; border: 1px solid #334155; border-radius: 4px; padding: 8px; font-family: monospace; font-size: 12px; }
+    .log-row { padding: 2px 0; color: #cbd5e1; }
+  </style>
+</head>
+<body>
+  <h1>Multi-channel RPC</h1>
+  <div class="sub">one pipe · two channels — <code>calc</code> (req/resp) + <code>log</code> (main→all windows push)</div>
+
+  <h2>calc</h2>
+  <div class="row">
+    <input id="a" type="number" value="2" />
+    <select id="op">
+      <option value="add">+</option>
+      <option value="multiply">×</option>
+    </select>
+    <input id="b" type="number" value="3" />
+    <button id="go">=</button>
+    <span class="result" id="result">—</span>
+  </div>
+
+  <h2>log (push from main, broadcast to both windows)</h2>
+  <div id="log"></div>
+
+  <script type="module"><!--RENDERER_BUNDLE--></script>
+</body>
+</html>
