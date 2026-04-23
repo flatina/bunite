@@ -84,9 +84,12 @@
     },
     "package": {
       "name": "bunite-core",
-      "version": "0.0.14",
+      "version": "0.2.1",
       "dependencies": {
         "msgpackr": "^1.11.9",
+      },
+      "optionalDependencies": {
+        "bunite-native-win-x64": "0.0.3",
       },
     },
     "tests/smoke": {
