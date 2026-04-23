@@ -8,6 +8,7 @@ import {
   type RPCTransport,
   type RPCWithTransport
 } from "../shared/rpc";
+import { createTransportDemuxer, type TransportDemuxer } from "../shared/rpcDemux";
 import { decodeRPCPacket, encodeRPCPacket } from "../shared/rpcWire";
 import { log } from "../shared/log";
 
@@ -185,9 +186,11 @@ export class BuniteView<T extends RPCWithTransport> {
 }
 
 export { log, type LogLevel } from "../shared/log";
+export { createTransportDemuxer };
 
 export type {
   BuniteRPCConfig,
   BuniteRPCSchema,
-  RPCSchema
+  RPCSchema,
+  TransportDemuxer
 };
