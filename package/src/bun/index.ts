@@ -13,6 +13,7 @@ import {
   type RPCSchema,
   type RPCWithTransport
 } from "../shared/rpc";
+import { createTransportDemuxer, type TransportDemuxer } from "../shared/rpcDemux";
 import type { MessageBoxOptions, MessageBoxResponse } from "./core/Utils";
 import { log, type LogLevel } from "../shared/log";
 
@@ -24,6 +25,7 @@ export {
   buniteEventEmitter,
   completePermissionRequest,
   createRPC,
+  createTransportDemuxer,
   defineBuniteRPC,
   log
 };
@@ -38,5 +40,6 @@ export type {
   MessageBoxResponse,
   RPCSchema,
   RPCWithTransport,
+  TransportDemuxer,
   WindowOptionsType
 };
