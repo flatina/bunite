@@ -1,4 +1,4 @@
-import { BrowserView, defineBunRPC } from "bunite-core";
+import { BrowserView, defineBunRpc } from "bunite-core";
 
 type SmokeSchema = {
   bun: {
@@ -17,7 +17,7 @@ export const ipcState = {
   navBlockLeaked: false,
 };
 
-export const rpcDefinition = defineBunRPC<SmokeSchema>({
+export const rpcDefinition = defineBunRpc<SmokeSchema>({
   handlers: {
     requests: {
       ping({ value }) {

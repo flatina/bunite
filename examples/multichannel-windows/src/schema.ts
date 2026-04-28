@@ -1,4 +1,4 @@
-import type { RPCSchema } from "bunite-core";
+import type { RpcSchema } from "bunite-core";
 
 export type ComputeParams = { a: number; b: number; op: "add" | "multiply" };
 
@@ -10,17 +10,17 @@ export type LogEntry = {
 };
 
 export type CalcSchema = {
-  bun: RPCSchema<{
+  bun: RpcSchema<{
     requests: {
       compute: { params: ComputeParams; response: number };
     };
   }>;
-  webview: RPCSchema;
+  webview: RpcSchema;
 };
 
 export type LogSchema = {
-  bun: RPCSchema<{
+  bun: RpcSchema<{
     messages: { entry: LogEntry };
   }>;
-  webview: RPCSchema;
+  webview: RpcSchema;
 };

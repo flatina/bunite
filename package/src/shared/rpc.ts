@@ -1,4 +1,4 @@
-export type RPCRequestPacket = {
+export type RpcRequestPacket = {
   type: "request";
   id: number;
   method: string;
@@ -6,54 +6,54 @@ export type RPCRequestPacket = {
   scope?: "global";
 };
 
-export type RPCResponsePacket =
+export type RpcResponsePacket =
   | { type: "response"; id: number; success: true; payload: unknown; scope?: "global" }
   | { type: "response"; id: number; success: false; error?: string; scope?: "global" };
 
-export type RPCMessagePacket = {
+export type RpcMessagePacket = {
   type: "message";
   id: string;
   payload: unknown;
 };
 
-export type RPCEventPacket = {
+export type RpcEventPacket = {
   type: "event";
   channel: string;
   data: unknown;
 };
 
-export type RPCPacket = RPCRequestPacket | RPCResponsePacket | RPCMessagePacket | RPCEventPacket;
+export type RpcPacket = RpcRequestPacket | RpcResponsePacket | RpcMessagePacket | RpcEventPacket;
 
-type BaseRPCRequestsSchema = Record<string, { params: unknown; response: unknown }>;
-type BaseRPCMessagesSchema = Record<string, unknown>;
+type BaseRpcRequestsSchema = Record<string, { params: unknown; response: unknown }>;
+type BaseRpcMessagesSchema = Record<string, unknown>;
 
-export type RPCRequestsSchema<T extends BaseRPCRequestsSchema = BaseRPCRequestsSchema> = T;
-export type RPCMessagesSchema<T extends BaseRPCMessagesSchema = BaseRPCMessagesSchema> = T;
+export type RpcRequestsSchema<T extends BaseRpcRequestsSchema = BaseRpcRequestsSchema> = T;
+export type RpcMessagesSchema<T extends BaseRpcMessagesSchema = BaseRpcMessagesSchema> = T;
 
-type InputRPCSchema = {
-  requests?: RPCRequestsSchema;
-  messages?: RPCMessagesSchema;
+type InputRpcSchema = {
+  requests?: RpcRequestsSchema;
+  messages?: RpcMessagesSchema;
 };
 
-type ResolvedRPCSchema<I extends InputRPCSchema> = {
-  requests: undefined extends I["requests"] ? BaseRPCRequestsSchema : NonNullable<I["requests"]>;
-  messages: undefined extends I["messages"] ? BaseRPCMessagesSchema : NonNullable<I["messages"]>;
+type ResolvedRpcSchema<I extends InputRpcSchema> = {
+  requests: undefined extends I["requests"] ? BaseRpcRequestsSchema : NonNullable<I["requests"]>;
+  messages: undefined extends I["messages"] ? BaseRpcMessagesSchema : NonNullable<I["messages"]>;
 };
 
-export type RPCSchema<I extends InputRPCSchema | void = InputRPCSchema> = ResolvedRPCSchema<
-  I extends InputRPCSchema ? I : InputRPCSchema
+export type RpcSchema<I extends InputRpcSchema | void = InputRpcSchema> = ResolvedRpcSchema<
+  I extends InputRpcSchema ? I : InputRpcSchema
 >;
 
-type RequestParams<RS extends RPCRequestsSchema, M extends keyof RS> = RS[M]["params"];
-type RequestResponse<RS extends RPCRequestsSchema, M extends keyof RS> = RS[M]["response"];
-type MessagePayload<MS extends RPCMessagesSchema, N extends keyof MS> = MS[N];
+type RequestParams<RS extends RpcRequestsSchema, M extends keyof RS> = RS[M]["params"];
+type RequestResponse<RS extends RpcRequestsSchema, M extends keyof RS> = RS[M]["response"];
+type MessagePayload<MS extends RpcMessagesSchema, N extends keyof MS> = MS[N];
 
-type RPCRequestHandlerFn<RS extends RPCRequestsSchema> = <M extends keyof RS>(
+type RpcRequestHandlerFn<RS extends RpcRequestsSchema> = <M extends keyof RS>(
   method: M,
   params: RequestParams<RS, M>
 ) => Promise<RequestResponse<RS, M>> | RequestResponse<RS, M>;
 
-type RPCRequestHandlerObject<RS extends RPCRequestsSchema> = {
+type RpcRequestHandlerObject<RS extends RpcRequestsSchema> = {
   [M in keyof RS]?: (
     ...args: undefined extends RS[M]["params"] ? [params?: RS[M]["params"]] : [params: RS[M]["params"]]
   ) => Promise<Awaited<RequestResponse<RS, M>>> | Awaited<RequestResponse<RS, M>>;
@@ -61,34 +61,34 @@ type RPCRequestHandlerObject<RS extends RPCRequestsSchema> = {
   _?: (method: keyof RS, params: RequestParams<RS, keyof RS>) => unknown;
 };
 
-export type RPCRequestHandler<RS extends RPCRequestsSchema = RPCRequestsSchema> =
-  | RPCRequestHandlerFn<RS>
-  | RPCRequestHandlerObject<RS>;
+export type RpcRequestHandler<RS extends RpcRequestsSchema = RpcRequestsSchema> =
+  | RpcRequestHandlerFn<RS>
+  | RpcRequestHandlerObject<RS>;
 
-export type RPCTransport = {
-  send?: (data: RPCPacket) => void;
-  registerHandler?: (handler: (packet: RPCPacket) => void) => void;
+export type RpcTransport = {
+  send?: (data: RpcPacket) => void;
+  registerHandler?: (handler: (packet: RpcPacket) => void) => void;
   unregisterHandler?: () => void;
 };
 
-export interface RPCWithTransport {
-  setTransport: (transport: RPCTransport) => void;
+export interface RpcWithTransport {
+  setTransport: (transport: RpcTransport) => void;
 }
 
-export type BuniteRPCSchema = {
-  bun: RPCSchema;
-  webview: RPCSchema;
+export type BuniteRpcSchema = {
+  bun: RpcSchema;
+  webview: RpcSchema;
 };
 
 type RemoteSideOf<S extends "bun" | "webview"> = S extends "bun" ? "webview" : "bun";
 
-export type BuniteRPCConfig<
-  Schema extends BuniteRPCSchema,
+export type BuniteRpcConfig<
+  Schema extends BuniteRpcSchema,
   Side extends "bun" | "webview"
 > = {
   maxRequestTime?: number;
   handlers: {
-    requests?: RPCRequestHandler<Schema[Side]["requests"]>;
+    requests?: RpcRequestHandler<Schema[Side]["requests"]>;
     messages?: {
       [K in keyof Schema[RemoteSideOf<Side>]["messages"]]?: (
         payload: MessagePayload<Schema[RemoteSideOf<Side>]["messages"], K>
@@ -111,33 +111,33 @@ function missingTransportMethodError(methods: string[], action: string): Error {
   );
 }
 
-export function createRPC<
-  Schema extends RPCSchema = RPCSchema,
-  RemoteSchema extends RPCSchema = Schema
+export function createRpc<
+  Schema extends RpcSchema = RpcSchema,
+  RemoteSchema extends RpcSchema = Schema
 >(options: {
-  transport?: RPCTransport;
-  requestHandler?: RPCRequestHandler<Schema["requests"]>;
+  transport?: RpcTransport;
+  requestHandler?: RpcRequestHandler<Schema["requests"]>;
   maxRequestTime?: number;
 } = {}) {
-  let transport: RPCTransport = {};
+  let transport: RpcTransport = {};
   let requestHandler:
-    | RPCRequestHandlerFn<Schema["requests"]>
+    | RpcRequestHandlerFn<Schema["requests"]>
     | undefined;
 
-  function setTransport(nextTransport: RPCTransport) {
+  function setTransport(nextTransport: RpcTransport) {
     transport.unregisterHandler?.();
     transport = nextTransport;
     transport.registerHandler?.(handlePacket);
   }
 
-  function setRequestHandler(handler: RPCRequestHandler<Schema["requests"]>) {
+  function setRequestHandler(handler: RpcRequestHandler<Schema["requests"]>) {
     if (typeof handler === "function") {
-      requestHandler = handler as RPCRequestHandlerFn<Schema["requests"]>;
+      requestHandler = handler as RpcRequestHandlerFn<Schema["requests"]>;
       return;
     }
 
     requestHandler = (method, params) => {
-      const requestHandlerObject = handler as RPCRequestHandlerObject<Schema["requests"]>;
+      const requestHandlerObject = handler as RpcRequestHandlerObject<Schema["requests"]>;
       const specificHandler = requestHandlerObject[method];
       if (specificHandler) {
         return (specificHandler as (...args: [unknown]) => unknown)(params);
@@ -190,7 +190,7 @@ export function createRPC<
 
     const id = nextRequestId();
     const params = args[0];
-    const packet: RPCRequestPacket = {
+    const packet: RpcRequestPacket = {
       type: "request",
       id,
       method: String(method),
@@ -257,7 +257,7 @@ export function createRPC<
     messageListeners.get(String(messageName))?.delete(listener as (payload: unknown) => void);
   }
 
-  async function handlePacket(packet: RPCPacket) {
+  async function handlePacket(packet: RpcPacket) {
     if (packet.type === "request") {
       if (!transport.send || !requestHandler) {
         throw missingTransportMethodError(["send", "requestHandler"], "handle requests");
@@ -370,11 +370,11 @@ export function createRPC<
   };
 }
 
-function defineSideRPC<
-  Schema extends BuniteRPCSchema,
+function defineSideRpc<
+  Schema extends BuniteRpcSchema,
   Side extends "bun" | "webview"
 >(
-  config: BuniteRPCConfig<Schema, Side> & {
+  config: BuniteRpcConfig<Schema, Side> & {
     extraRequestHandlers?: Record<string, (...args: any[]) => unknown>;
   }
 ) {
@@ -388,12 +388,12 @@ function defineSideRPC<
     messages: Schema[Side]["messages"];
   };
 
-  const rpc = createRPC<LocalSchema, RemoteSchema>({
+  const rpc = createRpc<LocalSchema, RemoteSchema>({
     maxRequestTime: config.maxRequestTime,
     requestHandler: {
       ...(config.handlers.requests ?? {}),
       ...(config.extraRequestHandlers ?? {})
-    } as RPCRequestHandler<LocalSchema["requests"]>,
+    } as RpcRequestHandler<LocalSchema["requests"]>,
     transport: {
       registerHandler: () => {}
     }
@@ -416,18 +416,18 @@ function defineSideRPC<
   return rpc;
 }
 
-export function defineBunRPC<Schema extends BuniteRPCSchema>(
-  config: BuniteRPCConfig<Schema, "bun"> & {
+export function defineBunRpc<Schema extends BuniteRpcSchema>(
+  config: BuniteRpcConfig<Schema, "bun"> & {
     extraRequestHandlers?: Record<string, (...args: any[]) => unknown>;
   }
 ) {
-  return defineSideRPC<Schema, "bun">(config);
+  return defineSideRpc<Schema, "bun">(config);
 }
 
-export function defineWebviewRPC<Schema extends BuniteRPCSchema>(
-  config: BuniteRPCConfig<Schema, "webview"> & {
+export function defineWebviewRpc<Schema extends BuniteRpcSchema>(
+  config: BuniteRpcConfig<Schema, "webview"> & {
     extraRequestHandlers?: Record<string, (...args: any[]) => unknown>;
   }
 ) {
-  return defineSideRPC<Schema, "webview">(config);
+  return defineSideRpc<Schema, "webview">(config);
 }

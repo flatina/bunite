@@ -1,4 +1,4 @@
-import { BuniteView, defineWebviewRPC } from "bunite-core/view";
+import { BuniteView, defineWebviewRpc } from "bunite-core/view";
 
 type SmokeSchema = {
   bun: {
@@ -10,7 +10,7 @@ type SmokeSchema = {
   webview: { requests: {}; messages: {} };
 };
 
-const rpc = defineWebviewRPC<SmokeSchema>({ handlers: { requests: {} } });
+const rpc = defineWebviewRpc<SmokeSchema>({ handlers: { requests: {} } });
 new BuniteView({ rpc });
 
 function setStatus(text: string) {

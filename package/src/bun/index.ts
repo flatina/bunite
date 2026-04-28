@@ -6,16 +6,16 @@ import { buniteEventEmitter } from "./events/eventEmitter";
 import { BuniteEvent } from "./events/event";
 import { completePermissionRequest } from "./proc/native";
 import {
-  createRPC,
-  defineBunRPC,
-  type BuniteRPCConfig,
-  type BuniteRPCSchema,
-  type RPCSchema,
-  type RPCWithTransport
+  createRpc,
+  defineBunRpc,
+  type BuniteRpcConfig,
+  type BuniteRpcSchema,
+  type RpcSchema,
+  type RpcWithTransport
 } from "../shared/rpc";
-import { createTransportDemuxer, type ChannelHandle, type TransportDemuxer, type TransportDemuxerOptions } from "../shared/rpcDemux";
+import { createRpcTransportDemuxer, type RpcChannelHandle, type RpcTransportDemuxer, type RpcTransportDemuxerOptions } from "../shared/rpcDemux";
 import { createWebSocketTransport, type WebSocketLike, type WebSocketTransportPipe } from "../shared/webSocketTransport";
-import { createWebRPCHandler, type WebRPCClient } from "../shared/webRpcHandler";
+import { createWebRpcHandler, type WebRpcClient } from "../shared/webRpcHandler";
 import type { MessageBoxOptions, MessageBoxResponse } from "./core/Utils";
 import { log, type LogLevel } from "../shared/log";
 
@@ -26,28 +26,28 @@ export {
   Utils,
   buniteEventEmitter,
   completePermissionRequest,
-  createRPC,
-  createTransportDemuxer,
-  createWebRPCHandler,
+  createRpc,
+  createRpcTransportDemuxer,
+  createWebRpcHandler,
   createWebSocketTransport,
-  defineBunRPC,
+  defineBunRpc,
   log
 };
 
 export type {
   LogLevel,
   BuniteEvent,
-  BuniteRPCConfig,
-  BuniteRPCSchema,
+  BuniteRpcConfig,
+  BuniteRpcSchema,
   BrowserViewOptions,
-  ChannelHandle,
+  RpcChannelHandle,
   MessageBoxOptions,
   MessageBoxResponse,
-  RPCSchema,
-  RPCWithTransport,
-  TransportDemuxer,
-  TransportDemuxerOptions,
-  WebRPCClient,
+  RpcSchema,
+  RpcWithTransport,
+  RpcTransportDemuxer,
+  RpcTransportDemuxerOptions,
+  WebRpcClient,
   WebSocketLike,
   WebSocketTransportPipe,
   WindowOptionsType

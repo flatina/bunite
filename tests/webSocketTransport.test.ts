@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { createRPC, type RPCPacket, type RPCSchema } from "../package/src/shared/rpc";
-import { createTransportDemuxer } from "../package/src/shared/rpcDemux";
+import { createRpc, type RpcPacket, type RpcSchema } from "../package/src/shared/rpc";
+import { createRpcTransportDemuxer } from "../package/src/shared/rpcDemux";
 import { createWebSocketTransport } from "../package/src/shared/webSocketTransport";
 
 class FakeSocket {
@@ -23,7 +23,7 @@ function pair() {
   return { a, b };
 }
 
-type PingSchema = RPCSchema<{
+type PingSchema = RpcSchema<{
   requests: { ping: { params: { value: string }; response: { pong: string } } };
   messages: { notify: { msg: string } };
 }>;
@@ -33,7 +33,7 @@ describe("createWebSocketTransport", () => {
     const ws = new FakeSocket();
     const pipe = createWebSocketTransport(ws);
 
-    const received: RPCPacket[] = [];
+    const received: RpcPacket[] = [];
     pipe.transport.registerHandler!((p) => received.push(p));
 
     pipe.transport.send!({ type: "message", id: "notify", payload: { msg: "hi" } });
@@ -43,39 +43,39 @@ describe("createWebSocketTransport", () => {
     expect(received).toEqual([{ type: "message", id: "notify", payload: { msg: "hi" } }]);
   });
 
-  test("end-to-end with createRPC — request/response over two paired pipes", async () => {
+  test("end-to-end with createRpc — request/response over two paired pipes", async () => {
     const { a, b } = pair();
     const pipeA = createWebSocketTransport(a);
     const pipeB = createWebSocketTransport(b);
     a.onBytes = (bytes) => pipeA.receive(bytes);
     b.onBytes = (bytes) => pipeB.receive(bytes);
 
-    createRPC<PingSchema>({
+    createRpc<PingSchema>({
       transport: pipeB.transport,
       requestHandler: { ping: ({ value }) => ({ pong: value.toUpperCase() }) }
     });
-    const client = createRPC<PingSchema>({ transport: pipeA.transport });
+    const client = createRpc<PingSchema>({ transport: pipeA.transport });
 
     expect(await client.request("ping", { value: "hi" })).toEqual({ pong: "HI" });
   });
 
-  test("composes with createTransportDemuxer — multi-channel over one ws pair", async () => {
+  test("composes with createRpcTransportDemuxer — multi-channel over one ws pair", async () => {
     const { a, b } = pair();
     const pipeA = createWebSocketTransport(a);
     const pipeB = createWebSocketTransport(b);
     a.onBytes = (bytes) => pipeA.receive(bytes);
     b.onBytes = (bytes) => pipeB.receive(bytes);
 
-    const demuxA = createTransportDemuxer(pipeA.transport);
-    const demuxB = createTransportDemuxer(pipeB.transport);
+    const demuxA = createRpcTransportDemuxer(pipeA.transport);
+    const demuxB = createRpcTransportDemuxer(pipeB.transport);
 
-    const chatServer = createRPC<PingSchema>({ requestHandler: { ping: ({ value }) => ({ pong: `chat:${value}` }) } });
-    const statusServer = createRPC<PingSchema>({ requestHandler: { ping: ({ value }) => ({ pong: `status:${value}` }) } });
+    const chatServer = createRpc<PingSchema>({ requestHandler: { ping: ({ value }) => ({ pong: `chat:${value}` }) } });
+    const statusServer = createRpc<PingSchema>({ requestHandler: { ping: ({ value }) => ({ pong: `status:${value}` }) } });
     demuxB.channel("chat").bindTo(chatServer);
     demuxB.channel("status").bindTo(statusServer);
 
-    const chat = createRPC<PingSchema>();
-    const status = createRPC<PingSchema>();
+    const chat = createRpc<PingSchema>();
+    const status = createRpc<PingSchema>();
     await Promise.all([
       demuxA.channel("chat").bindTo(chat),
       demuxA.channel("status").bindTo(status),
