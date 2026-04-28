@@ -1,8 +1,8 @@
 import {
   AppRuntime,
   BrowserWindow,
-  createTransportDemuxer,
-  defineBunRPC,
+  createRpcTransportDemuxer,
+  defineBunRpc,
 } from "bunite-core";
 import indexHtml from "./index.html" with { type: "text" };
 import type { CalcSchema, ComputeParams, LogEntry, LogSchema } from "./schema";
@@ -20,7 +20,7 @@ if (!rendererBundle.success) {
 const rendererJs = await rendererBundle.outputs[0]!.text();
 const html = (indexHtml as unknown as string).replace("<!--RENDERER_BUNDLE-->", rendererJs);
 
-type LogRpc = ReturnType<typeof defineBunRPC<LogSchema>>;
+type LogRpc = ReturnType<typeof defineBunRpc<LogSchema>>;
 const logRpcs = new Set<LogRpc>();
 
 function broadcastLog(entry: LogEntry) {
@@ -34,9 +34,9 @@ function createDemoWindow(label: string, x: number) {
     frame: { x, y: 100, width: 420, height: 520 },
   });
 
-  const demux = createTransportDemuxer(win.view.transport);
+  const demux = createRpcTransportDemuxer(win.view.transport);
 
-  const calcRpc = defineBunRPC<CalcSchema>({
+  const calcRpc = defineBunRpc<CalcSchema>({
     handlers: {
       requests: {
         compute: ({ a, b, op }: ComputeParams) => {
@@ -57,7 +57,7 @@ function createDemoWindow(label: string, x: number) {
     console.error(`[${label}] calc channel: ${err.message}`);
   });
 
-  const logRpc = defineBunRPC<LogSchema>({ handlers: {} });
+  const logRpc = defineBunRpc<LogSchema>({ handlers: {} });
   // Only broadcast after renderer registers the log channel — earlier entries would drop.
   demux.channel("log").bindTo(logRpc).then(() => logRpcs.add(logRpc)).catch((err: Error) => {
     console.error(`[${label}] log channel: ${err.message}`);

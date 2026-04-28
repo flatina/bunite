@@ -1,16 +1,16 @@
 import { describe, test, expect } from "bun:test";
-import { createWebRPCHandler, type WebRPCClient } from "../../package/src/shared/webRpcHandler";
-import { type RPCSchema } from "../../package/src/shared/rpc";
-import { encodeRPCPacket, decodeRPCPacket } from "../../package/src/shared/rpcWire";
+import { createWebRpcHandler, type WebRpcClient } from "../../package/src/shared/webRpcHandler";
+import { type RpcSchema } from "../../package/src/shared/rpc";
+import { encodeRpcPacket, decodeRpcPacket } from "../../package/src/shared/rpcWire";
 import { pack, unpack } from "msgpackr";
 
 type TestSchema = {
-  bun: RPCSchema<{
+  bun: RpcSchema<{
     requests: {
       ping: { params: { value: string }; response: { pong: string } };
     };
   }>;
-  webview: RPCSchema;
+  webview: RpcSchema;
 };
 
 function createTestServer() {
@@ -20,9 +20,9 @@ function createTestServer() {
         ping: ({ value }: { value: string }) => ({ pong: value })
       }
     }
-  } satisfies Parameters<typeof createWebRPCHandler<TestSchema>>[0];
+  } satisfies Parameters<typeof createWebRpcHandler<TestSchema>>[0];
 
-  const webRpc = createWebRPCHandler<TestSchema>(config);
+  const webRpc = createWebRpcHandler<TestSchema>(config);
   return webRpc;
 }
 
@@ -41,11 +41,11 @@ class FakeWebSocket {
 
   lastPacket() {
     const last = this.sent[this.sent.length - 1];
-    return last ? decodeRPCPacket(last) : null;
+    return last ? decodeRpcPacket(last) : null;
   }
 
   allPackets() {
-    return this.sent.map(d => decodeRPCPacket(d));
+    return this.sent.map(d => decodeRpcPacket(d));
   }
 }
 
@@ -57,7 +57,7 @@ describe("web RPC handler", () => {
     handler.open(ws);
     expect(handler.webClients.size).toBe(1);
 
-    handler.message(ws, encodeRPCPacket({
+    handler.message(ws, encodeRpcPacket({
       type: "request", id: 1, method: "ping", params: { value: "hello" }
     }));
 
@@ -175,10 +175,10 @@ describe("web RPC handler", () => {
     handler.open(ws1);
     handler.open(ws2);
 
-    handler.message(ws1, encodeRPCPacket({
+    handler.message(ws1, encodeRpcPacket({
       type: "request", id: 1, method: "ping", params: { value: "from-1" }
     }));
-    handler.message(ws2, encodeRPCPacket({
+    handler.message(ws2, encodeRpcPacket({
       type: "request", id: 1, method: "ping", params: { value: "from-2" }
     }));
 
@@ -193,7 +193,7 @@ describe("web RPC handler", () => {
 
   test("dispose rejects pending requests immediately", async () => {
     // Create a handler with a slow request
-    const webRpc = createWebRPCHandler({
+    const webRpc = createWebRpcHandler({
       handlers: {
         requests: {
           slow: async () => {
