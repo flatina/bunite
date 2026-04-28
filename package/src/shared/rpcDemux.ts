@@ -1,6 +1,6 @@
-import type { RPCPacket, RPCTransport, RPCWithTransport } from "./rpc";
+import type { RpcPacket, RpcTransport, RpcWithTransport } from "./rpc";
 
-type DemuxPacketEnvelope = { channel: string; packet: RPCPacket };
+type DemuxPacketEnvelope = { channel: string; packet: RpcPacket };
 type DemuxHelloFrame = { channel: string; hello: true };
 type DemuxFrame = DemuxPacketEnvelope | DemuxHelloFrame;
 
@@ -18,27 +18,27 @@ function isHelloFrame(frame: DemuxFrame): frame is DemuxHelloFrame {
   return (frame as DemuxHelloFrame).hello === true;
 }
 
-export type ChannelHandle = {
+export type RpcChannelHandle = {
   /**
    * Connect an RPC instance to this channel. Returns a promise that resolves
    * once both sides have registered a handler (HELLO handshake). Awaiting
    * guarantees the first subsequent request reaches the peer.
    */
-  bindTo(rpc: RPCWithTransport): Promise<void>;
+  bindTo(rpc: RpcWithTransport): Promise<void>;
 };
 
-export type TransportDemuxer = {
-  channel(name: string): ChannelHandle;
+export type RpcTransportDemuxer = {
+  channel(name: string): RpcChannelHandle;
   dispose(): void;
 };
 
-export type TransportDemuxerOptions = {
+export type RpcTransportDemuxerOptions = {
   /** ms to wait for peer before `bindTo` rejects. Default 10_000. */
   readyTimeout?: number;
 };
 
 type ChannelState = {
-  handler?: (packet: RPCPacket) => void;
+  handler?: (packet: RpcPacket) => void;
   peerSawUs: boolean;
   ready: Promise<void>;
   resolveReady: () => void;
@@ -49,12 +49,12 @@ type ChannelState = {
 
 const DEFAULT_READY_TIMEOUT = 10_000;
 
-export function createTransportDemuxer(
-  base: RPCTransport,
-  options: TransportDemuxerOptions = {}
-): TransportDemuxer {
+export function createRpcTransportDemuxer(
+  base: RpcTransport,
+  options: RpcTransportDemuxerOptions = {}
+): RpcTransportDemuxer {
   if (!base.send || !base.registerHandler) {
-    throw new Error("createTransportDemuxer requires a base transport with both send and registerHandler");
+    throw new Error("createRpcTransportDemuxer requires a base transport with both send and registerHandler");
   }
 
   const readyTimeout = options.readyTimeout ?? DEFAULT_READY_TIMEOUT;
@@ -93,7 +93,7 @@ export function createTransportDemuxer(
 
   function sendHello(name: string) {
     const frame: DemuxHelloFrame = { channel: name, hello: true };
-    base.send!(frame as unknown as RPCPacket);
+    base.send!(frame as unknown as RpcPacket);
   }
 
   base.registerHandler((data) => {
@@ -120,11 +120,11 @@ export function createTransportDemuxer(
     channel(name) {
       const state = getOrCreateState(name);
 
-      const transport: RPCTransport = {
+      const transport: RpcTransport = {
         send(packet) {
           if (disposed) throw new Error(`Demuxer disposed; cannot send on channel "${name}"`);
           const envelope: DemuxPacketEnvelope = { channel: name, packet };
-          base.send!(envelope as unknown as RPCPacket);
+          base.send!(envelope as unknown as RpcPacket);
         },
         registerHandler(handler) {
           if (disposed) throw new Error(`Demuxer disposed; cannot register on channel "${name}"`);

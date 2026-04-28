@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { BrowserWindow, Utils, AppRuntime, createWebRPCHandler, defineBunRPC, type RPCSchema } from "bunite-core";
+import { BrowserWindow, Utils, AppRuntime, createWebRpcHandler, defineBunRpc, type RpcSchema } from "bunite-core";
 
 process.env.BUNITE_REMOTE_DEBUGGING_PORT ??= "9222";
 
@@ -9,8 +9,8 @@ await app.ready;
 const webPort = Number(process.argv[process.argv.indexOf("--web-port") + 1]) || 0;
 const rendererDir = app.resolve("../dist/renderer");
 
-type MultitabRPCSchema = {
-  bun: RPCSchema<{
+type MultitabRpcSchema = {
+  bun: RpcSchema<{
     requests: {
       getQuickLinks: { params: undefined; response: { url: string; label: string }[] };
       createTab: { params: { url?: string }; response: { id: string; url: string; title: string } };
@@ -18,7 +18,7 @@ type MultitabRPCSchema = {
       navigateTo: { params: { id: string; url: string }; response: void };
     };
   }>;
-  webview: RPCSchema;
+  webview: RpcSchema;
 };
 
 const tabs = new Map<string, { id: string; url: string; title: string }>();
@@ -46,8 +46,8 @@ const rpcHandlers = {
 };
 
 const rpcConfig = { handlers: { requests: rpcHandlers } };
-const rendererRpc = defineBunRPC<MultitabRPCSchema>(rpcConfig);
-const webHandler = createWebRPCHandler<MultitabRPCSchema>(rpcConfig);
+const rendererRpc = defineBunRpc<MultitabRpcSchema>(rpcConfig);
+const webHandler = createWebRpcHandler<MultitabRpcSchema>(rpcConfig);
 
 const server = Bun.serve({
   port: webPort || 0,

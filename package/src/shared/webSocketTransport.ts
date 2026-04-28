@@ -1,26 +1,26 @@
-import type { RPCPacket, RPCTransport } from "./rpc";
-import { asUint8Array, decodeRPCPacket, encodeRPCPacket } from "./rpcWire";
+import type { RpcPacket, RpcTransport } from "./rpc";
+import { asUint8Array, decodeRpcPacket, encodeRpcPacket } from "./rpcWire";
 
 export type WebSocketLike = {
   send(data: Uint8Array | ArrayBuffer): void | number;
 };
 
 export type WebSocketTransportPipe = {
-  transport: RPCTransport;
+  transport: RpcTransport;
   receive(raw: ArrayBuffer | ArrayBufferView | Uint8Array): void;
 };
 
 export function createWebSocketTransport(ws: WebSocketLike): WebSocketTransportPipe {
-  let handler: ((packet: RPCPacket) => void) | undefined;
+  let handler: ((packet: RpcPacket) => void) | undefined;
 
   return {
     transport: {
-      send(packet) { ws.send(encodeRPCPacket(packet)); },
+      send(packet) { ws.send(encodeRpcPacket(packet)); },
       registerHandler(h) { handler = h; },
       unregisterHandler() { handler = undefined; }
     },
     receive(raw) {
-      handler?.(decodeRPCPacket(asUint8Array(raw)));
+      handler?.(decodeRpcPacket(asUint8Array(raw)));
     }
   };
 }

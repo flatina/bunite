@@ -1,16 +1,16 @@
 import "../shared/webviewPolyfill";
 import {
-  defineWebviewRPC,
-  type BuniteRPCConfig,
-  type RPCPacket,
-  type BuniteRPCSchema,
-  type RPCSchema,
-  type RPCTransport,
-  type RPCWithTransport
+  defineWebviewRpc,
+  type BuniteRpcConfig,
+  type RpcPacket,
+  type BuniteRpcSchema,
+  type RpcSchema,
+  type RpcTransport,
+  type RpcWithTransport
 } from "../shared/rpc";
-import { createTransportDemuxer, type ChannelHandle, type TransportDemuxer, type TransportDemuxerOptions } from "../shared/rpcDemux";
+import { createRpcTransportDemuxer, type RpcChannelHandle, type RpcTransportDemuxer, type RpcTransportDemuxerOptions } from "../shared/rpcDemux";
 import { createWebSocketTransport, type WebSocketLike, type WebSocketTransportPipe } from "../shared/webSocketTransport";
-import { decodeRPCPacket, encodeRPCPacket } from "../shared/rpcWire";
+import { decodeRpcPacket, encodeRpcPacket } from "../shared/rpcWire";
 import { log } from "../shared/log";
 
 type BuniteWindowGlobals = Window &
@@ -36,13 +36,13 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return copy.buffer;
 }
 
-export class BuniteView<T extends RPCWithTransport = RPCWithTransport> {
+export class BuniteView<T extends RpcWithTransport = RpcWithTransport> {
   bunSocket?: WebSocket;
   rpc?: T;
-  readonly transport: RPCTransport;
+  readonly transport: RpcTransport;
 
-  private handler?: (packet: RPCPacket) => void;
-  private pendingPackets: RPCPacket[] = [];
+  private handler?: (packet: RpcPacket) => void;
+  private pendingPackets: RpcPacket[] = [];
 
   constructor(config?: { rpc?: T }) {
     this.rpc = config?.rpc;
@@ -63,19 +63,19 @@ export class BuniteView<T extends RPCWithTransport = RPCWithTransport> {
     if (isNative) {
       buniteWindow.__bunite ??= {};
       buniteWindow.__bunite.receiveMessageFromBun = (message) => {
-        this.handler?.(message as RPCPacket);
+        this.handler?.(message as RpcPacket);
       };
     }
     this.rpc?.setTransport(this.transport);
   }
 
-  private sendPacket(packet: RPCPacket) {
+  private sendPacket(packet: RpcPacket) {
     if (isNative) {
       void this.bunBridge(packet).catch((error) => {
         log.error("Failed to send RPC packet", error);
       });
     } else {
-      this.bunSocket!.send(toArrayBuffer(encodeRPCPacket(packet)));
+      this.bunSocket!.send(toArrayBuffer(encodeRpcPacket(packet)));
     }
   }
 
@@ -90,7 +90,7 @@ export class BuniteView<T extends RPCWithTransport = RPCWithTransport> {
         const bytes = await messageToUint8Array(event.data);
         if (!bytes) return;
         try {
-          this.handler?.(decodeRPCPacket(bytes));
+          this.handler?.(decodeRpcPacket(bytes));
         } catch (error) {
           log.error("Failed to parse WebSocket message", error);
         }
@@ -122,7 +122,7 @@ export class BuniteView<T extends RPCWithTransport = RPCWithTransport> {
             return;
           }
           const decrypted = await decrypt(binaryMessage);
-          const packet = decodeRPCPacket(decrypted);
+          const packet = decodeRpcPacket(decrypted);
           if ((packet as any).scope === "global") return;
           this.handler?.(packet);
         } catch (error) {
@@ -148,7 +148,7 @@ export class BuniteView<T extends RPCWithTransport = RPCWithTransport> {
     });
   }
 
-  async bunBridge(message: RPCPacket) {
+  async bunBridge(message: RpcPacket) {
     if (this.bunSocket?.readyState !== WebSocket.OPEN) return;
 
     const encrypt = buniteWindow.__bunite_encrypt;
@@ -157,7 +157,7 @@ export class BuniteView<T extends RPCWithTransport = RPCWithTransport> {
       return;
     }
 
-    const encrypted = await encrypt(encodeRPCPacket(message));
+    const encrypted = await encrypt(encodeRpcPacket(message));
     this.bunSocket.send(toArrayBuffer(encrypted));
   }
 
@@ -171,15 +171,15 @@ async function messageToUint8Array(data: unknown) {
 }
 
 export { log, type LogLevel } from "../shared/log";
-export { createTransportDemuxer, createWebSocketTransport, defineWebviewRPC };
+export { createRpcTransportDemuxer, createWebSocketTransport, defineWebviewRpc };
 
 export type {
-  BuniteRPCConfig,
-  BuniteRPCSchema,
-  ChannelHandle,
-  RPCSchema,
-  TransportDemuxer,
-  TransportDemuxerOptions,
+  BuniteRpcConfig,
+  BuniteRpcSchema,
+  RpcChannelHandle,
+  RpcSchema,
+  RpcTransportDemuxer,
+  RpcTransportDemuxerOptions,
   WebSocketLike,
   WebSocketTransportPipe
 };

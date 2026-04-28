@@ -3,7 +3,7 @@ import { BuniteEvent } from "../events/event";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import { ensureNativeRuntime, getNativeLibrary, toCString } from "../proc/native";
 import { BrowserView, type BrowserViewOptions } from "./BrowserView";
-import type { RPCWithTransport } from "../../shared/rpc";
+import type { RpcWithTransport } from "../../shared/rpc";
 import { getNextWindowId } from "./windowIds";
 import { getBaseDir, resolveDefaultAppResRoot } from "../../shared/paths";
 
@@ -58,7 +58,7 @@ export function getLastFocusedWindowId(): number | null {
   return lastFocusedWindowId;
 }
 
-export class BrowserWindow<T extends RPCWithTransport = RPCWithTransport> {
+export class BrowserWindow<T extends RpcWithTransport = RpcWithTransport> {
   id = getNextWindowId();
   private nativeAttached = false;
   title: string;

@@ -1,20 +1,20 @@
 import { pack, unpack } from "msgpackr";
-import type { RPCPacket } from "./rpc";
+import type { RpcPacket } from "./rpc";
 import {
   RPC_AUTH_TAG_LENGTH,
   RPC_FRAME_VERSION,
   RPC_IV_LENGTH
 } from "./rpcWireConstants";
 
-export function encodeRPCPacket(packet: RPCPacket): Uint8Array {
+export function encodeRpcPacket(packet: RpcPacket): Uint8Array {
   return pack(packet) as Uint8Array;
 }
 
-export function decodeRPCPacket(data: Uint8Array): RPCPacket {
-  return unpack(data) as RPCPacket;
+export function decodeRpcPacket(data: Uint8Array): RpcPacket {
+  return unpack(data) as RpcPacket;
 }
 
-export function createEncryptedRPCFrame(
+export function createEncryptedRpcFrame(
   iv: Uint8Array,
   encryptedPayload: Uint8Array
 ): Uint8Array {
@@ -29,7 +29,7 @@ export function createEncryptedRPCFrame(
   return frame;
 }
 
-export function parseEncryptedRPCFrame(frame: Uint8Array) {
+export function parseEncryptedRpcFrame(frame: Uint8Array) {
   if (frame.byteLength < 1 + RPC_IV_LENGTH + RPC_AUTH_TAG_LENGTH) {
     throw new Error("Invalid RPC frame: payload is too short.");
   }
