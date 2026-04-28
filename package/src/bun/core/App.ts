@@ -14,7 +14,7 @@ import {
   toCString,
   type NativeBootstrapOptions
 } from "../proc/native";
-import { attachGlobalIPCResolver, ensureRPCServer } from "./Socket";
+import { attachGlobalIPCResolver, ensureRpcServer } from "./Socket";
 import { BrowserWindow } from "./BrowserWindow";
 import { getSurfaceIPCHandlers } from "./SurfaceManager";
 import { getWebviewIPCHandlers } from "./SurfaceBrowserIPC";
@@ -134,7 +134,7 @@ export class AppRuntime {
       });
     }
 
-    ensureRPCServer();
+    ensureRpcServer();
     buniteEventEmitter.emitEvent(
       new BuniteEvent("ready", {
         usingStub: runtime.usingStub,

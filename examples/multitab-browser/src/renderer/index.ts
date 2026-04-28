@@ -1,9 +1,9 @@
 import "bunite-core/webview-polyfill";
 import "./styles.css";
-import { BuniteView, defineWebviewRPC, type RPCSchema } from "bunite-core/view";
+import { BuniteView, defineWebviewRpc, type RpcSchema } from "bunite-core/view";
 
-type MultitabRPCSchema = {
-  bun: RPCSchema<{
+type MultitabRpcSchema = {
+  bun: RpcSchema<{
     requests: {
       getQuickLinks: { params: undefined; response: { url: string; label: string }[] };
       createTab: { params: { url?: string }; response: { id: string; url: string; title: string } };
@@ -11,7 +11,7 @@ type MultitabRPCSchema = {
       navigateTo: { params: { id: string; url: string }; response: void };
     };
   }>;
-  webview: RPCSchema;
+  webview: RpcSchema;
 };
 
 type Tab = { id: string; webview: HTMLElement; url: string; title: string };
@@ -24,7 +24,7 @@ const content = document.getElementById("content")!;
 const tabs = new Map<string, Tab>();
 let activeId: string | null = null;
 
-const rpc = defineWebviewRPC<MultitabRPCSchema>({ handlers: {} });
+const rpc = defineWebviewRpc<MultitabRpcSchema>({ handlers: {} });
 new BuniteView({ rpc });
 
 newTabBtn.addEventListener("click", () => createTab());

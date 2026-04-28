@@ -1,15 +1,15 @@
 import type { Server, ServerWebSocket } from "bun";
 import type { BrowserView } from "./BrowserView";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
-import type { RPCPacket, RPCRequestPacket } from "../../shared/rpc";
+import type { RpcPacket, RpcRequestPacket } from "../../shared/rpc";
 import type { GlobalIPCHandler } from "./App";
 import { log } from "../../shared/log";
 import {
   asUint8Array,
-  createEncryptedRPCFrame,
-  decodeRPCPacket,
-  encodeRPCPacket,
-  parseEncryptedRPCFrame
+  createEncryptedRpcFrame,
+  decodeRpcPacket,
+  encodeRpcPacket,
+  parseEncryptedRpcFrame
 } from "../../shared/rpcWire";
 import { RPC_AUTH_TAG_LENGTH } from "../../shared/rpcWireConstants";
 
@@ -36,11 +36,11 @@ function encrypt(secretKey: Uint8Array, payload: Uint8Array) {
   const iv = new Uint8Array(randomBytes(12));
   const cipher = createCipheriv("aes-256-gcm", secretKey, iv);
   const encrypted = Buffer.concat([cipher.update(payload), cipher.final(), cipher.getAuthTag()]);
-  return createEncryptedRPCFrame(iv, new Uint8Array(encrypted));
+  return createEncryptedRpcFrame(iv, new Uint8Array(encrypted));
 }
 
 function decrypt(secretKey: Uint8Array, frame: Uint8Array) {
-  const { iv, encryptedPayload } = parseEncryptedRPCFrame(frame);
+  const { iv, encryptedPayload } = parseEncryptedRpcFrame(frame);
   const ciphertext = encryptedPayload.subarray(0, encryptedPayload.byteLength - RPC_AUTH_TAG_LENGTH);
   const tag = encryptedPayload.subarray(encryptedPayload.byteLength - RPC_AUTH_TAG_LENGTH);
   const decipher = createDecipheriv("aes-256-gcm", secretKey, iv);
@@ -61,7 +61,7 @@ export function attachBrowserViewRegistry(nextRegistry: ViewRegistry) {
   registry = nextRegistry;
 }
 
-export function ensureRPCServer() {
+export function ensureRpcServer() {
   if (rpcServer) {
     return { rpcServer, rpcPort };
   }
@@ -106,14 +106,14 @@ export function ensureRPCServer() {
             }
             try {
               const decryptedMessage = decrypt(view.secretKey, binaryMessage);
-              const packet = decodeRPCPacket(decryptedMessage);
+              const packet = decodeRpcPacket(decryptedMessage);
 
-              if (packet.type === "request" && (packet as RPCRequestPacket).scope === "global") {
-                void handleGlobalIPC(packet as RPCRequestPacket, ws.data.webviewId);
+              if (packet.type === "request" && (packet as RpcRequestPacket).scope === "global") {
+                void handleGlobalIPC(packet as RpcRequestPacket, ws.data.webviewId);
                 return;
               }
 
-              view.handleIncomingRPC(packet);
+              view.handleIncomingRpc(packet);
             } catch (error) {
               log.error("Failed to parse RPC payload", error);
             }
@@ -138,11 +138,11 @@ export function ensureRPCServer() {
   return { rpcServer, rpcPort };
 }
 
-export function getRPCPort(): number {
+export function getRpcPort(): number {
   return rpcPort;
 }
 
-async function handleGlobalIPC(packet: RPCRequestPacket, viewId: number) {
+async function handleGlobalIPC(packet: RpcRequestPacket, viewId: number) {
   const handler = globalIPCResolver?.(packet.method);
   if (!handler) {
     sendMessageToView(viewId, {
@@ -174,14 +174,14 @@ async function handleGlobalIPC(packet: RPCRequestPacket, viewId: number) {
   }
 }
 
-export function sendMessageToView(viewId: number, message: RPCPacket): boolean {
+export function sendMessageToView(viewId: number, message: RpcPacket): boolean {
   const socket = socketMap[viewId];
   const view = registry?.getById(viewId);
   if (!socket || socket.readyState !== WebSocket.OPEN || !view) {
     return false;
   }
 
-  const encrypted = encrypt(view.secretKey, encodeRPCPacket(message));
+  const encrypted = encrypt(view.secretKey, encodeRpcPacket(message));
   socket.send(encrypted);
   return true;
 }

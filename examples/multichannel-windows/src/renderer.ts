@@ -1,15 +1,15 @@
 import {
   BuniteView,
-  createTransportDemuxer,
-  defineWebviewRPC,
+  createRpcTransportDemuxer,
+  defineWebviewRpc,
 } from "bunite-core/view";
 import type { CalcSchema, LogEntry, LogSchema } from "./schema";
 
 const view = new BuniteView();
-const demux = createTransportDemuxer(view.transport);
+const demux = createRpcTransportDemuxer(view.transport);
 
-const calcRpc = defineWebviewRPC<CalcSchema>({ handlers: {} });
-const logRpc = defineWebviewRPC<LogSchema>({
+const calcRpc = defineWebviewRpc<CalcSchema>({ handlers: {} });
+const logRpc = defineWebviewRpc<LogSchema>({
   handlers: {
     messages: {
       entry: (e: LogEntry) => appendLogEntry(e),

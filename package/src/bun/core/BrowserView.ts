@@ -2,9 +2,9 @@ import { ptr } from "bun:ffi";
 import { buildViewPreloadScript } from "../preload/inline";
 import { log } from "../../shared/log";
 import { buniteEventEmitter } from "../events/eventEmitter";
-import { type RPCPacket, type RPCTransport, type RPCWithTransport } from "../../shared/rpc";
+import { type RpcPacket, type RpcTransport, type RpcWithTransport } from "../../shared/rpc";
 import { ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady } from "../proc/native";
-import { attachBrowserViewRegistry, getRPCPort, sendMessageToView } from "./Socket";
+import { attachBrowserViewRegistry, getRpcPort, sendMessageToView } from "./Socket";
 import { randomBytes } from "node:crypto";
 import { resolveDefaultAppResRoot } from "../../shared/paths";
 import { removeSurfacesForHostView } from "./SurfaceRegistry";
@@ -14,13 +14,13 @@ const BrowserViewMap: Record<number, BrowserView<any>> = {};
 let nextWebviewId = 1;
 
 function createNativeViewPipe(viewId: number) {
-  let handler: ((packet: RPCPacket) => void) | undefined;
-  const transport: RPCTransport = {
+  let handler: ((packet: RpcPacket) => void) | undefined;
+  const transport: RpcTransport = {
     send: (packet) => { sendMessageToView(viewId, packet); },
     registerHandler: (h) => { handler = h; },
     unregisterHandler: () => { handler = undefined; }
   };
-  return { transport, receive: (packet: RPCPacket) => handler?.(packet) };
+  return { transport, receive: (packet: RpcPacket) => handler?.(packet) };
 }
 
 export type BrowserViewOptions<T = undefined> = {
@@ -62,7 +62,7 @@ const defaultOptions: BrowserViewOptions = {
   sandbox: false
 };
 
-export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
+export class BrowserView<T extends RpcWithTransport = RpcWithTransport> {
   id = nextWebviewId++;
   private nativeAttached = false;
   private _readyPromise: Promise<void>;
@@ -75,7 +75,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
   partition: string | null;
   frame: BrowserViewOptions["frame"];
   rpc?: T;
-  readonly transport: RPCTransport;
+  readonly transport: RpcTransport;
   private pipe: ReturnType<typeof createNativeViewPipe>;
   autoResize: boolean;
   navigationRules: string[] | null;
@@ -113,7 +113,7 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
       preload: this.preload,
       appresRoot: this.appresRoot,
       webviewId: this.id,
-      rpcSocketPort: getRPCPort(),
+      rpcSocketPort: getRpcPort(),
       secretKey: this.secretKey
     });
 
@@ -174,12 +174,12 @@ export class BrowserView<T extends RPCWithTransport = RPCWithTransport> {
     return Object.values(BrowserViewMap);
   }
 
-  handleIncomingRPC(packet: RPCPacket) {
+  handleIncomingRpc(packet: RpcPacket) {
     this.pipe.receive(packet);
   }
 
   get rpcPort() {
-    return getRPCPort();
+    return getRpcPort();
   }
 
   setAnchor(mode: "none" | "fill" | "top" | "below-top", inset = 0) {

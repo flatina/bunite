@@ -1,33 +1,33 @@
 import {
-  defineBunRPC,
-  type BuniteRPCConfig,
-  type BuniteRPCSchema
+  defineBunRpc,
+  type BuniteRpcConfig,
+  type BuniteRpcSchema
 } from "./rpc";
 import { createWebSocketTransport, type WebSocketLike } from "./webSocketTransport";
 import { log } from "./log";
 
-export type WebRPCClient<Schema extends BuniteRPCSchema = BuniteRPCSchema> = {
+export type WebRpcClient<Schema extends BuniteRpcSchema = BuniteRpcSchema> = {
   ws: WebSocketLike;
-  rpc: ReturnType<typeof defineBunRPC<Schema>>;
+  rpc: ReturnType<typeof defineBunRpc<Schema>>;
 };
 
-export function createWebRPCHandler<Schema extends BuniteRPCSchema>(
-  config: BuniteRPCConfig<Schema, "bun"> & {
+export function createWebRpcHandler<Schema extends BuniteRpcSchema>(
+  config: BuniteRpcConfig<Schema, "bun"> & {
     extraRequestHandlers?: Record<string, (...args: any[]) => unknown>;
   }
 ) {
-  type Entry = { client: WebRPCClient<Schema>; receive: (raw: ArrayBuffer | Uint8Array) => void };
+  type Entry = { client: WebRpcClient<Schema>; receive: (raw: ArrayBuffer | Uint8Array) => void };
 
   const connections = new WeakMap<WebSocketLike, Entry>();
-  const webClients = new Set<WebRPCClient<Schema>>();
+  const webClients = new Set<WebRpcClient<Schema>>();
 
   const handler = {
     open(ws: WebSocketLike) {
       const pipe = createWebSocketTransport(ws);
-      const rpc = defineBunRPC(config);
+      const rpc = defineBunRpc(config);
       rpc.setTransport(pipe.transport);
 
-      const client: WebRPCClient<Schema> = { ws, rpc: rpc as WebRPCClient<Schema>["rpc"] };
+      const client: WebRpcClient<Schema> = { ws, rpc: rpc as WebRpcClient<Schema>["rpc"] };
 
       connections.set(ws, { client, receive: pipe.receive });
       webClients.add(client);
@@ -56,7 +56,7 @@ export function createWebRPCHandler<Schema extends BuniteRPCSchema>(
       handler.onWebClientDisconnected?.(entry.client);
     },
 
-    webClients: webClients as ReadonlySet<WebRPCClient<Schema>>,
+    webClients: webClients as ReadonlySet<WebRpcClient<Schema>>,
 
     broadcast<M extends keyof Schema["bun"]["messages"]>(
       messageName: M,
@@ -71,8 +71,8 @@ export function createWebRPCHandler<Schema extends BuniteRPCSchema>(
       }
     },
 
-    onWebClientConnected: undefined as ((client: WebRPCClient<Schema>) => void) | undefined,
-    onWebClientDisconnected: undefined as ((client: WebRPCClient<Schema>) => void) | undefined,
+    onWebClientConnected: undefined as ((client: WebRpcClient<Schema>) => void) | undefined,
+    onWebClientDisconnected: undefined as ((client: WebRpcClient<Schema>) => void) | undefined,
   };
 
   return handler;
