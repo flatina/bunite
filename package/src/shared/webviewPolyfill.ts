@@ -1,8 +1,11 @@
 // Iframe-based fallback for web browsers. No-op when the native element is already registered by the CEF preload.
-if (
-  typeof customElements !== "undefined" &&
-  !customElements.get("bunite-webview")
-) {
+// HTMLElement reference is lazy so this module is import-safe in Node/Bun.
+
+let cachedClass: CustomElementConstructor | null = null;
+
+function definePolyfillClass(): CustomElementConstructor {
+  if (cachedClass) return cachedClass;
+
   class BuniteWebviewPolyfill extends HTMLElement {
     static observedAttributes = ["src"];
 
@@ -69,5 +72,18 @@ if (
     }
   }
 
-  customElements.define("bunite-webview", BuniteWebviewPolyfill);
+  cachedClass = BuniteWebviewPolyfill;
+  return cachedClass;
+}
+
+/**
+ * Register the `<bunite-webview>` iframe polyfill. No-op in non-browser
+ * environments and when the native CEF preload has already registered the element.
+ * `BuniteView` calls this automatically on construction; call directly only when
+ * using `<bunite-webview>` markup without instantiating `BuniteView`.
+ */
+export function registerBuniteWebviewPolyfill() {
+  if (typeof customElements === "undefined") return;
+  if (customElements.get("bunite-webview")) return;
+  customElements.define("bunite-webview", definePolyfillClass());
 }

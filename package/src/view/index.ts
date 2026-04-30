@@ -1,4 +1,4 @@
-import "../shared/webviewPolyfill";
+import { registerBuniteWebviewPolyfill } from "../shared/webviewPolyfill";
 import {
   defineWebviewRpc,
   type BuniteRpcConfig,
@@ -24,11 +24,19 @@ type BuniteWindowGlobals = Window &
     __bunite_decrypt?: (data: Uint8Array) => Promise<Uint8Array>;
   };
 
-const buniteWindow = window as BuniteWindowGlobals;
-const WEBVIEW_ID = buniteWindow.__buniteWebviewId;
-const RPC_SOCKET_PORT = buniteWindow.__buniteRpcSocketPort;
+type BuniteEnv = {
+  window: BuniteWindowGlobals | null;
+  webviewId: number | undefined;
+  rpcPort: number | undefined;
+  isNative: boolean;
+};
 
-const isNative = WEBVIEW_ID != null && RPC_SOCKET_PORT != null;
+function readBuniteEnv(): BuniteEnv {
+  const w = typeof window !== "undefined" ? (window as BuniteWindowGlobals) : null;
+  const webviewId = w?.__buniteWebviewId;
+  const rpcPort = w?.__buniteRpcSocketPort;
+  return { window: w, webviewId, rpcPort, isNative: webviewId != null && rpcPort != null };
+}
 
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);
@@ -41,10 +49,13 @@ export class BuniteView<T extends RpcWithTransport = RpcWithTransport> {
   rpc?: T;
   readonly transport: RpcTransport;
 
+  private env: BuniteEnv;
   private handler?: (packet: RpcPacket) => void;
   private pendingPackets: RpcPacket[] = [];
 
   constructor(config?: { rpc?: T }) {
+    registerBuniteWebviewPolyfill();
+    this.env = readBuniteEnv();
     this.rpc = config?.rpc;
 
     this.transport = {
@@ -60,9 +71,9 @@ export class BuniteView<T extends RpcWithTransport = RpcWithTransport> {
     };
 
     this.initSocketToBun();
-    if (isNative) {
-      buniteWindow.__bunite ??= {};
-      buniteWindow.__bunite.receiveMessageFromBun = (message) => {
+    if (this.env.isNative && this.env.window) {
+      this.env.window.__bunite ??= {};
+      this.env.window.__bunite.receiveMessageFromBun = (message) => {
         this.handler?.(message as RpcPacket);
       };
     }
@@ -70,7 +81,7 @@ export class BuniteView<T extends RpcWithTransport = RpcWithTransport> {
   }
 
   private sendPacket(packet: RpcPacket) {
-    if (isNative) {
+    if (this.env.isNative) {
       void this.bunBridge(packet).catch((error) => {
         log.error("Failed to send RPC packet", error);
       });
@@ -80,7 +91,7 @@ export class BuniteView<T extends RpcWithTransport = RpcWithTransport> {
   }
 
   initSocketToBun() {
-    if (!isNative) {
+    if (!this.env.isNative) {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
       const socket = new WebSocket(`${proto}//${location.host}/rpc`);
       socket.binaryType = "arraybuffer";
@@ -97,14 +108,14 @@ export class BuniteView<T extends RpcWithTransport = RpcWithTransport> {
       });
     } else {
       // Share a single WebSocket with the preload's bunite.invoke.
-      const globals = buniteWindow as any;
+      const globals = this.env.window as any;
       globals.__bunite ??= {};
       const existing = globals.__bunite._socket;
       if (existing && existing.readyState <= WebSocket.OPEN) {
         this.bunSocket = existing;
       } else {
         const socket = new WebSocket(
-          `ws://localhost:${RPC_SOCKET_PORT}/socket?webviewId=${WEBVIEW_ID}`
+          `ws://localhost:${this.env.rpcPort}/socket?webviewId=${this.env.webviewId}`
         );
         socket.binaryType = "arraybuffer";
         this.bunSocket = socket;
@@ -116,7 +127,7 @@ export class BuniteView<T extends RpcWithTransport = RpcWithTransport> {
         if (!binaryMessage) return;
 
         try {
-          const decrypt = buniteWindow.__bunite_decrypt;
+          const decrypt = this.env.window?.__bunite_decrypt;
           if (!decrypt) {
             log.error("No decrypt function available in preload globals");
             return;
@@ -151,7 +162,7 @@ export class BuniteView<T extends RpcWithTransport = RpcWithTransport> {
   async bunBridge(message: RpcPacket) {
     if (this.bunSocket?.readyState !== WebSocket.OPEN) return;
 
-    const encrypt = buniteWindow.__bunite_encrypt;
+    const encrypt = this.env.window?.__bunite_encrypt;
     if (!encrypt) {
       log.error("No encrypt function available in preload globals");
       return;
@@ -171,7 +182,7 @@ async function messageToUint8Array(data: unknown) {
 }
 
 export { log, type LogLevel } from "../shared/log";
-export { createRpcTransportDemuxer, createWebSocketTransport, defineWebviewRpc };
+export { createRpcTransportDemuxer, createWebSocketTransport, defineWebviewRpc, registerBuniteWebviewPolyfill };
 
 export type {
   BuniteRpcConfig,
