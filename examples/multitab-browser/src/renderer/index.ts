@@ -1,4 +1,3 @@
-import "bunite-core/webview-polyfill";
 import "./styles.css";
 import { BuniteView, defineWebviewRpc, type RpcSchema } from "bunite-core/view";
 
