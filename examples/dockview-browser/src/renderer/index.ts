@@ -1,4 +1,4 @@
-import "bunite-core/webview-polyfill";
+import { registerBuniteWebviewPolyfill } from "bunite-core/view";
 import "dockview-core/dist/styles/dockview.css";
 import {
   createDockview,
@@ -9,6 +9,8 @@ import {
 } from "dockview-core";
 import "./styles.css";
 import { setupDropIndicatorMasks } from "./maskHelper";
+
+registerBuniteWebviewPolyfill();
 
 const shell = document.querySelector<HTMLElement>(".dockview-shell")!;
 const panelTpl = document.getElementById("browser-panel-tpl") as HTMLTemplateElement;
