@@ -12,7 +12,6 @@
     ".": "./src/bun/index.ts",
     "./bun": "./src/bun/index.ts",
     "./view": "./src/view/index.ts",
-    "./webview-polyfill": "./src/shared/webviewPolyfill.ts",
     "./shared/rpc": "./src/shared/rpc.ts",
     "./package.json": "./package.json"
   },
