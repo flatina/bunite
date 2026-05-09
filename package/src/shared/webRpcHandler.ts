@@ -12,9 +12,7 @@ export type WebRpcClient<Schema extends BuniteRpcSchema = BuniteRpcSchema> = {
 };
 
 export function createWebRpcHandler<Schema extends BuniteRpcSchema>(
-  config: BuniteRpcConfig<Schema, "bun"> & {
-    extraRequestHandlers?: Record<string, (...args: any[]) => unknown>;
-  }
+  config: BuniteRpcConfig<Schema, "bun">
 ) {
   type Entry = { client: WebRpcClient<Schema>; receive: (raw: ArrayBuffer | Uint8Array) => void };
 
