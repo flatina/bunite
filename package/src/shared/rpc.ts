@@ -374,9 +374,7 @@ function defineSideRpc<
   Schema extends BuniteRpcSchema,
   Side extends "bun" | "webview"
 >(
-  config: BuniteRpcConfig<Schema, Side> & {
-    extraRequestHandlers?: Record<string, (...args: any[]) => unknown>;
-  }
+  config: BuniteRpcConfig<Schema, Side>
 ) {
   type RemoteSide = Side extends "bun" ? "webview" : "bun";
   type LocalSchema = {
@@ -390,10 +388,7 @@ function defineSideRpc<
 
   const rpc = createRpc<LocalSchema, RemoteSchema>({
     maxRequestTime: config.maxRequestTime,
-    requestHandler: {
-      ...(config.handlers.requests ?? {}),
-      ...(config.extraRequestHandlers ?? {})
-    } as RpcRequestHandler<LocalSchema["requests"]>,
+    requestHandler: config.handlers.requests,
     transport: {
       registerHandler: () => {}
     }
@@ -417,17 +412,13 @@ function defineSideRpc<
 }
 
 export function defineBunRpc<Schema extends BuniteRpcSchema>(
-  config: BuniteRpcConfig<Schema, "bun"> & {
-    extraRequestHandlers?: Record<string, (...args: any[]) => unknown>;
-  }
+  config: BuniteRpcConfig<Schema, "bun">
 ) {
   return defineSideRpc<Schema, "bun">(config);
 }
 
 export function defineWebviewRpc<Schema extends BuniteRpcSchema>(
-  config: BuniteRpcConfig<Schema, "webview"> & {
-    extraRequestHandlers?: Record<string, (...args: any[]) => unknown>;
-  }
+  config: BuniteRpcConfig<Schema, "webview">
 ) {
   return defineSideRpc<Schema, "webview">(config);
 }
