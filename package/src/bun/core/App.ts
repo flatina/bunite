@@ -1,11 +1,11 @@
 import { isAbsolute, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { getBaseDir } from "../../shared/paths";
-import { dlopen, FFIType } from "bun:ffi";
 import { BuniteEvent } from "../events/event";
 import { buniteEventEmitter } from "../events/eventEmitter";
-import { handleMessageBoxResponse } from "./Utils";
 import {
+  getNativeEngineName,
+  getNativeEngineVersion,
   getNativeLibrary,
   initNativeRuntime,
   getNativeRuntimeState,
@@ -24,7 +24,6 @@ import type { LogLevel } from "../../shared/log";
 
 type AppOptions = NativeBootstrapOptions & {
   userDataDir?: string;
-  cefDir?: string;
   exitOnLastWindowClosed?: boolean;
   logLevel?: LogLevel;
 };
@@ -54,10 +53,6 @@ export class AppRuntime {
 
     if (options.logLevel) {
       log.setLevel(options.logLevel);
-    }
-
-    if (options.cefDir) {
-      process.env.BUNITE_CEF_DIR = options.cefDir;
     }
 
     if (options.userDataDir) {
@@ -90,7 +85,7 @@ export class AppRuntime {
       allowStub: options.allowStub,
       hideConsole: options.hideConsole,
       popupBlocking: options.popupBlocking,
-      chromiumFlags: options.chromiumFlags
+      engineFlags: options.engineFlags
     });
 
     if (options.logLevel && runtime.nativeLoaded) {
@@ -105,12 +100,6 @@ export class AppRuntime {
     for (const [channel, handler] of getWebviewIPCHandlers()) {
       this.globalIPCHandlers.set(channel, handler);
     }
-
-    this.globalIPCHandlers.set("__bunite:messageBoxResponse", (params) => {
-      const { requestId, response } = params as { requestId: number; response: number };
-      handleMessageBoxResponse(requestId, response);
-      return {};
-    });
 
     setRouteRequestHandler((requestId, path) => this.handleRouteRequest(requestId, path));
 
@@ -256,22 +245,20 @@ export class AppRuntime {
     }
   }
 
-  private cachedCefVersion: string | null | undefined;
+  private cachedEngineName: string | null | undefined;
+  private cachedEngineVersion: string | null | undefined;
 
-  get cefVersion(): string | null {
-    if (this.cachedCefVersion !== undefined) return this.cachedCefVersion;
-    this.cachedCefVersion = null;
-    const arts = getNativeRuntimeState()?.artifacts;
-    if (!arts?.cefDir) return null;
-    const libcefPath = join(arts.cefDir, "libcef.dll");
-    if (!existsSync(libcefPath)) return null;
-    try {
-      const lib = dlopen(libcefPath, {
-        cef_version_info: { returns: FFIType.i32, args: [FFIType.i32] },
-      });
-      const v = (entry: number) => lib.symbols.cef_version_info(entry);
-      this.cachedCefVersion = `${v(0)}.${v(1)}.${v(2)}+chromium-${v(4)}.${v(5)}.${v(6)}.${v(7)}`;
-    } catch { /* leave as null */ }
-    return this.cachedCefVersion;
+  /** Active engine identifier reported by the native adapter (e.g. `"cef"`, `"wkwebview"`, `"webkitgtk"`). */
+  get engineName(): string | null {
+    if (this.cachedEngineName !== undefined) return this.cachedEngineName;
+    this.cachedEngineName = getNativeEngineName();
+    return this.cachedEngineName;
+  }
+
+  /** Engine version string reported by the native adapter. Format depends on engine. */
+  get engineVersion(): string | null {
+    if (this.cachedEngineVersion !== undefined) return this.cachedEngineVersion;
+    this.cachedEngineVersion = getNativeEngineVersion();
+    return this.cachedEngineVersion;
   }
 }

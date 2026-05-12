@@ -14,7 +14,7 @@ app.getAppRes("/dynamic/random", () => page("Random number", `
 `));
 
 new BrowserWindow({
-  title: `appres:// demo v${app.version} — CEF ${app.cefVersion ?? "unknown"}`,
+  title: `appres:// demo v${app.version} — ${app.engineName ?? "?"} ${app.engineVersion ?? "unknown"}`,
   url: "./index.html",
   frame: { x: 80, y: 80, width: 900, height: 700 }
 });

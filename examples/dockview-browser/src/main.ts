@@ -28,7 +28,7 @@ if (flagIdx >= 0) {
   await app.ready;
 
   new BrowserWindow({
-    title: `bunite dockview browser v${app.version} — CEF ${app.cefVersion ?? "unknown"}`,
+    title: `bunite dockview browser v${app.version} — ${app.engineName ?? "?"} ${app.engineVersion ?? "unknown"}`,
     frame: { x: 80, y: 80, width: 1024, height: 600 },
     url: "../dist/renderer/index.html"
   });

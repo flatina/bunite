@@ -57,61 +57,14 @@ std::string escapeJsonString(const std::string& value) {
   return escaped;
 }
 
-std::vector<std::string> splitButtonLabels(const std::string& buttons_csv) {
-  std::vector<std::string> labels;
-  if (buttons_csv.empty()) {
-    return labels;
-  }
-
-  std::stringstream stream(buttons_csv);
-  std::string label;
-  while (std::getline(stream, label, '\x1f')) {
-    const size_t first = label.find_first_not_of(" \t");
-    if (first == std::string::npos) {
-      continue;
-    }
-    const size_t last = label.find_last_not_of(" \t");
-    std::string normalized = label.substr(first, last - first + 1);
-    std::transform(
-      normalized.begin(),
-      normalized.end(),
-      normalized.begin(),
-      [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); }
-    );
-    if (!normalized.empty()) {
-      labels.push_back(normalized);
-    }
-  }
-
-  return labels;
-}
-
-std::string trimAsciiWhitespace(const std::string& value) {
-  const size_t first = value.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) {
-    return {};
-  }
-  const size_t last = value.find_last_not_of(" \t\r\n");
-  return value.substr(first, last - first + 1);
-}
-
-std::string toLowerAscii(std::string value) {
-  std::transform(
-    value.begin(),
-    value.end(),
-    value.begin(),
-    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); }
-  );
-  return value;
-}
-
 // ---------------------------------------------------------------------------
 // Chromium flags parsing
 // ---------------------------------------------------------------------------
 
 
-// Simple flat JSON object parser for chromiumFlags.
-// Input is always a JSON-serialized Record<string, string | boolean> from TS.
+// Simple flat JSON object parser for engine config (Chromium command-line flags).
+// Input is always a JSON-serialized Record<string, string | boolean> from TS,
+// passed via bunite_init's engine_config_json parameter when the active engine is CEF.
 // Does not depend on CEF, so it can run before CefInitialize.
 std::map<std::string, std::string> parseChromiumFlagsJson(const std::string& json) {
   std::map<std::string, std::string> flags;

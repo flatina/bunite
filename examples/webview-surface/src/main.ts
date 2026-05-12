@@ -29,7 +29,7 @@ await app.ready;
 app.handle("getServerUrl", () => `http://localhost:${server.port}`);
 
 new BrowserWindow({
-  title: `Webview Surface Test v${app.version} — CEF ${app.cefVersion ?? "unknown"}`,
+  title: `Webview Surface Test v${app.version} — ${app.engineName ?? "?"} ${app.engineVersion ?? "unknown"}`,
   url: "./index.html",
   frame: { x: 80, y: 80, width: 900, height: 650 }
 });

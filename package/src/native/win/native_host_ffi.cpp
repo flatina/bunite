@@ -1,12 +1,81 @@
 #include "native_host_internal.h"
 
+#include "include/cef_version.h"
+#include "include/cef_version_info.h"
+
 using bunite_win::runOnUiThreadSync;
 using bunite_win::runOnCefUiThreadSync;
 
-static constexpr int32_t BUNITE_ABI_VERSION = 2;
+static constexpr int32_t BUNITE_ABI_VERSION = 3;
+
+namespace {
+
+std::string wideToUtf8(const std::wstring& value) {
+  if (value.empty()) return {};
+  const int bytes = WideCharToMultiByte(
+    CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+  std::string out(static_cast<size_t>(bytes), '\0');
+  WideCharToMultiByte(
+    CP_UTF8, 0, value.data(), static_cast<int>(value.size()),
+    out.data(), bytes, nullptr, nullptr);
+  return out;
+}
+
+std::string resolveProcessHelperPath() {
+  std::wstring buffer(MAX_PATH, L'\0');
+  DWORD len = GetModuleFileNameW(
+    bunite_win::getCurrentModuleHandle(),
+    buffer.data(),
+    static_cast<DWORD>(buffer.size()));
+  while (len == buffer.size() && GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+    buffer.resize(buffer.size() * 2);
+    len = GetModuleFileNameW(
+      bunite_win::getCurrentModuleHandle(),
+      buffer.data(),
+      static_cast<DWORD>(buffer.size()));
+  }
+  buffer.resize(len);
+
+  std::filesystem::path dll_path(buffer);
+  std::filesystem::path helper_path = dll_path.parent_path() / L"process_helper.exe";
+  if (!std::filesystem::exists(helper_path)) {
+    BUNITE_ERROR("process_helper.exe not found alongside libBuniteNative.dll at: %s",
+                 helper_path.string().c_str());
+    return {};
+  }
+  return wideToUtf8(helper_path.wstring());
+}
+
+} // namespace
 
 extern "C" BUNITE_EXPORT int32_t bunite_abi_version(void) {
   return BUNITE_ABI_VERSION;
+}
+
+extern "C" BUNITE_EXPORT const char* bunite_engine_name(void) {
+  return "cef";
+}
+
+extern "C" BUNITE_EXPORT const char* bunite_engine_version(void) {
+  // Prefer the runtime version from the actually-loaded libcef.dll — when
+  // BUNITE_ENGINE_DIR or BUNITE_CEF_ROOTDIR same-major fallback points at a
+  // CEF different from the headers used at compile time, this stays accurate.
+  // Falls back to the compile-time CEF_VERSION macro before CefInitialize runs.
+  static std::string cached;
+  static std::once_flag once;
+  std::call_once(once, []() {
+    if (g_runtime.cef_initialized) {
+      char buf[128];
+      std::snprintf(buf, sizeof(buf), "%d.%d.%d+chromium-%d.%d.%d.%d",
+        cef_version_info(0), cef_version_info(1), cef_version_info(2),
+        cef_version_info(4), cef_version_info(5), cef_version_info(6),
+        cef_version_info(7));
+      cached = buf;
+    } else {
+      cached = CEF_VERSION;
+    }
+  });
+  return cached.c_str();
 }
 
 extern "C" BUNITE_EXPORT void bunite_set_log_level(int32_t level) {
@@ -14,11 +83,10 @@ extern "C" BUNITE_EXPORT void bunite_set_log_level(int32_t level) {
 }
 
 extern "C" BUNITE_EXPORT bool bunite_init(
-  const char* process_helper_path,
-  const char* cef_dir,
+  const char* engine_dir,
   bool hide_console,
   bool popup_blocking,
-  const char* chromium_flags_json
+  const char* engine_config_json
 ) {
   {
     std::lock_guard<std::mutex> lock(g_runtime.lifecycle_mutex);
@@ -30,11 +98,11 @@ extern "C" BUNITE_EXPORT bool bunite_init(
     g_runtime.shutdown_complete = false;
     g_runtime.shutdown_finalize_posted.store(false);
     g_runtime.shutting_down.store(false);
-    g_runtime.process_helper_path = process_helper_path ? process_helper_path : "";
-    g_runtime.cef_dir = cef_dir ? cef_dir : "";
+    g_runtime.process_helper_path = resolveProcessHelperPath();
+    g_runtime.cef_dir = engine_dir ? engine_dir : "";
     g_runtime.popup_blocking = popup_blocking;
     g_runtime.chromium_flags = bunite_win::parseChromiumFlagsJson(
-      chromium_flags_json ? chromium_flags_json : "");
+      engine_config_json ? engine_config_json : "");
   }
 
   if (hide_console) {
@@ -817,119 +885,3 @@ extern "C" BUNITE_EXPORT void bunite_complete_permission_request(uint32_t reques
   });
 }
 
-extern "C" BUNITE_EXPORT int32_t bunite_show_message_box(
-  uint32_t window_id,
-  const char* type,
-  const char* title,
-  const char* message,
-  const char* detail,
-  const char* buttons,
-  int32_t default_id,
-  int32_t cancel_id
-) {
-  return runOnUiThreadSync<int32_t>([=]() -> int32_t {
-    std::string composed_message = message ? message : "";
-    if (detail && std::strlen(detail) > 0) {
-      if (!composed_message.empty()) {
-        composed_message += "\n\n";
-      }
-      composed_message += detail;
-    }
-
-    UINT flags = MB_OK;
-    const std::string type_name = type ? type : "info";
-    if (type_name == "none") {
-      // Intentionally no icon flag.
-    } else if (type_name == "warning") {
-      flags |= MB_ICONWARNING;
-    } else if (type_name == "error") {
-      flags |= MB_ICONERROR;
-    } else if (type_name == "question") {
-      flags |= MB_ICONQUESTION;
-    } else {
-      flags |= MB_ICONINFORMATION;
-    }
-
-    const std::vector<std::string> labels = bunite_win::splitButtonLabels(buttons ? buttons : "");
-    std::vector<std::string> normalized_labels;
-    normalized_labels.reserve(labels.size());
-    for (const std::string& label : labels) {
-      normalized_labels.push_back(bunite_win::toLowerAscii(bunite_win::trimAsciiWhitespace(label)));
-    }
-
-    if (normalized_labels.size() == 2) {
-      if (normalized_labels[0] == "yes" && normalized_labels[1] == "no") {
-        flags = (flags & ~MB_OK) | MB_YESNO;
-      } else {
-        flags = (flags & ~MB_OK) | MB_OKCANCEL;
-      }
-    } else if (
-      normalized_labels.size() >= 3 &&
-      normalized_labels[0] == "yes" &&
-      normalized_labels[1] == "no" &&
-      normalized_labels[2] == "cancel"
-    ) {
-      flags = (flags & ~MB_OK) | MB_YESNOCANCEL;
-    }
-
-    if (default_id == 1) {
-      flags |= MB_DEFBUTTON2;
-    } else if (default_id >= 2) {
-      flags |= MB_DEFBUTTON3;
-    }
-
-    const std::wstring window_title = bunite_win::utf8ToWide(title ? title : "");
-    const std::wstring window_message = bunite_win::utf8ToWide(composed_message);
-    HWND owner = nullptr;
-    if (window_id != 0) {
-      auto* window = bunite_win::getWindowHostById(window_id);
-      if (window && window->hwnd && IsWindow(window->hwnd)) {
-        owner = window->hwnd;
-      }
-    }
-
-    // Center the message box on the owner window via CBT hook.
-    static thread_local HWND s_center_on = nullptr;
-    static thread_local HHOOK s_cbt_hook = nullptr;
-    s_center_on = owner;
-    if (owner) {
-      s_cbt_hook = SetWindowsHookExW(WH_CBT, [](int code, WPARAM wp, LPARAM) -> LRESULT {
-        if (code == HCBT_ACTIVATE && s_center_on) {
-          HWND dlg = reinterpret_cast<HWND>(wp);
-          RECT owner_rect{}, dlg_rect{};
-          if (GetWindowRect(s_center_on, &owner_rect) && GetWindowRect(dlg, &dlg_rect)) {
-            int dw = dlg_rect.right - dlg_rect.left;
-            int dh = dlg_rect.bottom - dlg_rect.top;
-            int ow = owner_rect.right - owner_rect.left;
-            int oh = owner_rect.bottom - owner_rect.top;
-            SetWindowPos(dlg, nullptr,
-              owner_rect.left + (ow - dw) / 2,
-              owner_rect.top + (oh - dh) / 2,
-              0, 0, SWP_NOSIZE | SWP_NOZORDER);
-          }
-          s_center_on = nullptr;
-        }
-        return CallNextHookEx(s_cbt_hook, code, wp, 0);
-      }, nullptr, GetCurrentThreadId());
-    }
-
-    const int result = MessageBoxW(owner, window_message.c_str(), window_title.c_str(), flags);
-
-    if (s_cbt_hook) {
-      UnhookWindowsHookEx(s_cbt_hook);
-      s_cbt_hook = nullptr;
-    }
-
-    switch (result) {
-      case IDOK:
-      case IDYES:
-        return 0;
-      case IDNO:
-        return 1;
-      case IDCANCEL:
-        return cancel_id >= 0 ? cancel_id : (labels.size() > 2 ? 2 : 1);
-      default:
-        return cancel_id >= 0 ? cancel_id : -1;
-    }
-  });
-}

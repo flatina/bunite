@@ -185,9 +185,6 @@ void uiThreadMain();                                        // [spawned thread]
 
 std::wstring utf8ToWide(const std::string& value);
 std::string escapeJsonString(const std::string& value);
-std::vector<std::string> splitButtonLabels(const std::string& buttons_csv);
-std::string trimAsciiWhitespace(const std::string& value);
-std::string toLowerAscii(std::string value);
 bool globMatchCaseInsensitive(const std::string& pattern, const std::string& value);
 std::vector<std::string> parseNavigationRulesJson(const std::string& rules_json);
 std::map<std::string, std::string> parseChromiumFlagsJson(const std::string& json);

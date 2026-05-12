@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { BrowserWindow, Utils, AppRuntime, createWebRpcHandler, defineBunRpc, type RpcSchema } from "bunite-core";
+import { BrowserWindow, AppRuntime, createWebRpcHandler, defineBunRpc, type RpcSchema } from "bunite-core";
 
 process.env.BUNITE_REMOTE_DEBUGGING_PORT ??= "9222";
 
@@ -79,14 +79,13 @@ const server = Bun.serve({
 origin = `http://127.0.0.1:${server.port}`;
 
 const win = new BrowserWindow({
-  title: `bunite multi-tab browser v${app.version} — CEF ${app.cefVersion ?? "unknown"}`,
+  title: `bunite multi-tab browser v${app.version} — ${app.engineName ?? "?"} ${app.engineVersion ?? "unknown"}`,
   frame: { x: 80, y: 80, width: 1280, height: 900 },
   url: `${origin}/`,
   preloadOrigins: [origin],
   rpc: rendererRpc
 });
 
-win.on("close-requested", (event: any) => confirmQuit(event, win));
 win.on("close", () => server.stop(true));
 
 app.run();
@@ -98,18 +97,4 @@ function html(title: string, body: string) {
     </head><body><h1>${title}</h1>${body}</body></html>`,
     { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } }
   );
-}
-
-function confirmQuit(event: any, win: BrowserWindow) {
-  event.response = { allow: false };
-  const { response } = Utils.showMessageBoxSync({
-    windowId: win.id,
-    type: "question",
-    title: "Quit",
-    message: "Are you sure you want to quit?",
-    buttons: ["Quit", "Cancel"],
-    defaultId: 0,
-    cancelId: 1
-  });
-  if (response === 0) win.destroy();
 }

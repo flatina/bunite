@@ -6,7 +6,7 @@ const app = new AppRuntime();
 await app.ready;
 
 const win = new BrowserWindow({
-  title: `dnd-test v${app.version} — CEF ${app.cefVersion ?? "unknown"}`,
+  title: `dnd-test v${app.version} — ${app.engineName ?? "?"} ${app.engineVersion ?? "unknown"}`,
   html,
   frame: { x: 80, y: 80, width: 700, height: 500 }
 });

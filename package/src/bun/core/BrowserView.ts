@@ -8,7 +8,6 @@ import { attachBrowserViewRegistry, getRpcPort, sendMessageToView } from "./Sock
 import { randomBytes } from "node:crypto";
 import { resolveDefaultAppResRoot } from "../../shared/paths";
 import { removeSurfacesForHostView } from "./SurfaceRegistry";
-import { cancelPendingMessageBoxesForView } from "./Utils";
 
 const BrowserViewMap: Record<number, BrowserView<any>> = {};
 let nextWebviewId = 1;
@@ -119,8 +118,8 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport> {
 
     BrowserViewMap[this.id] = this;
     this.rpc?.setTransport(this.transport);
-    // Register ready waiter BEFORE native create — OnAfterCreated can fire
-    // on the CEF UI thread before bunite_view_create returns to JS.
+    // Register ready waiter BEFORE native create — view-ready can fire
+    // on the engine UI thread before bunite_view_create returns to JS.
     this._readyPromise = waitForViewReady(this.id);
     this.nativeAttached =
       getNativeLibrary()?.symbols.bunite_view_create(
@@ -147,7 +146,6 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport> {
       // when navigation is denied by navigationRules.
       this.on("did-navigate", (event: any) => {
         this.url = event.data?.detail ?? this.url;
-        cancelPendingMessageBoxesForView(this.id);
         removeSurfacesForHostView(this.id);
       });
     } else {
@@ -298,7 +296,6 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport> {
   }
 
   detachFromNative() {
-    cancelPendingMessageBoxesForView(this.id);
     removeSurfacesForHostView(this.id);
     cancelWaitForViewReady(this.id);
     this.nativeAttached = false;

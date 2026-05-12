@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
-import { ARCH, BIN_EXT, NATIVE_LIB_EXT, PLATFORM_TAG } from "./platform";
+import { ARCH, NATIVE_LIB_EXT, PLATFORM_TAG } from "./platform";
 import { CEF_VERSION } from "./cefVersion";
 
 const require = createRequire(import.meta.url);
@@ -10,10 +10,14 @@ export type ResolvedNativeArtifacts = {
   packageRoot: string;
   source: "optional-package" | "local-build" | "missing";
   nativePackageName: string | null;
-  cefPackageName: string | null;
+  enginePackageName: string | null;
   nativeLibPath: string | null;
-  processHelperPath: string | null;
-  cefDir: string | null;
+  /**
+   * Engine runtime directory. Engine-specific meaning:
+   * - CEF (Windows): CEF framework dir containing libcef.dll. Resolved via env, package, or vendors/cef.
+   * - WKWebView (macOS), WebKitGTK (Linux): null. Engine is the system framework.
+   */
+  engineDir: string | null;
 };
 
 export function resolvePackageRoot(packageName: string): string | null {
@@ -43,9 +47,15 @@ function parseCefVersion(name: string): number[] | null {
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
-function resolveCefDir(searchDirs: string[]): string | null {
-  // 0. Explicit override (testing / development)
-  const forceDir = process.env.BUNITE_CEF_DIR;
+function resolveEngineDir(searchDirs: string[]): string | null {
+  // CEF runtime resolution is Windows-only. mac (WKWebView) and linux (WebKitGTK)
+  // use system frameworks — no engine directory to resolve.
+  if (PLATFORM_TAG !== "win") return null;
+
+  // 0. Explicit override (testing / development).
+  // BUNITE_CEF_DIR is the legacy name retained as a fallback so existing
+  // troubleshooting docs and dev workflows keep working.
+  const forceDir = process.env.BUNITE_ENGINE_DIR ?? process.env.BUNITE_CEF_DIR;
   if (forceDir && hasCefRuntime(forceDir)) {
     return forceDir;
   }
@@ -111,51 +121,40 @@ export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
 
   // 1. Executable-relative (compiled standalone binary)
   const exeNativeLib = join(exeDir, `libBuniteNative${NATIVE_LIB_EXT}`);
-  const exeProcessHelper = join(exeDir, `process_helper${BIN_EXT}`);
-  if (existsSync(exeNativeLib) && existsSync(exeProcessHelper)) {
+  if (existsSync(exeNativeLib)) {
     return {
       packageRoot: exeDir,
       source: "local-build",
       nativePackageName: null,
-      cefPackageName: null,
+      enginePackageName: null,
       nativeLibPath: exeNativeLib,
-      processHelperPath: exeProcessHelper,
-      cefDir: resolveCefDir([exeDir])
+      engineDir: resolveEngineDir([exeDir])
     };
   }
 
   const packageRoot = resolveBunitePackageRoot();
 
-  // 2. Optional npm packages (bunite-native-*, bunite-cef-*)
+  // 2. Optional npm packages (bunite-native-*, bunite-cef-* on Windows only)
   const nativePackageName = `bunite-native-${PLATFORM_TAG}-${ARCH}`;
-  const cefPackageName = `bunite-cef-${PLATFORM_TAG}-${ARCH}`;
+  const enginePackageName = PLATFORM_TAG === "win" ? `bunite-cef-${PLATFORM_TAG}-${ARCH}` : null;
   const nativePackageRoot = resolvePackageRoot(nativePackageName);
-  const cefPackageRoot = resolvePackageRoot(cefPackageName);
+  const enginePackageRoot = enginePackageName ? resolvePackageRoot(enginePackageName) : null;
 
   const packagedNativeLibPath = nativePackageRoot
     ? join(nativePackageRoot, `libBuniteNative${NATIVE_LIB_EXT}`)
     : null;
-  const packagedProcessHelperPath = nativePackageRoot
-    ? join(nativePackageRoot, `process_helper${BIN_EXT}`)
-    : null;
-  const packagedCefDir = cefPackageRoot ?? null;
+  const packagedEngineDir = enginePackageRoot ?? null;
 
-  if (
-    packagedNativeLibPath &&
-    packagedProcessHelperPath &&
-    existsSync(packagedNativeLibPath) &&
-    existsSync(packagedProcessHelperPath)
-  ) {
+  if (packagedNativeLibPath && existsSync(packagedNativeLibPath)) {
     return {
       packageRoot: packageRoot ?? exeDir,
       source: "optional-package",
       nativePackageName,
-      cefPackageName: packagedCefDir && existsSync(packagedCefDir) ? cefPackageName : null,
+      enginePackageName: packagedEngineDir && existsSync(packagedEngineDir) ? enginePackageName : null,
       nativeLibPath: packagedNativeLibPath,
-      processHelperPath: packagedProcessHelperPath,
-      cefDir: (packagedCefDir && existsSync(packagedCefDir))
-        ? packagedCefDir
-        : resolveCefDir([nativePackageRoot, packageRoot].filter(Boolean) as string[])
+      engineDir: (packagedEngineDir && existsSync(packagedEngineDir))
+        ? packagedEngineDir
+        : resolveEngineDir([nativePackageRoot, packageRoot].filter(Boolean) as string[])
     };
   }
 
@@ -163,32 +162,28 @@ export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
   if (packageRoot) {
     const localBuildRoot = join(packageRoot, "native-build", `${PLATFORM_TAG}-${ARCH}`);
     const directLib = join(localBuildRoot, `libBuniteNative${NATIVE_LIB_EXT}`);
-    const directHelper = join(localBuildRoot, `process_helper${BIN_EXT}`);
 
-    if (existsSync(directLib) && existsSync(directHelper)) {
+    if (existsSync(directLib)) {
       return {
         packageRoot,
         source: "local-build",
         nativePackageName: null,
-        cefPackageName: null,
+        enginePackageName: null,
         nativeLibPath: directLib,
-        processHelperPath: directHelper,
-        cefDir: resolveCefDir([localBuildRoot])
+        engineDir: resolveEngineDir([localBuildRoot])
       };
     }
 
     const releaseLib = join(localBuildRoot, "Release", `libBuniteNative${NATIVE_LIB_EXT}`);
-    const releaseHelper = join(localBuildRoot, "Release", `process_helper${BIN_EXT}`);
 
-    if (existsSync(releaseLib) && existsSync(releaseHelper)) {
+    if (existsSync(releaseLib)) {
       return {
         packageRoot,
         source: "local-build",
         nativePackageName: null,
-        cefPackageName: null,
+        enginePackageName: null,
         nativeLibPath: releaseLib,
-        processHelperPath: releaseHelper,
-        cefDir: resolveCefDir([localBuildRoot])
+        engineDir: resolveEngineDir([localBuildRoot])
       };
     }
   }
@@ -197,9 +192,8 @@ export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
     packageRoot: packageRoot ?? exeDir,
     source: "missing",
     nativePackageName: nativePackageRoot ? nativePackageName : null,
-    cefPackageName: cefPackageRoot ? cefPackageName : null,
+    enginePackageName: enginePackageRoot ? enginePackageName : null,
     nativeLibPath: null,
-    processHelperPath: null,
-    cefDir: null
+    engineDir: null
   };
 }

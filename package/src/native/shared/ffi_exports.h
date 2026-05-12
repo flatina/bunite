@@ -18,12 +18,13 @@ extern "C" {
 BUNITE_EXPORT int32_t bunite_abi_version(void);
 BUNITE_EXPORT void bunite_set_log_level(int32_t level);
 BUNITE_EXPORT bool bunite_init(
-	const char* process_helper_path,
-	const char* cef_dir,
+	const char* engine_dir,
 	bool hide_console,
 	bool popup_blocking,
-	const char* chromium_flags_json
+	const char* engine_config_json
 );
+BUNITE_EXPORT const char* bunite_engine_name(void);
+BUNITE_EXPORT const char* bunite_engine_version(void);
 BUNITE_EXPORT void bunite_run_loop(void);
 BUNITE_EXPORT void bunite_quit(void);
 BUNITE_EXPORT void bunite_free_cstring(const char* value);
@@ -85,6 +86,8 @@ BUNITE_EXPORT void bunite_register_appres_route(const char* path);
 BUNITE_EXPORT void bunite_unregister_appres_route(const char* path);
 BUNITE_EXPORT void bunite_complete_route_request(uint32_t request_id, const char* html);
 BUNITE_EXPORT void bunite_view_set_visible(uint32_t view_id, bool visible);
+BUNITE_EXPORT void bunite_view_set_input_passthrough(uint32_t view_id, bool passthrough);
+BUNITE_EXPORT void bunite_view_set_mask_region(uint32_t view_id, const double* rects, uint32_t count);
 BUNITE_EXPORT void bunite_view_bring_to_front(uint32_t view_id);
 BUNITE_EXPORT void bunite_view_set_bounds(
 	uint32_t view_id,
@@ -108,16 +111,6 @@ BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id);
 BUNITE_EXPORT void bunite_view_close_devtools(uint32_t view_id);
 BUNITE_EXPORT void bunite_view_toggle_devtools(uint32_t view_id);
 BUNITE_EXPORT void bunite_complete_permission_request(uint32_t request_id, uint32_t state);
-BUNITE_EXPORT int32_t bunite_show_message_box(
-	uint32_t window_id,
-	const char* type,
-	const char* title,
-	const char* message,
-	const char* detail,
-	const char* buttons,
-	int32_t default_id,
-	int32_t cancel_id
-);
 #ifdef __cplusplus
 }
 #endif

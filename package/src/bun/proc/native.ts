@@ -9,7 +9,12 @@ export type NativeBootstrapOptions = {
   allowStub?: boolean;
   hideConsole?: boolean;
   popupBlocking?: boolean;
-  chromiumFlags?: Record<string, string | boolean>;
+  /**
+   * Engine-specific opaque config. Each adapter parses its own keys.
+   * - CEF (Windows): Chromium command-line flags as `Record<flag, value | true>`.
+   * - WKWebView, WebKitGTK: defined per adapter; refer to the adapter's bootstrap docs.
+   */
+  engineFlags?: Record<string, string | boolean>;
 };
 
 export type NativeRuntimeState = {
@@ -23,13 +28,14 @@ type CStringPointer = Pointer;
 
 type NativeSymbols = {
   bunite_abi_version: () => number;
+  bunite_engine_name: () => CString;
+  bunite_engine_version: () => CString;
   bunite_set_log_level: (level: number) => void;
   bunite_init: (
-    processHelperPath: CStringPointer,
-    cefDir: CStringPointer,
+    engineDir: CStringPointer,
     hideConsole: boolean,
     popupBlocking: boolean,
-    chromiumFlagsJson: CStringPointer
+    engineConfigJson: CStringPointer
   ) => boolean;
   bunite_run_loop: () => void;
   bunite_quit: () => void;
@@ -101,16 +107,6 @@ type NativeSymbols = {
   bunite_view_close_devtools: (viewId: number) => void;
   bunite_view_toggle_devtools: (viewId: number) => void;
   bunite_complete_permission_request: (requestId: number, state: number) => void;
-  bunite_show_message_box: (
-    windowId: number,
-    type: CStringPointer,
-    title: CStringPointer,
-    message: CStringPointer,
-    detail: CStringPointer,
-    buttons: CStringPointer,
-    defaultId: number,
-    cancelId: number
-  ) => number;
   bunite_set_webview_event_handler: (handler: JSCallback) => void;
   bunite_set_window_event_handler: (handler: JSCallback) => void;
 };
@@ -119,20 +115,25 @@ type LoadedNativeLibrary = {
   symbols: NativeSymbols;
 };
 
-const messageBoxButtonSeparator = "\x1f";
-const unsetCancelId = -1;
-
 const nativeSymbolDefinitions = {
   bunite_abi_version: {
     args: [],
     returns: FFIType.i32
+  },
+  bunite_engine_name: {
+    args: [],
+    returns: FFIType.cstring
+  },
+  bunite_engine_version: {
+    args: [],
+    returns: FFIType.cstring
   },
   bunite_set_log_level: {
     args: [FFIType.i32],
     returns: FFIType.void
   },
   bunite_init: {
-    args: [FFIType.cstring, FFIType.cstring, FFIType.bool, FFIType.bool, FFIType.cstring],
+    args: [FFIType.cstring, FFIType.bool, FFIType.bool, FFIType.cstring],
     returns: FFIType.bool
   },
   bunite_run_loop: {
@@ -310,19 +311,6 @@ const nativeSymbolDefinitions = {
     args: [FFIType.u32, FFIType.u32],
     returns: FFIType.void
   },
-  bunite_show_message_box: {
-    args: [
-      FFIType.u32,
-      FFIType.cstring,
-      FFIType.cstring,
-      FFIType.cstring,
-      FFIType.cstring,
-      FFIType.cstring,
-      FFIType.i32,
-      FFIType.i32
-    ],
-    returns: FFIType.i32
-  },
   bunite_set_webview_event_handler: {
     args: [FFIType.function],
     returns: FFIType.void
@@ -373,20 +361,23 @@ export function toCString(value: string): CStringPointer {
 }
 
 function applyEnvironment(artifacts: ResolvedNativeArtifacts) {
-  const cefBinaryDir = artifacts.cefDir && existsSync(join(artifacts.cefDir, "Release", "libcef.dll"))
-    ? join(artifacts.cefDir, "Release")
-    : artifacts.cefDir;
-  const cefResourceDir = artifacts.cefDir && existsSync(join(artifacts.cefDir, "Resources", "resources.pak"))
-    ? join(artifacts.cefDir, "Resources")
-    : artifacts.cefDir;
+  // CEF (Windows) requires the engine binary dir on PATH for libcef.dll dependency
+  // resolution and ICU_DATA pointing at the resource dir. Other engines do not need
+  // this — engineDir is null for WKWebView/WebKitGTK adapters.
+  const engineBinaryDir = artifacts.engineDir && existsSync(join(artifacts.engineDir, "Release", "libcef.dll"))
+    ? join(artifacts.engineDir, "Release")
+    : artifacts.engineDir;
+  const engineResourceDir = artifacts.engineDir && existsSync(join(artifacts.engineDir, "Resources", "resources.pak"))
+    ? join(artifacts.engineDir, "Resources")
+    : artifacts.engineDir;
 
-  if (cefResourceDir && !process.env.ICU_DATA) {
-    process.env.ICU_DATA = cefResourceDir;
+  if (engineResourceDir && !process.env.ICU_DATA) {
+    process.env.ICU_DATA = engineResourceDir;
   }
-  if (cefBinaryDir) {
+  if (engineBinaryDir) {
     const pathEntries = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
-    if (!pathEntries.includes(cefBinaryDir)) {
-      process.env.PATH = [cefBinaryDir, ...pathEntries].join(delimiter);
+    if (!pathEntries.includes(engineBinaryDir)) {
+      process.env.PATH = [engineBinaryDir, ...pathEntries].join(delimiter);
     }
   }
 }
@@ -594,10 +585,7 @@ export async function initNativeRuntime(
   const allowStub = options.allowStub ?? true;
   const artifacts = resolveNativeArtifacts();
   const hasNativeArtifacts = Boolean(
-    artifacts.nativeLibPath &&
-      artifacts.processHelperPath &&
-      existsSync(artifacts.nativeLibPath) &&
-      existsSync(artifacts.processHelperPath)
+    artifacts.nativeLibPath && existsSync(artifacts.nativeLibPath)
   );
 
   applyEnvironment(artifacts);
@@ -611,7 +599,7 @@ export async function initNativeRuntime(
   nativeLibrary = hasNativeArtifacts ? tryLoadNativeLibrary(artifacts) : null;
 
   if (nativeLibrary) {
-    const EXPECTED_ABI = 2;
+    const EXPECTED_ABI = 3;
     const nativeAbi = nativeLibrary.symbols.bunite_abi_version();
     if (nativeAbi !== EXPECTED_ABI) {
       throw new Error(
@@ -620,15 +608,14 @@ export async function initNativeRuntime(
       );
     }
     registerNativeCallbacks(nativeLibrary);
-    const chromiumFlagsJson = options.chromiumFlags
-      ? JSON.stringify(options.chromiumFlags)
+    const engineConfigJson = options.engineFlags
+      ? JSON.stringify(options.engineFlags)
       : "";
     const initOk = nativeLibrary.symbols.bunite_init(
-      toCString(artifacts.processHelperPath ?? ""),
-      toCString(artifacts.cefDir ?? ""),
+      toCString(artifacts.engineDir ?? ""),
       options.hideConsole ?? false,
       options.popupBlocking ?? false,
-      toCString(chromiumFlagsJson)
+      toCString(engineConfigJson)
     );
 
     if (!initOk) {
@@ -675,28 +662,16 @@ export function completePermissionRequest(requestId: number, stateValue: number)
   nativeLibrary?.symbols.bunite_complete_permission_request(requestId, stateValue);
 }
 
-export function showNativeMessageBox(windowId: number, params: {
-  type?: string;
-  title?: string;
-  message?: string;
-  detail?: string;
-  buttons?: string[];
-  defaultId?: number;
-  cancelId?: number;
-}): number {
+export function getNativeEngineName(): string | null {
   const native = getNativeLibrary();
-  if (!native) {
-    return params.cancelId ?? params.defaultId ?? 0;
-  }
+  if (!native) return null;
+  const cstr = native.symbols.bunite_engine_name();
+  return cstr.toString();
+}
 
-  return native.symbols.bunite_show_message_box(
-    windowId,
-    toCString(params.type ?? "info"),
-    toCString(params.title ?? ""),
-    toCString(params.message ?? ""),
-    toCString(params.detail ?? ""),
-    toCString((params.buttons ?? ["OK"]).join(messageBoxButtonSeparator)),
-    params.defaultId ?? 0,
-    params.cancelId ?? unsetCancelId
-  );
+export function getNativeEngineVersion(): string | null {
+  const native = getNativeLibrary();
+  if (!native) return null;
+  const cstr = native.symbols.bunite_engine_version();
+  return cstr.toString();
 }

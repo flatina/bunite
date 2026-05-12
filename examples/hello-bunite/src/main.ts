@@ -7,7 +7,7 @@ const app = new AppRuntime();
 await app.ready;
 
 new BrowserWindow({
-  title: `Hello Bunite v${app.version} — CEF ${app.cefVersion ?? "unknown"}`,
+  title: `Hello Bunite v${app.version} — ${app.engineName ?? "?"} ${app.engineVersion ?? "unknown"}`,
   html
 });
 
