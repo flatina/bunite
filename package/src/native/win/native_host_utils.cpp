@@ -217,6 +217,27 @@ bool shouldAlwaysAllowNavigationUrl(const std::string& url) {
   return url == "about:blank" || url.rfind("appres://app.internal/internal/", 0) == 0;
 }
 
+uint32_t cefPermissionsToBuniteKind(uint32_t cef_bits) {
+  uint32_t bunite = 0;
+  if (cef_bits & CEF_PERMISSION_TYPE_MIC_STREAM)    bunite |= BUNITE_PERMISSION_MICROPHONE;
+  if (cef_bits & CEF_PERMISSION_TYPE_CAMERA_STREAM) bunite |= BUNITE_PERMISSION_CAMERA;
+  if (cef_bits & CEF_PERMISSION_TYPE_GEOLOCATION)   bunite |= BUNITE_PERMISSION_GEOLOCATION;
+  if (cef_bits & CEF_PERMISSION_TYPE_NOTIFICATIONS) bunite |= BUNITE_PERMISSION_NOTIFICATIONS;
+  if (cef_bits & CEF_PERMISSION_TYPE_CLIPBOARD)     bunite |= BUNITE_PERMISSION_CLIPBOARD;
+  if (cef_bits & CEF_PERMISSION_TYPE_POINTER_LOCK)  bunite |= BUNITE_PERMISSION_POINTER_LOCK;
+  if (cef_bits & CEF_PERMISSION_TYPE_MIDI_SYSEX)    bunite |= BUNITE_PERMISSION_MIDI_SYSEX;
+  return bunite;
+}
+
+uint32_t cefMediaAccessToBuniteKind(uint32_t cef_bits) {
+  uint32_t bunite = 0;
+  if (cef_bits & CEF_MEDIA_PERMISSION_DEVICE_AUDIO_CAPTURE) bunite |= BUNITE_PERMISSION_MICROPHONE;
+  if (cef_bits & CEF_MEDIA_PERMISSION_DEVICE_VIDEO_CAPTURE) bunite |= BUNITE_PERMISSION_CAMERA;
+  if (cef_bits & (CEF_MEDIA_PERMISSION_DESKTOP_AUDIO_CAPTURE |
+                  CEF_MEDIA_PERMISSION_DESKTOP_VIDEO_CAPTURE)) bunite |= BUNITE_PERMISSION_SCREEN_CAPTURE;
+  return bunite;
+}
+
 bool shouldAllowNavigation(const ViewHost* view, const std::string& url) {
   if (!view || shouldAlwaysAllowNavigationUrl(url) || view->navigation_rules.empty()) {
     return true;

@@ -38,6 +38,7 @@ type NativeSymbols = {
     engineConfigJson: CStringPointer
   ) => boolean;
   bunite_run_loop: () => void;
+  bunite_pump_once: () => void;
   bunite_quit: () => void;
   bunite_free_cstring: (value: Pointer) => void;
   bunite_window_create: (
@@ -137,6 +138,10 @@ const nativeSymbolDefinitions = {
     returns: FFIType.bool
   },
   bunite_run_loop: {
+    args: [],
+    returns: FFIType.void
+  },
+  bunite_pump_once: {
     args: [],
     returns: FFIType.void
   },
@@ -599,7 +604,7 @@ export async function initNativeRuntime(
   nativeLibrary = hasNativeArtifacts ? tryLoadNativeLibrary(artifacts) : null;
 
   if (nativeLibrary) {
-    const EXPECTED_ABI = 3;
+    const EXPECTED_ABI = 4;
     const nativeAbi = nativeLibrary.symbols.bunite_abi_version();
     if (nativeAbi !== EXPECTED_ABI) {
       throw new Error(

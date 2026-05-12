@@ -2,6 +2,7 @@
 
 #include "../shared/ffi_exports.h"
 #include "../shared/log.h"
+#include "../shared/permissions.h"
 #include "../shared/webview_storage.h"
 
 #include <windows.h>
@@ -186,6 +187,13 @@ void uiThreadMain();                                        // [spawned thread]
 std::wstring utf8ToWide(const std::string& value);
 std::string escapeJsonString(const std::string& value);
 bool globMatchCaseInsensitive(const std::string& pattern, const std::string& value);
+
+// Translate raw CEF bits to engine-agnostic BUNITE_PERMISSION_* bits emitted
+// in the `permission-requested` event. CEF uses two disjoint enums depending
+// on the source delegate, so we keep two mappers. Unknown bits drop out
+// (kind=0 → JS denies).
+uint32_t cefPermissionsToBuniteKind(uint32_t cef_bits);  // cef_permission_request_types_t (OnShowPermissionPrompt)
+uint32_t cefMediaAccessToBuniteKind(uint32_t cef_bits);  // cef_media_access_permission_types_t (OnRequestMediaAccessPermission)
 std::vector<std::string> parseNavigationRulesJson(const std::string& rules_json);
 std::map<std::string, std::string> parseChromiumFlagsJson(const std::string& json);
 bool shouldAlwaysAllowNavigationUrl(const std::string& url);

@@ -39,6 +39,7 @@ export class AppRuntime {
   private readonly globalIPCHandlers = new Map<string, GlobalIPCHandler>();
   private exitOnLastWindowClosed = true;
   private quitting = false;
+  private pumpActive = false;
 
   readonly ready: Promise<void>;
 
@@ -144,16 +145,30 @@ export class AppRuntime {
 
   run() {
     const runtime = getNativeRuntimeState();
-    if (runtime?.nativeLoaded) {
-      getNativeLibrary()?.symbols.bunite_run_loop();
+    if (!runtime?.nativeLoaded) {
       if (!this.stubKeepAliveTimer) {
+        log.warn("Running without a native event loop. Keeping the process alive in stub mode.");
         this.stubKeepAliveTimer = setInterval(() => {}, 60_000);
       }
       return;
     }
 
-    if (!this.stubKeepAliveTimer) {
-      log.warn("Running without a native event loop. Keeping the process alive in stub mode.");
+    const lib = getNativeLibrary();
+    lib?.symbols.bunite_run_loop();
+
+    if (process.platform === "darwin" || process.platform === "linux") {
+      // AppKit and GTK/WebKitGTK share the main thread with Bun's libuv loop,
+      // so the native side cannot run a blocking platform loop. Drive it step
+      // by step from Bun's loop via setImmediate.
+      this.pumpActive = true;
+      const pump = () => {
+        if (!this.pumpActive) return;
+        lib?.symbols.bunite_pump_once();
+        setImmediate(pump);
+      };
+      pump();
+    } else if (!this.stubKeepAliveTimer) {
+      // Engines with a dedicated UI thread (Windows CEF) only need Bun's loop kept alive.
       this.stubKeepAliveTimer = setInterval(() => {}, 60_000);
     }
   }
@@ -170,6 +185,7 @@ export class AppRuntime {
       this.quitting = false;
       return;
     }
+    this.pumpActive = false;
     if (this.stubKeepAliveTimer) {
       clearInterval(this.stubKeepAliveTimer);
       this.stubKeepAliveTimer = null;

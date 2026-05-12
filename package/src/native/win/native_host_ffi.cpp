@@ -6,7 +6,7 @@
 using bunite_win::runOnUiThreadSync;
 using bunite_win::runOnCefUiThreadSync;
 
-static constexpr int32_t BUNITE_ABI_VERSION = 3;
+static constexpr int32_t BUNITE_ABI_VERSION = 4;
 
 namespace {
 
@@ -127,6 +127,12 @@ extern "C" BUNITE_EXPORT bool bunite_init(
 
 extern "C" BUNITE_EXPORT void bunite_run_loop(void) {
   // The native UI thread owns the Win32 + CEF loop after bunite_init succeeds.
+}
+
+extern "C" BUNITE_EXPORT void bunite_pump_once(void) {
+  // No-op on Windows — the dedicated UI thread already drives the event queue.
+  // Implemented only to keep the ABI uniform; adapters whose UI loop must share
+  // the main thread with Bun (e.g. macOS WKWebView) drive their queue here.
 }
 
 extern "C" BUNITE_EXPORT void bunite_free_cstring(const char* value) {

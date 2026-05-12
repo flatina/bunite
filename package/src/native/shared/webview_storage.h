@@ -27,6 +27,11 @@ public:
     return it == content_.end() ? std::string{} : it->second;
   }
 
+  bool has(uint32_t webview_id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return content_.find(webview_id) != content_.end();
+  }
+
   void remove(uint32_t webview_id) {
     std::lock_guard<std::mutex> lock(mutex_);
     content_.erase(webview_id);

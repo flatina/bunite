@@ -1,4 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
+
+# Language enablement happens per-platform below.
 project(bunite_native LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -7,15 +9,51 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 
-if(NOT DEFINED BUNITE_TARGET_ARCH)
-  set(BUNITE_TARGET_ARCH x64)
+# Platform/arch tags matching package/src/shared/platform.ts PLATFORM_TAG and process.arch.
+if(WIN32)
+  set(BUNITE_PLATFORM_TAG "win")
+  if(NOT DEFINED BUNITE_TARGET_ARCH)
+    set(BUNITE_TARGET_ARCH x64)
+  endif()
+  set(BUNITE_ARCH_TAG "${BUNITE_TARGET_ARCH}")
+elseif(APPLE)
+  set(BUNITE_PLATFORM_TAG "mac")
+  if(NOT DEFINED BUNITE_TARGET_ARCH)
+    if(CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "arm64")
+      set(BUNITE_TARGET_ARCH "arm64")
+    else()
+      set(BUNITE_TARGET_ARCH "x64")
+    endif()
+  endif()
+  if(BUNITE_TARGET_ARCH STREQUAL "arm64")
+    set(CMAKE_OSX_ARCHITECTURES "arm64")
+    set(BUNITE_ARCH_TAG "arm64")
+  elseif(BUNITE_TARGET_ARCH STREQUAL "x64")
+    set(CMAKE_OSX_ARCHITECTURES "x86_64")
+    set(BUNITE_ARCH_TAG "x64")
+  else()
+    message(FATAL_ERROR "Unsupported BUNITE_TARGET_ARCH for mac: ${BUNITE_TARGET_ARCH} (expected arm64 or x64)")
+  endif()
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(BUNITE_PLATFORM_TAG "linux")
+  if(NOT DEFINED BUNITE_TARGET_ARCH)
+    if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+      set(BUNITE_TARGET_ARCH "arm64")
+    else()
+      set(BUNITE_TARGET_ARCH "x64")
+    endif()
+  endif()
+  set(BUNITE_ARCH_TAG "${BUNITE_TARGET_ARCH}")
+else()
+  message(FATAL_ERROR "Unsupported platform for bunite-native.")
 endif()
 
-set(BUNITE_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/native-build/win-${BUNITE_TARGET_ARCH}")
-set(BUNITE_CEF_OUTPUT_DIR "${BUNITE_OUTPUT_DIR}/cef")
+set(BUNITE_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/native-build/${BUNITE_PLATFORM_TAG}-${BUNITE_ARCH_TAG}")
 file(MAKE_DIRECTORY "${BUNITE_OUTPUT_DIR}")
 
 if(WIN32)
+  set(BUNITE_CEF_OUTPUT_DIR "${BUNITE_OUTPUT_DIR}/cef")
+
   if(NOT DEFINED BUNITE_CEF_ROOT)
     if(DEFINED ENV{BUNITE_CEF_ROOT})
       set(BUNITE_CEF_ROOT "$ENV{BUNITE_CEF_ROOT}")
@@ -126,6 +164,75 @@ if(WIN32)
   set_target_properties(process_helper PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${BUNITE_OUTPUT_DIR}"
   )
-else()
-  message(FATAL_ERROR "This initial Phase 1 CMake skeleton currently supports Windows only.")
+elseif(APPLE)
+  enable_language(OBJCXX)
+
+  add_library(BuniteNative SHARED
+    src/native/mac/bunite_mac_runtime.mm
+    src/native/mac/bunite_mac_utils.mm
+    src/native/mac/bunite_mac_appres.mm
+    src/native/mac/bunite_mac_preload.mm
+    src/native/mac/bunite_mac_window.mm
+    src/native/mac/bunite_mac_view.mm
+    src/native/mac/bunite_mac_ffi.mm
+  )
+  target_include_directories(BuniteNative PRIVATE src/native/shared)
+  target_compile_options(BuniteNative PRIVATE
+    -fobjc-arc
+    -Wall
+    -Wextra
+    -Wno-unused-parameter
+  )
+  target_link_libraries(BuniteNative PRIVATE
+    "-framework AppKit"
+    "-framework WebKit"
+    "-framework Foundation"
+    "-framework CoreGraphics"
+    "-framework QuartzCore"
+    "-framework UniformTypeIdentifiers"
+  )
+  set_target_properties(BuniteNative PROPERTIES
+    OUTPUT_NAME "BuniteNative"            # → libBuniteNative.dylib
+    PREFIX "lib"
+    LIBRARY_OUTPUT_DIRECTORY "${BUNITE_OUTPUT_DIR}"
+    INSTALL_NAME_DIR "@rpath"
+    BUILD_WITH_INSTALL_RPATH ON
+    MACOSX_RPATH ON
+  )
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(GTK4 REQUIRED gtk4)
+  pkg_check_modules(WEBKITGTK REQUIRED webkitgtk-6.0)
+  pkg_check_modules(JSON_GLIB REQUIRED json-glib-1.0)
+
+  add_library(BuniteNative SHARED
+    src/native/linux/bunite_linux_runtime.cpp
+    src/native/linux/bunite_linux_utils.cpp
+    src/native/linux/bunite_linux_appres.cpp
+    src/native/linux/bunite_linux_preload.cpp
+    src/native/linux/bunite_linux_window.cpp
+    src/native/linux/bunite_linux_view.cpp
+    src/native/linux/bunite_linux_ffi.cpp
+  )
+  target_include_directories(BuniteNative PRIVATE
+    src/native/shared
+    ${GTK4_INCLUDE_DIRS}
+    ${WEBKITGTK_INCLUDE_DIRS}
+    ${JSON_GLIB_INCLUDE_DIRS}
+  )
+  target_compile_options(BuniteNative PRIVATE
+    -Wall -Wextra -Wno-unused-parameter -fPIC
+    ${GTK4_CFLAGS_OTHER} ${WEBKITGTK_CFLAGS_OTHER} ${JSON_GLIB_CFLAGS_OTHER}
+  )
+  target_link_libraries(BuniteNative PRIVATE
+    ${GTK4_LIBRARIES}
+    ${WEBKITGTK_LIBRARIES}
+    ${JSON_GLIB_LIBRARIES}
+    pthread
+  )
+  set_target_properties(BuniteNative PROPERTIES
+    OUTPUT_NAME "BuniteNative"            # → libBuniteNative.so
+    PREFIX "lib"
+    LIBRARY_OUTPUT_DIRECTORY "${BUNITE_OUTPUT_DIR}"
+  )
 endif()

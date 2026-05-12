@@ -90,6 +90,7 @@
         "msgpackr": "^1.11.9",
       },
       "optionalDependencies": {
+        "bunite-native-mac-arm64": "0.0.1",
         "bunite-native-win-x64": "0.0.4",
       },
     },
@@ -109,6 +110,14 @@
       "peerDependencies": {
         "bunite-core": "*",
       },
+    },
+    "tools/bunite-native-linux-x64": {
+      "name": "bunite-native-linux-x64",
+      "version": "0.0.1",
+    },
+    "tools/bunite-native-mac-arm64": {
+      "name": "bunite-native-mac-arm64",
+      "version": "0.0.1",
     },
     "tools/bunite-native-win-x64": {
       "name": "bunite-native-win-x64",
@@ -251,6 +260,10 @@
     "bunite-dev": ["bunite-dev@workspace:tools/bunite-dev"],
 
     "bunite-dnd-test": ["bunite-dnd-test@workspace:examples/dnd-test"],
+
+    "bunite-native-linux-x64": ["bunite-native-linux-x64@workspace:tools/bunite-native-linux-x64"],
+
+    "bunite-native-mac-arm64": ["bunite-native-mac-arm64@workspace:tools/bunite-native-mac-arm64"],
 
     "bunite-native-win-x64": ["bunite-native-win-x64@workspace:tools/bunite-native-win-x64"],
 

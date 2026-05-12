@@ -273,7 +273,7 @@ public:
       view_->id,
       "permission-requested",
       "{\"requestId\":" + std::to_string(request_id) +
-        ",\"kind\":" + std::to_string(requested_permissions) +
+        ",\"kind\":" + std::to_string(bunite_win::cefPermissionsToBuniteKind(requested_permissions)) +
         ",\"url\":\"" + bunite_win::escapeJsonString(requesting_origin.ToString()) + "\"}"
     );
     return true;
@@ -302,7 +302,7 @@ public:
       view_->id,
       "permission-requested",
       "{\"requestId\":" + std::to_string(request_id) +
-        ",\"kind\":" + std::to_string(requested_permissions) +
+        ",\"kind\":" + std::to_string(bunite_win::cefMediaAccessToBuniteKind(requested_permissions)) +
         ",\"url\":\"" + bunite_win::escapeJsonString(requesting_origin.ToString()) + "\"}"
     );
     return true;

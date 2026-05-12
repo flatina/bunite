@@ -26,6 +26,13 @@ BUNITE_EXPORT bool bunite_init(
 BUNITE_EXPORT const char* bunite_engine_name(void);
 BUNITE_EXPORT const char* bunite_engine_version(void);
 BUNITE_EXPORT void bunite_run_loop(void);
+/**
+ * Drive one non-blocking iteration of the engine's UI event queue. Required on
+ * engines where the UI loop must share the main thread with Bun's libuv loop
+ * (macOS WKWebView, Linux WebKitGTK). On engines that own a dedicated UI thread
+ * (Windows CEF), this is a no-op.
+ */
+BUNITE_EXPORT void bunite_pump_once(void);
 BUNITE_EXPORT void bunite_quit(void);
 BUNITE_EXPORT void bunite_free_cstring(const char* value);
 BUNITE_EXPORT void bunite_set_webview_event_handler(BuniteWebviewEventHandler handler);
