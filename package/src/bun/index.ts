@@ -12,12 +12,14 @@ import {
   type RpcSchema,
   type RpcWithTransport
 } from "../shared/rpc";
-import { createRpcTransportDemuxer, type RpcChannelHandle, type RpcTransportDemuxer, type RpcTransportDemuxerOptions } from "../shared/rpcDemux";
+import { createRpcTransportDemuxer, type RpcChannelHandle, type RpcDemuxBufferPolicy, type RpcTransportDemuxer, type RpcTransportDemuxerOptions } from "../shared/rpcDemux";
 import { createWebSocketTransport, type WebSocketLike, type WebSocketTransportPipe } from "../shared/webSocketTransport";
 import { createWebRpcHandler, type WebRpcClient } from "../shared/webRpcHandler";
+import { acquireSingleInstanceLock, type SingleInstanceLock } from "./core/singleInstanceLock";
 import { log, type LogLevel } from "../shared/log";
 
 export {
+  acquireSingleInstanceLock,
   AppRuntime,
   BrowserWindow,
   BrowserView,
@@ -38,10 +40,12 @@ export type {
   BuniteRpcSchema,
   BrowserViewOptions,
   RpcChannelHandle,
+  RpcDemuxBufferPolicy,
   RpcSchema,
   RpcWithTransport,
   RpcTransportDemuxer,
   RpcTransportDemuxerOptions,
+  SingleInstanceLock,
   WebRpcClient,
   WebSocketLike,
   WebSocketTransportPipe,

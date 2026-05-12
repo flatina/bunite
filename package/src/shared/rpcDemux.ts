@@ -32,9 +32,18 @@ export type RpcTransportDemuxer = {
   dispose(): void;
 };
 
+export type RpcDemuxBufferPolicy = "drop-oldest" | "drop-newest";
+
 export type RpcTransportDemuxerOptions = {
   /** ms to wait for peer before `bindTo` rejects. Default 10_000. */
   readyTimeout?: number;
+  /**
+   * Per-channel cap for packets received before a handler is registered.
+   * Drained FIFO on registerHandler. Default 64. Set 0 to disable buffering.
+   */
+  bufferSize?: number;
+  /** Overflow behaviour when bufferSize is exceeded. Default "drop-oldest". */
+  bufferPolicy?: RpcDemuxBufferPolicy;
 };
 
 type ChannelState = {
@@ -45,9 +54,11 @@ type ChannelState = {
   rejectReady: (error: Error) => void;
   readySettled: boolean;
   readyTimer?: ReturnType<typeof setTimeout>;
+  pending: RpcPacket[];
 };
 
 const DEFAULT_READY_TIMEOUT = 10_000;
+const DEFAULT_BUFFER_SIZE = 64;
 
 export function createRpcTransportDemuxer(
   base: RpcTransport,
@@ -58,6 +69,8 @@ export function createRpcTransportDemuxer(
   }
 
   const readyTimeout = options.readyTimeout ?? DEFAULT_READY_TIMEOUT;
+  const bufferSize = Math.max(0, options.bufferSize ?? DEFAULT_BUFFER_SIZE);
+  const bufferPolicy: RpcDemuxBufferPolicy = options.bufferPolicy ?? "drop-oldest";
   const channels = new Map<string, ChannelState>();
   let disposed = false;
 
@@ -78,10 +91,24 @@ export function createRpcTransportDemuxer(
       ready,
       resolveReady,
       rejectReady,
-      readySettled: false
+      readySettled: false,
+      pending: []
     };
     channels.set(name, state);
     return state;
+  }
+
+  function bufferIncoming(state: ChannelState, packet: RpcPacket) {
+    if (bufferSize === 0) return;
+    if (state.pending.length < bufferSize) {
+      state.pending.push(packet);
+      return;
+    }
+    if (bufferPolicy === "drop-oldest") {
+      state.pending.shift();
+      state.pending.push(packet);
+    }
+    // drop-newest: leave the queue alone, discard the new packet
   }
 
   function settleReady(state: ChannelState, action: () => void) {
@@ -112,12 +139,17 @@ export function createRpcTransportDemuxer(
     }
 
     if (isPacketEnvelope(data)) {
-      state.handler?.(data.packet);
+      if (state.handler) {
+        state.handler(data.packet);
+      } else {
+        bufferIncoming(state, data.packet);
+      }
     }
   });
 
   return {
     channel(name) {
+      if (disposed) throw new Error(`Demuxer disposed; cannot open channel "${name}"`);
       const state = getOrCreateState(name);
 
       const transport: RpcTransport = {
@@ -144,6 +176,18 @@ export function createRpcTransportDemuxer(
               );
             }, readyTimeout);
           }
+
+          // Drain after handshake bookkeeping so a thrown handler doesn't
+          // leave HELLO unsent or the ready promise un-armed. Handler errors
+          // during drain are swallowed so one bad packet doesn't drop the rest;
+          // synchronous throws from RPC handlers are a consumer bug.
+          if (state.pending.length > 0) {
+            const drained = state.pending;
+            state.pending = [];
+            for (const packet of drained) {
+              try { handler(packet); } catch { /* drain continues */ }
+            }
+          }
         },
         unregisterHandler() {
           state.handler = undefined;
@@ -166,6 +210,7 @@ export function createRpcTransportDemuxer(
           state.readySettled = true;
           state.rejectReady(new Error("Demuxer disposed"));
         }
+        state.pending.length = 0;
       }
       channels.clear();
       base.unregisterHandler?.();

@@ -255,4 +255,168 @@ describe("rpcDemux", () => {
       await expect(ready).rejects.toThrow(/disposed/);
     });
   });
+
+  describe("pre-handler buffering", () => {
+    test("packets received before handler registers are drained in order", async () => {
+      const { left, right } = createLoopbackPair();
+      const demuxL = createRpcTransportDemuxer(left);
+      const demuxR = createRpcTransportDemuxer(right);
+
+      // Producer (R) binds first and sends events before consumer (L) is ready.
+      const producer = createRpc<SchemaA>();
+      demuxR.channel("A").bindTo(producer); // intentionally not awaited
+
+      producer.send("ping", { n: 1 });
+      producer.send("ping", { n: 2 });
+      producer.send("ping", { n: 3 });
+      await tick();
+
+      // Consumer (L) registers later; buffered packets drain on bindTo.
+      const received: number[] = [];
+      const consumer = createRpc<SchemaA>();
+      consumer.addMessageListener("ping", (p: unknown) => { received.push((p as { n: number }).n); });
+      await demuxL.channel("A").bindTo(consumer);
+
+      expect(received).toEqual([1, 2, 3]);
+    });
+
+    test("bufferSize cap with default drop-oldest policy keeps the most recent N", async () => {
+      const { left, right } = createLoopbackPair();
+      const demuxL = createRpcTransportDemuxer(left, { bufferSize: 3 });
+      const demuxR = createRpcTransportDemuxer(right);
+
+      const producer = createRpc<SchemaA>();
+      demuxR.channel("A").bindTo(producer);
+      for (let i = 1; i <= 5; i++) producer.send("ping", { n: i });
+      await tick();
+
+      const received: number[] = [];
+      const consumer = createRpc<SchemaA>();
+      consumer.addMessageListener("ping", (p: unknown) => { received.push((p as { n: number }).n); });
+      await demuxL.channel("A").bindTo(consumer);
+
+      expect(received).toEqual([3, 4, 5]);
+    });
+
+    test("drop-newest policy keeps the first N and discards later packets", async () => {
+      const { left, right } = createLoopbackPair();
+      const demuxL = createRpcTransportDemuxer(left, { bufferSize: 3, bufferPolicy: "drop-newest" });
+      const demuxR = createRpcTransportDemuxer(right);
+
+      const producer = createRpc<SchemaA>();
+      demuxR.channel("A").bindTo(producer);
+      for (let i = 1; i <= 5; i++) producer.send("ping", { n: i });
+      await tick();
+
+      const received: number[] = [];
+      const consumer = createRpc<SchemaA>();
+      consumer.addMessageListener("ping", (p: unknown) => { received.push((p as { n: number }).n); });
+      await demuxL.channel("A").bindTo(consumer);
+
+      expect(received).toEqual([1, 2, 3]);
+    });
+
+    test("bufferSize 0 disables buffering — pre-handler packets drop", async () => {
+      const { left, right } = createLoopbackPair();
+      const demuxL = createRpcTransportDemuxer(left, { bufferSize: 0 });
+      const demuxR = createRpcTransportDemuxer(right);
+
+      const producer = createRpc<SchemaA>();
+      demuxR.channel("A").bindTo(producer);
+      producer.send("ping", { n: 1 });
+      producer.send("ping", { n: 2 });
+      await tick();
+
+      const received: number[] = [];
+      const consumer = createRpc<SchemaA>();
+      consumer.addMessageListener("ping", (p: unknown) => { received.push((p as { n: number }).n); });
+      await demuxL.channel("A").bindTo(consumer);
+
+      // Send one post-bind to confirm channel is live.
+      producer.send("ping", { n: 3 });
+      await tick();
+      expect(received).toEqual([3]);
+    });
+
+    test("packets after handler registers bypass buffer", async () => {
+      const { left, right } = createLoopbackPair();
+      const demuxL = createRpcTransportDemuxer(left, { bufferSize: 2 });
+      const demuxR = createRpcTransportDemuxer(right);
+
+      const received: number[] = [];
+      const consumer = createRpc<SchemaA>();
+      consumer.addMessageListener("ping", (p: unknown) => { received.push((p as { n: number }).n); });
+      const producer = createRpc<SchemaA>();
+      await Promise.all([
+        demuxL.channel("A").bindTo(consumer),
+        demuxR.channel("A").bindTo(producer)
+      ]);
+
+      for (let i = 1; i <= 5; i++) producer.send("ping", { n: i });
+      await tick();
+      expect(received).toEqual([1, 2, 3, 4, 5]);
+    });
+
+    test("unregister then re-register drains the second window correctly", async () => {
+      const { left, right } = createLoopbackPair();
+      const demuxL = createRpcTransportDemuxer(left);
+      const demuxR = createRpcTransportDemuxer(right);
+
+      const producer = createRpc<SchemaA>();
+      demuxR.channel("A").bindTo(producer);
+
+      const received: number[] = [];
+      const consumer1 = createRpc<SchemaA>();
+      consumer1.addMessageListener("ping", (p: unknown) => { received.push((p as { n: number }).n); });
+      await demuxL.channel("A").bindTo(consumer1);
+      consumer1.dispose(); // releases the transport's handler via unregisterHandler
+
+      producer.send("ping", { n: 7 });
+      producer.send("ping", { n: 8 });
+      await tick();
+
+      const consumer2 = createRpc<SchemaA>();
+      consumer2.addMessageListener("ping", (p: unknown) => { received.push((p as { n: number }).n); });
+      await demuxL.channel("A").bindTo(consumer2);
+      expect(received).toEqual([7, 8]);
+    });
+
+    test("negative bufferSize is clamped to 0 (no buffering)", async () => {
+      const { left, right } = createLoopbackPair();
+      const demuxL = createRpcTransportDemuxer(left, { bufferSize: -10 });
+      const demuxR = createRpcTransportDemuxer(right);
+
+      const producer = createRpc<SchemaA>();
+      demuxR.channel("A").bindTo(producer);
+      producer.send("ping", { n: 1 });
+      await tick();
+
+      const received: number[] = [];
+      const consumer = createRpc<SchemaA>();
+      consumer.addMessageListener("ping", (p: unknown) => { received.push((p as { n: number }).n); });
+      await demuxL.channel("A").bindTo(consumer);
+
+      expect(received).toEqual([]); // pre-handler packet dropped, no buffer
+    });
+
+    test("dispose drops buffered packets without delivering", async () => {
+      const { left, right } = createLoopbackPair();
+      const demuxL = createRpcTransportDemuxer(left);
+      const demuxR = createRpcTransportDemuxer(right);
+
+      const producer = createRpc<SchemaA>();
+      demuxR.channel("A").bindTo(producer);
+      producer.send("ping", { n: 1 });
+      producer.send("ping", { n: 2 });
+      await tick();
+
+      demuxL.dispose();
+
+      const received: number[] = [];
+      const consumer = createRpc<SchemaA>();
+      consumer.addMessageListener("ping", (p: unknown) => { received.push((p as { n: number }).n); });
+      expect(() => demuxL.channel("A").bindTo(consumer)).toThrow(/disposed/);
+      expect(received).toEqual([]);
+    });
+  });
 });
