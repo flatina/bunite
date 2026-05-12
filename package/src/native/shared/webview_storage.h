@@ -44,9 +44,7 @@ private:
   std::map<uint32_t, std::string> content_;
 };
 
-// Tracks which appres:// paths have registered dynamic handlers on the Bun side.
-// The actual handler function lives in JS; this only stores the set of registered paths
-// and completed route responses.
+// Registered dynamic appres:// paths + completed route responses. JS owns the handler.
 class AppResRouteStorage {
 public:
   static AppResRouteStorage& instance() {

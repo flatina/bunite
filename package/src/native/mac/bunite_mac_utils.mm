@@ -52,8 +52,7 @@ void bottomLeftToTopLeft(NSRect frame, double* out_x, double* out_y, double* out
 }
 
 void emitWindowEvent(uint32_t window_id, const char* event_name, const std::string& payload) {
-  // Bun owns the strings (calls bunite_free_cstring) — must strdup so we don't
-  // hand back .rodata literals or pointers into a temporary std::string.
+  // Bun calls bunite_free_cstring — strdup so we don't return .rodata or temporary pointers.
   if (BuniteWindowEventHandler h = g_runtime.window_event_handler) {
     h(window_id, strdup(event_name ? event_name : ""), strdup(payload.c_str()));
   }
@@ -65,8 +64,6 @@ void emitWebviewEvent(uint32_t view_id, const char* event_name, const std::strin
   }
 }
 
-// Mirror of win/native_host_utils.cpp:153 — copied verbatim (rule-of-three not
-// reached; extract to shared C++ when linux WebKitGTK adapter lands).
 bool globMatchCaseInsensitive(const std::string& pattern, const std::string& value) {
   size_t pi = 0, vi = 0;
   size_t star_p = std::string::npos, star_v = 0;

@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
-// Copies native build artifacts into this package directory.
-// Run after `bun run build:native:win` in the repo root.
+// Sync Windows x64 native artifacts into this package. Run after `bun run build:native:win`.
 
 import { cpSync, existsSync } from "node:fs";
 import { join } from "node:path";

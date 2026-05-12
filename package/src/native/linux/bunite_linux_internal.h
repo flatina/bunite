@@ -22,12 +22,10 @@ namespace bunite_linux {
 
 struct WindowState {
   GtkWindow* window = nullptr;
-  // gtk_window_set_child accepts only one widget; overlay hosts the main view
-  // (set_child) and future surfaces (add_overlay).
+  // gtk_window_set_child takes one widget — overlay holds main view + surfaces.
   GtkOverlay* host = nullptr;
   std::atomic<bool> close_pending{false};
-  // GTK4 has no is_minimized query, and is_maximized reflects compositor state
-  // (ignored on WSLg / some tiling WMs). Logical state tracked for FFI parity.
+  // GTK4 lacks is_minimized; is_maximized lies on WSLg/tiling WMs. Track logically.
   std::atomic<bool> minimized{false};
   std::atomic<bool> maximized{false};
 };

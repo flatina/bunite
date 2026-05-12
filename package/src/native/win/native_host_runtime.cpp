@@ -216,12 +216,8 @@ void uiThreadMain() {
         reinterpret_cast<LONG_PTR>(messageWindowProc)
       );
 
-      // Consume a hostile STARTUPINFO.wShowWindow override.
-      // When launched via `bun run`, the child receives STARTF_USESHOWWINDOW
-      // with wShowWindow=SW_HIDE, which overrides the nCmdShow parameter of
-      // the first ShowWindow call in the process.  We only consume the
-      // override when it would hide windows; legitimate values like
-      // SW_SHOWMAXIMIZED are left for the first real window to honour.
+      // `bun run` passes STARTF_USESHOWWINDOW + SW_HIDE which overrides nCmdShow on the first ShowWindow.
+      // Consume only when it would hide; legitimate values (SW_SHOWMAXIMIZED) pass through.
       {
         STARTUPINFOW si{};
         si.cb = sizeof(si);

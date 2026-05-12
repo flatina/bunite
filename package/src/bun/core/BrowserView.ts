@@ -118,8 +118,7 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport> {
 
     BrowserViewMap[this.id] = this;
     this.rpc?.setTransport(this.transport);
-    // Register ready waiter BEFORE native create — view-ready can fire
-    // on the engine UI thread before bunite_view_create returns to JS.
+    // Register before native create — view-ready can fire on the UI thread before bunite_view_create returns.
     this._readyPromise = waitForViewReady(this.id);
     this.nativeAttached =
       getNativeLibrary()?.symbols.bunite_view_create(
@@ -140,10 +139,8 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport> {
       ) ?? false;
 
     if (this.nativeAttached) {
-      // Clean up owned surfaces when this view navigates (page refresh/navigation
-      // destroys the JS context without firing disconnectedCallback).
-      // Uses did-navigate (not will-navigate) because will-navigate fires even
-      // when navigation is denied by navigationRules.
+      // did-navigate (not will-): nav destroys JS context without disconnectedCallback;
+      // will-navigate fires even when rules deny → would leak surfaces.
       this.on("did-navigate", (event: any) => {
         this.url = event.data?.detail ?? this.url;
         removeSurfacesForHostView(this.id);

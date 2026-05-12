@@ -1,8 +1,5 @@
-// appres://app.internal/* — WKURLSchemeHandler. Routing precedence:
-//   1. internal/index.html — HTML stored via bunite_view_load_html
-//   2. registered dynamic route — emit `route-request`, JS responds via
-//      bunite_complete_route_request
-//   3. static file under view's appres_root
+// appres://app.internal/* WKURLSchemeHandler.
+// Precedence: stored HTML > dynamic route > static file under appres_root.
 
 #import "bunite_mac_internal.h"
 
@@ -25,10 +22,7 @@ NSString* mimeFor(NSString* path) {
   return type.preferredMIMEType ?: @"application/octet-stream";
 }
 
-// Reject syntactically unsafe segments before any storage / route / fs lookup.
-// resolveUnderRoot already blocks filesystem escape, but unsafe input should
-// fail with NSURLErrorBadURL (not NSURLErrorFileDoesNotExist) and must not
-// reach dynamic route handlers — JS shouldn't see `..` paths.
+// Reject unsafe segments early — dynamic-route handlers (JS) must never see `..` paths.
 BOOL hasUnsafeSegment(NSString* rel) {
   for (NSString* seg in [rel componentsSeparatedByString:@"/"]) {
     if (seg.length == 0) continue;
@@ -51,8 +45,7 @@ NSString* resolveUnderRoot(NSString* root, NSString* rel) {
   return pathUnderRoot(root, candidate) ? candidate : nil;
 }
 
-// Append index.html/.html fallbacks, re-validating against root so a symlink
-// trick in the appended segment can't escape.
+// Re-validate after appending index.html/.html — a symlink in the suffix could escape root.
 NSString* withFallback(NSString* root, NSString* path) {
   NSFileManager* fm = NSFileManager.defaultManager;
   BOOL isDir = NO;
@@ -94,8 +87,7 @@ NSString* withFallback(NSString* root, NSString* path) {
 
   std::string rel_utf8 = rel.UTF8String;
 
-  // 1. internal/index.html — serve HTML stashed via bunite_view_load_html.
-  // `has` (not `get().empty()`) so an explicit load_html("") still intercepts.
+  // `has` (not `.empty()`) so an explicit load_html("") still intercepts.
   if ([rel isEqualToString:@"internal/index.html"] &&
       bunite::WebviewContentStorage::instance().has(view_id)) {
     std::string stored = bunite::WebviewContentStorage::instance().get(view_id);
@@ -150,9 +142,7 @@ NSString* withFallback(NSString* root, NSString* path) {
 
 - (void)webView:(WKWebView*)wv stopURLSchemeTask:(id<WKURLSchemeTask>)task {
   (void)wv;
-  // Drop any pending dynamic-route entry for this task so a subsequent
-  // bunite_complete_route_request becomes a lookup miss instead of raising
-  // NSInternalInconsistencyException on the stopped task.
+  // Drop pending entry — complete_route_request on a stopped task raises NSInternalInconsistencyException.
   if (g_runtime.pending_route_tasks.count == 0) return;
   NSNumber* hit = nil;
   for (NSNumber* key in g_runtime.pending_route_tasks) {

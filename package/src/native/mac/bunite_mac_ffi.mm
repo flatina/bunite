@@ -1,8 +1,4 @@
-// All `BUNITE_EXPORT` FFI entry points for the macOS adapter.
-//
-// Skeleton state — only the lifecycle/metadata exports have real implementations.
-// Window/view/IPC/permission exports are placeholders that log a warning and no-op;
-// they will be filled in as Phase 1+ progresses per .tmp/mac-native-skeleton-plan.md.
+// FFI entry points for the macOS adapter.
 
 #import "bunite_mac_internal.h"
 
@@ -26,14 +22,13 @@ namespace {
 
 constexpr int32_t kBuniteAbiVersion = 4;
 
-// "not implemented yet" — single warning per export so logs aren't spammed by
-// a tight call loop from JS.
-#define BUNITE_MAC_TODO(name)                                                            \
-  do {                                                                                   \
-    static std::once_flag once;                                                          \
-    std::call_once(once, []() {                                                          \
-      BUNITE_WARN("%s is not implemented in the macOS adapter skeleton yet.", (name));   \
-    });                                                                                  \
+// warn-once — avoid log spam from tight JS call loops.
+#define BUNITE_MAC_TODO(name)                                       \
+  do {                                                              \
+    static std::once_flag once;                                     \
+    std::call_once(once, []() {                                     \
+      BUNITE_WARN("%s not implemented on macOS.", (name));          \
+    });                                                             \
   } while (0)
 
 } // namespace
@@ -47,9 +42,7 @@ extern "C" BUNITE_EXPORT const char* bunite_engine_name(void) {
 }
 
 extern "C" BUNITE_EXPORT const char* bunite_engine_version(void) {
-  // WebKit framework loads lazily with the first WKWebView, so once-cache would
-  // freeze a pre-load OS-version fallback. Look up each call (cheap), cache the
-  // first non-OS answer.
+  // WebKit loads lazily on first WKWebView — re-check until cached value is non-OS fallback.
   static std::string cached;
   if (!cached.empty() && cached.compare(0, 9, "wkwebview") == 0) return cached.c_str();
   NSBundle* webkit = [NSBundle bundleWithIdentifier:@"com.apple.WebKit"];
@@ -86,9 +79,7 @@ extern "C" BUNITE_EXPORT bool bunite_init(
 
   [NSApplication sharedApplication];
   [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-  // Required when we drive the run loop ourselves via bunite_pump_once instead
-  // of [NSApp run] — without finishLaunching, AppKit/WebKit consider NSApp
-  // un-launched and WKWebView defers all navigation work.
+  // Without finishLaunching, WKWebView defers all navigation since we don't call [NSApp run].
   [NSApp finishLaunching];
 
   g_runtime.popup_blocking = popup_blocking;
@@ -97,9 +88,7 @@ extern "C" BUNITE_EXPORT bool bunite_init(
 }
 
 extern "C" BUNITE_EXPORT void bunite_run_loop(void) {
-  // Mac cannot afford a blocking [NSApp run] — see .tmp/mac-native-skeleton-plan.md
-  // Phase 0 Spike A. The JS side (App.run on darwin) drives bunite_pump_once from
-  // setImmediate instead. This export remains for ABI symmetry with the Windows adapter.
+  // No-op — JS drives bunite_pump_once via setImmediate. Kept for ABI symmetry.
 }
 
 extern "C" BUNITE_EXPORT void bunite_pump_once(void) {
@@ -107,9 +96,7 @@ extern "C" BUNITE_EXPORT void bunite_pump_once(void) {
     BUNITE_WARN("bunite_pump_once called off the main thread; ignoring.");
     return;
   }
-  // Drain sources/events with a wall-time cap. The per-iteration timeout lets
-  // WKWebView's cross-process IPC deliver (timeout 0 polls too tightly to receive
-  // it); the wall cap keeps Bun's libuv lively.
+  // Per-iter timeout lets WKWebView IPC deliver (0 polls too tight); wall cap keeps libuv lively.
   static constexpr CFAbsoluteTime kCap = 0.005;  // 5ms
   CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + kCap;
   do {
@@ -127,8 +114,7 @@ extern "C" BUNITE_EXPORT void bunite_quit(void) {
   if (g_runtime.shutting_down.exchange(true)) return;
 
   runOnUiThreadSync([]() {
-    // WindowState owns a std::atomic so it is intentionally non-copyable;
-    // snapshot just the NSWindow* references we need to close.
+    // WindowState is non-copyable (atomic field) — snapshot the NSWindow* refs only.
     std::vector<NSWindow*> windows;
     {
       std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
@@ -288,8 +274,7 @@ extern "C" BUNITE_EXPORT void bunite_view_execute_javascript(uint32_t view_id, c
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char* url) {
-  // Drop any stored HTML so a navigation back to internal/index.html doesn't
-  // resurrect it. Mirror of win path.
+  // Drop stored HTML so a later nav to internal/index.html doesn't resurrect it.
   bunite::WebviewContentStorage::instance().remove(view_id);
   NSString* s = bunite_mac::utf8ToNSString(url);
   runOnUiThreadSync([=]() {
@@ -301,9 +286,7 @@ extern "C" BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char*
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_load_html(uint32_t view_id, const char* html) {
-  // Stash HTML and navigate to appres://app.internal/internal/index.html so
-  // the page origin is appres://app.internal — preload, RPC, CSP, CORS work
-  // identically to a static appres-served page. Mirror of win path.
+  // Nav to internal/index.html so origin = appres://app.internal — preload/RPC/CSP/CORS match static pages.
   std::string content = html ? html : "";
   bunite::WebviewContentStorage::instance().set(view_id, content);
   runOnUiThreadSync([=]() {
@@ -333,8 +316,7 @@ extern "C" BUNITE_EXPORT void bunite_complete_route_request(uint32_t request_id,
     NSURLResponse* response = [[NSURLResponse alloc]
       initWithURL:task.request.URL MIMEType:@"text/html"
       expectedContentLength:data.length textEncodingName:nil];
-    // Stop can race with us on the main queue if WebKit decided to cancel
-    // after our pending lookup but before didFinish — swallow that exception.
+    // Race: WebKit can stop the task between lookup and didFinish — swallow.
     @try {
       [task didReceiveResponse:response];
       [task didReceiveData:data];
@@ -387,9 +369,7 @@ extern "C" BUNITE_EXPORT void bunite_view_set_mask_region(uint32_t view_id, cons
       CGPathAddRect(path, NULL, local);
       [holes addObject:[NSValue valueWithRect:local]];
     }
-    // Visual: kCAFillRuleEvenOdd — outer XOR holes. Overlapping holes XOR
-    // each other and become visible in the overlap (unlike win's RGN_DIFF
-    // accumulation). Hit-test uses raw rects so input still passes through.
+    // kCAFillRuleEvenOdd: overlapping holes XOR (unlike win RGN_DIFF). Hit-test uses raw rects.
     CAShapeLayer* mask = [CAShapeLayer layer];
     mask.path = path;
     mask.fillRule = kCAFillRuleEvenOdd;
@@ -410,9 +390,7 @@ extern "C" BUNITE_EXPORT void bunite_view_bring_to_front(uint32_t view_id) {
   });
 }
 
-// set_bounds contract: rects come in physical pixels (JS multiplies by DPR
-// before sending to match win HWND coords). createView takes points
-// (logical) — that path is for the main BrowserView and never re-bounded.
+// set_bounds: physical pixels (JS pre-multiplies DPR). createView: logical points (main view only, never re-bounded).
 extern "C" BUNITE_EXPORT void bunite_view_set_bounds(
   uint32_t view_id, double x, double y, double width, double height
 ) {

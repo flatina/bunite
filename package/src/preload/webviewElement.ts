@@ -6,10 +6,7 @@ declare const bunite: {
   off: (channel: string, handler: (data: any) => void) => void;
 };
 
-// --- OverlaySyncController ---
-// Tracks element bounds and notifies when they change.
-// Uses ResizeObserver for size changes and rAF polling for position changes.
-// Dirty-flag coalescing ensures at most one IPC per animation frame.
+// OverlaySyncController: ResizeObserver + rAF position polling; dirty-flag coalescing ≤1 IPC/frame.
 
 type Rect = { x: number; y: number; width: number; height: number };
 
@@ -290,13 +287,11 @@ class BuniteWebviewElement extends HTMLElement {
 if (typeof customElements !== "undefined") {
   customElements.define("bunite-webview", BuniteWebviewElement);
 
-  // When the host page gains focus (click on non-surface area), the host BrowserView
-  // HWND comes to front and covers surface child HWNDs. Re-raise surfaces on focus.
+  // Host BrowserView HWND covers surface HWNDs on focus — re-raise.
   const raiseAll = () => bunite.invoke("__bunite:surface.bringAllVisiblesToFront").catch(() => {});
   document.addEventListener("pointerdown", raiseAll, true);
 
-  // During host-page drag (e.g. dockview tab drag), send surfaces behind host
-  // via Z-order swap so OLE DragDrop reaches the host's IDropTarget.
+  // Send surfaces behind host during drag so OLE DragDrop reaches host's IDropTarget.
   document.addEventListener("dragstart", () => {
     bunite.invoke("__bunite:surface.setAllPassthrough", { passthrough: true }).catch(() => {});
   }, true);

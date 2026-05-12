@@ -1,5 +1,4 @@
-// Iframe-based fallback for web browsers. No-op when the native element is already registered by the CEF preload.
-// HTMLElement reference is lazy so this module is import-safe in Node/Bun.
+// Iframe fallback for web (no-op if native already registered). HTMLElement deref'd lazily so module is import-safe in Node/Bun.
 
 let cachedClass: CustomElementConstructor | null = null;
 

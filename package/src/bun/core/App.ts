@@ -157,9 +157,7 @@ export class AppRuntime {
     lib?.symbols.bunite_run_loop();
 
     if (process.platform === "darwin" || process.platform === "linux") {
-      // AppKit and GTK/WebKitGTK share the main thread with Bun's libuv loop,
-      // so the native side cannot run a blocking platform loop. Drive it step
-      // by step from Bun's loop via setImmediate.
+      // AppKit / WebKitGTK share Bun's main thread — step-drive via setImmediate (no blocking loop).
       this.pumpActive = true;
       const pump = () => {
         if (!this.pumpActive) return;

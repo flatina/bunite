@@ -1,6 +1,4 @@
-// Preload runtime — built once at package build time, injected into every appres:// page.
-// The config variables (__buniteWebviewId, __buniteRpcSocketPort, __buniteSecretKeyBase64)
-// are injected by inline.ts as a small preamble before this script.
+// Preload runtime injected into every appres:// page. Config vars (__bunite*) prepended by inline.ts.
 
 declare const __buniteWebviewId: number;
 declare const __buniteRpcSocketPort: number;

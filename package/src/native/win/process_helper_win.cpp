@@ -92,9 +92,7 @@ public:
     }
     if (!is_appres && !is_allowed_origin) return;
 
-    // Skip isolated-world contexts (DevTools overlay, extensions, etc.) that
-    // lack full Web APIs. The page's main-world context has customElements;
-    // DevTools-injected contexts do not.
+    // Skip isolated-world contexts (DevTools/extensions) — only main-world has customElements.
     context->Enter();
     CefRefPtr<CefV8Value> ce = context->GetGlobal()->GetValue("customElements");
     bool is_main_world = ce && !ce->IsNull() && !ce->IsUndefined();

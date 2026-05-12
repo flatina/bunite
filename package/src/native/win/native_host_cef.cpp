@@ -102,8 +102,7 @@ public:
     CefRefPtr<CefDictionaryValue>&,
     bool*
   ) override {
-    // Inject our tracked client so F12, Ctrl+Shift+I, and Inspect Element
-    // all go through BuniteDevToolsClient for proper shutdown sequencing.
+    // Route F12/Ctrl+Shift+I/Inspect through BuniteDevToolsClient for shutdown ordering.
     client = new BuniteDevToolsClient();
   }
 
@@ -449,8 +448,7 @@ void closeViewHost(ViewHost* view) {
     return;
   }
 
-  // Browser not yet created — OnAfterCreated will check closing flag.
-  // Safety net: if CreateBrowser failed entirely, clean up on CEF thread.
+  // Browser not yet created — OnAfterCreated handles closing; fallback cleanup if CreateBrowser failed.
   postCefUiTask([view]() {
     if (view->browser) {
       view->browser->GetHost()->CloseBrowser(true);
@@ -819,8 +817,6 @@ bool createBrowserForView(ViewHost* view) {
     }
   }
 
-  // CreateBrowser (async) — can be called from any browser process thread.
-  // Browser instance will be available in OnAfterCreated callback.
   return CefBrowserHost::CreateBrowser(
     window_info,
     view->client,

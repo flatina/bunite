@@ -40,8 +40,7 @@ GtkWidget* on_create(WebKitWebView* wv, WebKitNavigationAction* action, gpointer
   return nullptr;  // cancel; JS opens via load_url if desired
 }
 
-// WebKitGTK fires NAVIGATION_ACTION for sub-frames too with no main-frame
-// discriminator, so iframes go through nav rules here (diverges from mac/win).
+// WebKitGTK fires nav-action for sub-frames with no main-frame discriminator — iframes hit nav rules.
 gboolean on_decide_policy(WebKitWebView* wv, WebKitPolicyDecision* decision,
                           WebKitPolicyDecisionType type, gpointer user_data) {
   (void)wv;

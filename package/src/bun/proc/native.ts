@@ -354,9 +354,7 @@ export function toCString(value: string): CStringPointer {
   const normalized = value.endsWith("\0") ? value : `${value}\0`;
   const buffer = Buffer.from(normalized, "utf8");
 
-  // Keep recent CString buffers alive long enough for native code to copy them.
-  // This is not a long-term ownership model for retained native pointers, but it
-  // avoids immediate GC hazards across the current FFI call boundary.
+  // Keep recent CString buffers alive across the FFI call (not long-term retention).
   retainedCStringBuffers.push(buffer);
   if (retainedCStringBuffers.length > 1024) {
     retainedCStringBuffers.shift();
@@ -366,9 +364,7 @@ export function toCString(value: string): CStringPointer {
 }
 
 function applyEnvironment(artifacts: ResolvedNativeArtifacts) {
-  // CEF (Windows) requires the engine binary dir on PATH for libcef.dll dependency
-  // resolution and ICU_DATA pointing at the resource dir. Other engines do not need
-  // this — engineDir is null for WKWebView/WebKitGTK adapters.
+  // CEF needs engine dir on PATH (libcef.dll) and ICU_DATA pointing at resources. Null for mac/linux.
   const engineBinaryDir = artifacts.engineDir && existsSync(join(artifacts.engineDir, "Release", "libcef.dll"))
     ? join(artifacts.engineDir, "Release")
     : artifacts.engineDir;

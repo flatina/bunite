@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
-// Copies Linux x64 native build artifacts into this package directory.
-// Run after `bun run build:native:linux` on a Linux host.
+// Sync Linux x64 native artifacts into this package. Run after `bun run build:native:linux`.
 
 import { cpSync, existsSync } from "node:fs";
 import { join } from "node:path";

@@ -48,13 +48,10 @@ function parseCefVersion(name: string): number[] | null {
 }
 
 function resolveEngineDir(searchDirs: string[]): string | null {
-  // CEF runtime resolution is Windows-only. mac (WKWebView) and linux (WebKitGTK)
-  // use system frameworks — no engine directory to resolve.
+  // CEF-only (Win). mac/linux use system frameworks.
   if (PLATFORM_TAG !== "win") return null;
 
-  // 0. Explicit override (testing / development).
-  // BUNITE_CEF_DIR is the legacy name retained as a fallback so existing
-  // troubleshooting docs and dev workflows keep working.
+  // 0. Explicit override (BUNITE_ENGINE_DIR; BUNITE_CEF_DIR as legacy fallback).
   const forceDir = process.env.BUNITE_ENGINE_DIR ?? process.env.BUNITE_CEF_DIR;
   if (forceDir && hasCefRuntime(forceDir)) {
     return forceDir;

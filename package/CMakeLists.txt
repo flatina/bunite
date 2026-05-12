@@ -171,7 +171,6 @@ elseif(APPLE)
     src/native/mac/bunite_mac_runtime.mm
     src/native/mac/bunite_mac_utils.mm
     src/native/mac/bunite_mac_appres.mm
-    src/native/mac/bunite_mac_preload.mm
     src/native/mac/bunite_mac_window.mm
     src/native/mac/bunite_mac_view.mm
     src/native/mac/bunite_mac_ffi.mm

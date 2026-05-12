@@ -1,12 +1,7 @@
-// bunite-native macOS adapter — shared internal declarations.
+// macOS adapter — shared internal declarations.
 //
-// ARC + C++ struct interop rule: any Obj-C object stored in a C++ aggregate
-// must carry an explicit ownership qualifier (__strong / __weak), otherwise
-// ARC behaviour is undefined for that field. All globals/structures in this
-// header follow that rule consistently.
-//
-// Threading: every NSWindow / WKWebView API must run on the main thread.
-// FFI entry points marshal cross-thread calls through runOnUiThreadSync.
+// ARC: Obj-C objects in C++ aggregates need explicit __strong/__weak (else UB).
+// Threading: NSWindow / WKWebView APIs are main-thread-only — cross-thread via runOnUiThreadSync.
 
 #pragma once
 
@@ -37,13 +32,9 @@
 @property (nonatomic, strong) id<WKURLSchemeTask> task;
 @end
 
-// Wraps every WKWebView so input passthrough + region mask have a stable
-// host (WKWebView's internal subviews make those primitives fragile when
-// applied directly). Layer-backed for CAShapeLayer mask, isFlipped so the
-// container's local coords match window.contentView (BuniteFlippedView).
-// `maskHoles` (container-local points) gate hitTest in addition to the visual
-// CALayer mask so clicks in masked regions pass through (mirroring win's
-// SetWindowRgn which couples visual + hit-test).
+// Stable host for passthrough + mask (WKWebView's internal subviews are fragile).
+// Layer-backed (CAShapeLayer mask), isFlipped (coords match BuniteFlippedView).
+// `maskHoles` gates hitTest alongside the visual mask — clicks pass through (matches win SetWindowRgn).
 @interface BunitePassthroughContainer : NSView
 @property (nonatomic, assign) BOOL passthrough;
 @property (nonatomic, copy) NSArray<NSValue*>* maskHoles;  // NSValue.rectValue
@@ -51,10 +42,7 @@
 
 namespace bunite_mac {
 
-// ---------------------------------------------------------------------------
-// Per-object state. Populated by bunite_window_create / bunite_view_create
-// once those are implemented; empty during the initial skeleton.
-// ---------------------------------------------------------------------------
+// --- Per-object state ---
 
 struct WindowState {
   __strong NSWindow* window = nil;
@@ -70,8 +58,7 @@ struct ViewState {
   uint32_t window_id = 0;
   std::string appres_root;
   std::string preload_script;
-  // Stored HTML for `bunite_view_load_html` — appres scheme handler serves
-  // it back when the page requests appres://app.internal/internal/index.html.
+  // HTML stashed by load_html; appres handler serves at internal/index.html.
   std::string stored_html;
   std::vector<std::string> navigation_rules;
 };
@@ -89,16 +76,11 @@ struct RuntimeState {
   bool popup_blocking = false;
   std::atomic<bool> shutting_down{false};
 
-  // Pending permission decisions awaiting a JS reply (request_id → entry).
-  // Main-thread only — WKUIDelegate writes, bunite_complete_permission_request
-  // and removeView read/erase, both serialized on the main queue. No mutex.
+  // Pending permission decisions (request_id → entry). Main-thread only, no mutex.
   __strong NSMutableDictionary<NSNumber*, BunitePendingPermission*>* pending_permissions = nil;
   uint32_t next_permission_request_id = 1;
 
-  // In-flight WKURLSchemeTask for dynamic appres routes, keyed by request_id.
-  // BunitePendingRoute carries view_id so removeView can deny + clean entries
-  // tied to a destroyed webview without depending on WebKit calling stop.
-  // Main-thread only — start/stop/complete/removeView funnel through main.
+  // In-flight dynamic-route tasks (request_id → entry). view_id lets removeView clean up without WebKit stop. Main-thread only.
   __strong NSMutableDictionary<NSNumber*, BunitePendingRoute*>* pending_route_tasks = nil;
   uint32_t next_route_request_id = 1;
 
@@ -108,10 +90,7 @@ struct RuntimeState {
 
 extern RuntimeState g_runtime;
 
-// ---------------------------------------------------------------------------
-// Thread helpers — main-thread fast path; cross-thread calls hop via
-// dispatch_sync on the main queue.
-// ---------------------------------------------------------------------------
+// --- Thread helpers (main-thread fast path; cross-thread = dispatch_sync) ---
 
 bool isOnMainThread();
 
@@ -134,16 +113,13 @@ auto runOnUiThreadSync(Block block) -> decltype(block()) {
 
 NSString* utf8ToNSString(const char* value);
 
-// Escape a UTF-8 string for embedding inside a JSON string literal — handles
-// `"`, `\`, and control chars (\b \f \n \r \t + generic \u00XX).
 std::string escapeJsonString(const std::string& value);
 
 // Cocoa screen is bottom-left, Win semantics (and FFI) are top-left.
 NSRect topLeftToBottomLeft(double x, double y, double width, double height);
 void bottomLeftToTopLeft(NSRect frame, double* out_x, double* out_y, double* out_w, double* out_h);
 
-// Emit window/view events to the registered JS callbacks (no-op when no
-// handler is registered yet). Payload must be valid UTF-8 JSON.
+// Payload must be valid UTF-8 JSON.
 void emitWindowEvent(uint32_t window_id, const char* event_name, const std::string& payload = {});
 void emitWebviewEvent(uint32_t view_id, const char* event_name, const std::string& payload = {});
 
@@ -163,8 +139,7 @@ bool createView(uint32_t view_id, uint32_t window_id,
                 double x, double y, double width, double height, bool auto_resize);
 void removeView(uint32_t view_id);
 
-// Navigation rules. Mirror of `package/src/native/win/native_host_utils.cpp`
-// (pattern syntax + last-match-wins, default-allow). Defined in bunite_mac_utils.mm.
+// Glob patterns, last-match-wins, default-allow.
 bool globMatchCaseInsensitive(const std::string& pattern, const std::string& value);
 std::vector<std::string> parseNavigationRulesJson(NSString* json);
 bool shouldAlwaysAllowNavigationUrl(const std::string& url);

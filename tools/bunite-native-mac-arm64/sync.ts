@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
-// Copies macOS arm64 native build artifacts into this package directory.
-// Run after `bun run build:native:mac` (or equivalent) on a Darwin host.
+// Sync macOS arm64 native artifacts into this package. Run after `bun run build:native:mac`.
 
 import { cpSync, existsSync } from "node:fs";
 import { join } from "node:path";

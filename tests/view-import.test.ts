@@ -1,8 +1,6 @@
 import { describe, test, expect } from "bun:test";
 
-// Bun runs JS without a `window` global. Importing bunite-core/view in this
-// environment must not throw, so host-side metadata extraction (e.g. downstream
-// loading extension renderer bundles) works without a browser-shimmed runtime.
+// Importing bunite-core/view from Bun (no `window`) must not throw — host-side metadata extraction depends on it.
 
 describe("bunite-core/view module load", () => {
   test("import succeeds in a non-browser environment", async () => {

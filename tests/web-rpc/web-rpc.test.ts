@@ -207,8 +207,6 @@ describe("web RPC handler", () => {
     const ws = new FakeWebSocket();
     webRpc.open(ws);
 
-    // Get the client's RPC to issue a request from main→web
-    // (simulate by calling dispose directly)
     const client = [...webRpc.webClients][0];
     const requestPromise = client.rpc.request("slow" as any);
 

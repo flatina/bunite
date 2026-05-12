@@ -62,10 +62,7 @@ std::string escapeJsonString(const std::string& value) {
 // ---------------------------------------------------------------------------
 
 
-// Simple flat JSON object parser for engine config (Chromium command-line flags).
-// Input is always a JSON-serialized Record<string, string | boolean> from TS,
-// passed via bunite_init's engine_config_json parameter when the active engine is CEF.
-// Does not depend on CEF, so it can run before CefInitialize.
+// Flat JSON object parser for Chromium flags (Record<string, string|boolean>). No CEF dep — runs before CefInitialize.
 std::map<std::string, std::string> parseChromiumFlagsJson(const std::string& json) {
   std::map<std::string, std::string> flags;
   if (json.empty()) {

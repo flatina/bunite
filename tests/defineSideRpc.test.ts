@@ -4,9 +4,7 @@ import { createRpc, defineBunRpc, defineWebviewRpc, type RpcPacket, type RpcSche
 function createLoopbackPair(): { left: RpcTransport; right: RpcTransport } {
   let leftHandler: ((p: RpcPacket) => void) | undefined;
   let rightHandler: ((p: RpcPacket) => void) | undefined;
-  // Swallow rejections from the peer's async handlePacket — without this, a
-  // server-side throw (e.g. missing requestHandler) escapes as an unhandled
-  // rejection and fails the test runner instead of just letting the client time out.
+  // Swallow async handlePacket rejections — server throws would fail the test runner instead of timing out.
   return {
     left: {
       send: (packet) => {
@@ -59,8 +57,6 @@ describe("defineBunRpc / defineWebviewRpc — request handler forms", () => {
   test("function-form handler receives method name and dispatches", async () => {
     const { left, right } = createLoopbackPair();
 
-    // Single dispatch function — previous spread-based wrapper would have
-    // turned this into `{}` and every request would have errored "no handler".
     const dispatch = ((method: string, params: any) => {
       if (method === "echo") return (params as { msg: string }).msg.toUpperCase();
       if (method === "add") return (params as { a: number; b: number }).a + (params as { a: number; b: number }).b;

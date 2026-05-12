@@ -193,8 +193,7 @@ extern "C" BUNITE_EXPORT void bunite_view_set_input_passthrough(uint32_t view_id
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_set_mask_region(uint32_t view_id, const double* rects, uint32_t count) {
-  // GTK4 has no straightforward per-widget region cull. Land when a consumer
-  // needs surface drop indicators; likely via custom GskRenderNode in snapshot.
+  // GTK4 has no per-widget region cull primitive — mask not implemented.
   (void)view_id; (void)rects; (void)count; BUNITE_LINUX_TODO("bunite_view_set_mask_region");
 }
 
@@ -202,9 +201,7 @@ extern "C" BUNITE_EXPORT void bunite_view_bring_to_front(uint32_t view_id) {
   runOnUiThreadSync([=]() {
     auto* v = bunite_linux::findView(view_id);
     if (!v) return;
-    // The host BrowserView is the GtkOverlay main child, so overlay surfaces do
-    // not need the Windows-style HWND z-order raise. Reparenting WebKitGTK
-    // widgets here can blank their child surfaces under WSLg after host clicks.
+    // GtkOverlay handles z-order; reparenting blanks child surfaces under WSLg.
     bunite_linux::queueViewRedraw(v->webview);
   });
 }

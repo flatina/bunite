@@ -57,10 +57,7 @@ extern "C" BUNITE_EXPORT const char* bunite_engine_name(void) {
 }
 
 extern "C" BUNITE_EXPORT const char* bunite_engine_version(void) {
-  // Prefer the runtime version from the actually-loaded libcef.dll — when
-  // BUNITE_ENGINE_DIR or BUNITE_CEF_ROOTDIR same-major fallback points at a
-  // CEF different from the headers used at compile time, this stays accurate.
-  // Falls back to the compile-time CEF_VERSION macro before CefInitialize runs.
+  // Prefer runtime libcef.dll version — same-major fallback may load a different CEF than headers. Compile-time before init.
   static std::string cached;
   static std::once_flag once;
   std::call_once(once, []() {
@@ -130,9 +127,7 @@ extern "C" BUNITE_EXPORT void bunite_run_loop(void) {
 }
 
 extern "C" BUNITE_EXPORT void bunite_pump_once(void) {
-  // No-op on Windows — the dedicated UI thread already drives the event queue.
-  // Implemented only to keep the ABI uniform; adapters whose UI loop must share
-  // the main thread with Bun (e.g. macOS WKWebView) drive their queue here.
+  // No-op (dedicated UI thread). ABI parity with mac/linux cooperative pumps.
 }
 
 extern "C" BUNITE_EXPORT void bunite_free_cstring(const char* value) {

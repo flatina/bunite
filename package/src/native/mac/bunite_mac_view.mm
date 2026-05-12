@@ -158,14 +158,11 @@ bool createView(uint32_t view_id, uint32_t window_id,
 
   WKWebViewConfiguration* config = [[WKWebViewConfiguration alloc] init];
   [config setURLSchemeHandler:sharedAppresSchemeHandler() forURLScheme:@"appres"];
-  // Mirror of win's `disable-popup-blocking` Chromium flag (native_host_cef.cpp:12).
-  // popup_blocking=true → WKWebView blocks popups without a user gesture (default).
+  // popup_blocking=true → block popups without user gesture (default).
   config.preferences.javaScriptCanOpenWindowsAutomatically = !g_runtime.popup_blocking;
 
   if (preload.length > 0) {
-    // WKUserScript has no per-origin filter; gate inside the script so
-    // remote http(s) navigations don't inherit the bunite RPC bridge + secret.
-    // preload_origins is a JSON array literal (TS passes JSON.stringify of the allowlist).
+    // WKUserScript has no per-origin filter — gate in-script so remote pages don't inherit RPC bridge + secret.
     NSString* origins = preload_origins_json.length > 0 ? preload_origins_json : @"[]";
     NSString* gated = [NSString stringWithFormat:
       @"(function(){"
@@ -179,11 +176,7 @@ bool createView(uint32_t view_id, uint32_t window_id,
     [config.userContentController addUserScript:script];
   }
 
-  // window.contentView is BuniteFlippedView (top-left coords). The container
-  // sits there; the WKWebView fills the container via autoresize.
-  // Coords contract: auto_resize=true (main BrowserView) gets logical points
-  // from BrowserWindow; auto_resize=false (surface) gets physical pixels
-  // (JS multiplied by DPR). Same convention as set_bounds.
+  // auto_resize=true: logical points (main view). auto_resize=false: physical pixels (surface, JS × DPR).
   NSRect frame;
   if (auto_resize) {
     frame = NSMakeRect(x, y, width, height);
@@ -246,8 +239,7 @@ void removeView(uint32_t view_id) {
   }
   bunite::WebviewContentStorage::instance().remove(view_id);
 
-  // Fail any in-flight dynamic-route tasks tied to this view in case WebKit
-  // does not deliver stopURLSchemeTask promptly during teardown.
+  // WebKit may not call stopURLSchemeTask during teardown — fail in-flight tasks here.
   if (g_runtime.pending_route_tasks.count > 0) {
     NSMutableArray<NSNumber*>* keys = [NSMutableArray array];
     NSMutableArray<id<WKURLSchemeTask>>* victims = [NSMutableArray array];
@@ -260,13 +252,11 @@ void removeView(uint32_t view_id) {
     @try {
       for (id<WKURLSchemeTask> t in victims) [t didFailWithError:err];
     } @catch (NSException* e) {
-      // Task may already have been stopped by WebKit between our snapshot and
-      // the failure call; swallow — the entry is already gone from pending.
+      // Race: WebKit may stop the task between snapshot and failure — swallow.
     }
   }
 
-  // Deny any permission requests still pending for this view so the
-  // WKPermissionDecisionHandler block is released and JS stops awaiting a reply.
+  // Deny pending permissions — releases the handler block, unblocks JS waiters.
   NSArray<BunitePendingPermission*>* to_deny = nil;
   if (g_runtime.pending_permissions.count > 0) {
     NSMutableArray<NSNumber*>* keys = [NSMutableArray array];
