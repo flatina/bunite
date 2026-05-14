@@ -3,6 +3,16 @@ import { buildViewPreloadScript } from "../preload/inline";
 import { log } from "../../shared/log";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import { type RpcPacket, type RpcTransport, type RpcWithTransport } from "../../shared/rpc";
+import {
+  createConnection,
+  createFrameTransport,
+  createEncryptedPipe,
+  importAesGcmKey,
+  type Connection,
+  type BytesPipe,
+  type SchemaShape,
+  type ServerDescriptor,
+} from "../../shared/rpc/index";
 import { ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady } from "../proc/native";
 import { attachBrowserViewRegistry, getRpcPort, sendMessageToView } from "./Socket";
 import { randomBytes } from "node:crypto";
@@ -22,7 +32,7 @@ function createNativeViewPipe(viewId: number) {
   return { transport, receive: (packet: RpcPacket) => handler?.(packet) };
 }
 
-export type BrowserViewOptions<T = undefined> = {
+export type BrowserViewOptions<T = undefined, S extends SchemaShape = SchemaShape> = {
   url: string | null;
   html: string | null;
   preload: string | null;
@@ -36,6 +46,7 @@ export type BrowserViewOptions<T = undefined> = {
     height: number;
   };
   rpc?: T;
+  serve?: ServerDescriptor<S>;
   windowId: number;
   autoResize: boolean;
   navigationRules: string[] | null;
@@ -61,7 +72,7 @@ const defaultOptions: BrowserViewOptions = {
   sandbox: false
 };
 
-export class BrowserView<T extends RpcWithTransport = RpcWithTransport> {
+export class BrowserView<T extends RpcWithTransport = RpcWithTransport, S extends SchemaShape = SchemaShape> {
   id = nextWebviewId++;
   private nativeAttached = false;
   private _readyPromise: Promise<void>;
@@ -74,14 +85,16 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport> {
   partition: string | null;
   frame: BrowserViewOptions["frame"];
   rpc?: T;
+  readonly serveDescriptor?: ServerDescriptor<S>;
   readonly transport: RpcTransport;
   private pipe: ReturnType<typeof createNativeViewPipe>;
+  private newConnection: Connection | null = null;
   autoResize: boolean;
   navigationRules: string[] | null;
   sandbox: boolean;
   secretKey: Uint8Array;
 
-  constructor(options: Partial<BrowserViewOptions<T>>) {
+  constructor(options: Partial<BrowserViewOptions<T, S>>) {
     ensureNativeRuntime();
 
     this.pipe = createNativeViewPipe(this.id);
@@ -96,6 +109,7 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport> {
     this.partition = options.partition ?? defaultOptions.partition;
     this.frame = options.frame ?? defaultOptions.frame;
     this.rpc = options.rpc;
+    this.serveDescriptor = options.serve;
     this.autoResize = options.autoResize ?? defaultOptions.autoResize;
     this.navigationRules = options.navigationRules ?? defaultOptions.navigationRules;
     this.sandbox = options.sandbox ?? defaultOptions.sandbox;
@@ -171,6 +185,30 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport> {
 
   handleIncomingRpc(packet: RpcPacket) {
     this.pipe.receive(packet);
+  }
+
+  async attachNewConnection(pipe: BytesPipe): Promise<void> {
+    if (this.newConnection) {
+      this.newConnection = null;
+    }
+    const key = await importAesGcmKey(this.secretKey);
+    const encPipe = createEncryptedPipe(pipe, key);
+    this.newConnection = createConnection({
+      transport: createFrameTransport(encPipe),
+      mode: "native",
+      origin: "appres://app.internal",
+    });
+    if (this.serveDescriptor) {
+      this.newConnection.serve(this.serveDescriptor);
+    }
+  }
+
+  detachNewConnection(): void {
+    this.newConnection = null;
+  }
+
+  get rpcConnection(): Connection | null {
+    return this.newConnection;
   }
 
   get rpcPort() {

@@ -18,6 +18,9 @@ import { createWebRpcHandler, type WebRpcClient } from "../shared/webRpcHandler"
 import { acquireSingleInstanceLock, type SingleInstanceLock } from "./core/singleInstanceLock";
 import { log, type LogLevel } from "../shared/log";
 
+export * from "../shared/rpc/index";
+export { Stream } from "../shared/rpc/server";
+
 export {
   acquireSingleInstanceLock,
   AppRuntime,

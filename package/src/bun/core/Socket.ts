@@ -19,6 +19,8 @@ type ViewRegistry = {
 
 type WebSocketData = {
   webviewId: number;
+  kind: "legacy" | "new";
+  pipe?: { deliver(bytes: Uint8Array): void };
 };
 
 let rpcServer: Server<WebSocketData> | null = null;
@@ -61,6 +63,16 @@ export function attachBrowserViewRegistry(nextRegistry: ViewRegistry) {
   registry = nextRegistry;
 }
 
+function createBunWsBytesPipe(ws: ServerWebSocket<WebSocketData>): { deliver(bytes: Uint8Array): void; send(bytes: Uint8Array): void; setReceive(h: (bytes: Uint8Array) => void): void; close(): void } {
+  let handler: ((bytes: Uint8Array) => void) | undefined;
+  return {
+    send: (bytes) => { ws.send(bytes); },
+    setReceive: (h) => { handler = h; },
+    close: () => { try { ws.close(); } catch { /* swallow */ } },
+    deliver: (bytes) => handler?.(bytes),
+  };
+}
+
 export function ensureRpcServer() {
   if (rpcServer) {
     return { rpcServer, rpcPort };
@@ -74,36 +86,51 @@ export function ensureRpcServer() {
         port,
         fetch(req, server) {
           const url = new URL(req.url);
-          if (url.pathname !== "/socket") {
-            return new Response("Not found", { status: 404 });
-          }
-
           const webviewId = Number(url.searchParams.get("webviewId"));
           if (!Number.isFinite(webviewId)) {
             return new Response("Missing webviewId", { status: 400 });
           }
-          if (!registry?.getById(webviewId)) {
-            return new Response("Unknown webviewId", { status: 403 });
-          }
+          const view = registry?.getById(webviewId);
+          if (!view) return new Response("Unknown webviewId", { status: 403 });
 
-          const upgraded = server.upgrade(req, {
-            data: { webviewId }
-          });
+          let kind: "legacy" | "new";
+          if (url.pathname === "/socket") kind = "legacy";
+          else if (url.pathname === "/rpc") kind = "new";
+          else return new Response("Not found", { status: 404 });
+
+          const upgraded = server.upgrade(req, { data: { webviewId, kind } });
           return upgraded ? undefined : new Response("Upgrade failed", { status: 500 });
         },
         websocket: {
           open(ws) {
-            socketMap[ws.data.webviewId] = ws;
-          },
-          close(ws) {
-            socketMap[ws.data.webviewId] = null;
-          },
-          message(ws, message) {
-            const view = registry?.getById(ws.data.webviewId);
-            const binaryMessage = normalizeIncomingBinaryMessage(message);
-            if (!view || !binaryMessage) {
+            if (ws.data.kind === "legacy") {
+              socketMap[ws.data.webviewId] = ws;
               return;
             }
+            const view = registry?.getById(ws.data.webviewId);
+            if (!view) { ws.close(); return; }
+            const pipe = createBunWsBytesPipe(ws);
+            ws.data.pipe = pipe;
+            void view.attachNewConnection(pipe);
+          },
+          close(ws) {
+            if (ws.data.kind === "legacy") {
+              socketMap[ws.data.webviewId] = null;
+              return;
+            }
+            const view = registry?.getById(ws.data.webviewId);
+            view?.detachNewConnection();
+            ws.data.pipe = undefined;
+          },
+          message(ws, message) {
+            if (ws.data.kind === "new") {
+              const bytes = normalizeIncomingBinaryMessage(message);
+              if (bytes) ws.data.pipe?.deliver(bytes);
+              return;
+            }
+            const view = registry?.getById(ws.data.webviewId);
+            const binaryMessage = normalizeIncomingBinaryMessage(message);
+            if (!view || !binaryMessage) return;
             try {
               const decryptedMessage = decrypt(view.secretKey, binaryMessage);
               const packet = decodeRpcPacket(decryptedMessage);

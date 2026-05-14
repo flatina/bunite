@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["runtime.ts", "webviewElement.ts"]
+  "include": ["runtime.ts", "webviewElement.ts", "../shared/rpc/**/*.ts"]
 }

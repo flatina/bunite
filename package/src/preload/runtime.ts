@@ -1,5 +1,19 @@
 // Preload runtime injected into every appres:// page. Config vars (__bunite*) prepended by inline.ts.
 
+import {
+  createConnection,
+  createFrameTransport,
+  createWebSocketPipe,
+  createEncryptedPipe,
+  importAesGcmKey,
+  type Connection,
+  type Schema,
+  type SchemaShape,
+  type ClientOf,
+  type ServerDescriptor,
+  type WebSocketLike,
+} from "../shared/rpc/index";
+
 declare const __buniteWebviewId: number;
 declare const __buniteRpcSocketPort: number;
 declare const __buniteSecretKeyBase64: string;
@@ -232,5 +246,51 @@ w.bunite.invoke = (method: string, params?: unknown) =>
         ws.addEventListener("open", () => doSend(), { once: true });
       }
     });
+
+// ---- new RPC stack (schema-driven) ----
+
+let _newConn: Connection | null = null;
+let _newConnPromise: Promise<Connection> | null = null;
+
+function ensureNewConnection(): Promise<Connection> {
+  if (_newConn) return Promise.resolve(_newConn);
+  if (_newConnPromise) return _newConnPromise;
+  _newConnPromise = (async () => {
+    const ws = new WebSocket(
+      `ws://localhost:${__buniteRpcSocketPort}/rpc?webviewId=${__buniteWebviewId}`
+    );
+    ws.binaryType = "arraybuffer";
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve(), { once: true });
+      ws.addEventListener("error", reject, { once: true });
+    });
+    const rawKey = Uint8Array.from(atob(__buniteSecretKeyBase64), (c) => c.charCodeAt(0));
+    const key = await importAesGcmKey(rawKey);
+    const pipe = createEncryptedPipe(createWebSocketPipe(ws as unknown as WebSocketLike), key);
+    const conn = createConnection({
+      transport: createFrameTransport(pipe),
+      mode: "native",
+      origin: location.origin,
+    });
+    _newConn = conn;
+    return conn;
+  })();
+  return _newConnPromise;
+}
+
+w.bunite.bootstrap = async <S extends SchemaShape, K extends keyof S["roots"] & string>(
+  schema: Schema<S>,
+  name: K
+): Promise<ClientOf<S["roots"][K]>> => (await ensureNewConnection()).bootstrap(schema, name);
+
+w.bunite.serve = async <S extends SchemaShape>(descriptor: ServerDescriptor<S>): Promise<void> => {
+  (await ensureNewConnection()).serve(descriptor);
+};
+
+w.bunite.runtime = async () => (await ensureNewConnection()).runtime();
+
+w.bunite.releaseRef = async (proxy: unknown): Promise<void> => {
+  (await ensureNewConnection()).releaseRef(proxy);
+};
 
 import "./webviewElement";
