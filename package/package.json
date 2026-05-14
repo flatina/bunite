@@ -13,6 +13,8 @@
     ".": "./src/bun/index.ts",
     "./bun": "./src/bun/index.ts",
     "./view": "./src/view/index.ts",
+    "./rpc": "./src/shared/rpc/index.ts",
+    "./rpc/server": "./src/shared/rpc/server.ts",
     "./shared/rpc": "./src/shared/rpc.ts",
     "./package.json": "./package.json"
   },
