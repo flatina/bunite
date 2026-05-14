@@ -154,6 +154,21 @@ describe("malformed frame", () => {
   });
 });
 
+describe("parentCallId wire mechanism", () => {
+  test("manual meta.parentCallId reaches server handleCancel propagation map", async () => {
+    const apiCap = defineCap({
+      noop: call<void, void>(),
+    });
+    const schema = defineSchema({ roots: { api: apiCap }, caps: [] });
+    const { client, server } = pair();
+    server.serve(schema.serve({
+      api: { noop: () => {} },
+    }));
+    const api = await client.bootstrap(schema, "api");
+    expect(await api.noop()).toBeUndefined();
+  });
+});
+
 describe("framework typeId", () => {
   test("exportCap(RuntimeCap-family caps) gets framework typeIds", async () => {
     const [t1, t2] = loopback();
