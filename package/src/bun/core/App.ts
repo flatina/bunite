@@ -16,9 +16,10 @@ import {
 } from "../proc/native";
 import { attachGlobalIPCResolver, ensureRpcServer } from "./Socket";
 import { BrowserWindow } from "./BrowserWindow";
-import { getSurfaceIPCHandlers } from "./SurfaceManager";
-import { getWebviewIPCHandlers } from "./SurfaceBrowserIPC";
+import { createSurfaceCapImpl } from "./SurfaceManager";
+import "./SurfaceBrowserIPC";
 import { log, logLevelToInt } from "../../shared/log";
+import { RuntimeCap, SurfaceCap, type ImplOf } from "../../shared/rpc/index";
 
 import type { LogLevel } from "../../shared/log";
 
@@ -94,13 +95,6 @@ export class AppRuntime {
     }
 
     attachGlobalIPCResolver((channel) => this.getGlobalIPCHandler(channel));
-
-    for (const [channel, handler] of getSurfaceIPCHandlers()) {
-      this.globalIPCHandlers.set(channel, handler);
-    }
-    for (const [channel, handler] of getWebviewIPCHandlers()) {
-      this.globalIPCHandlers.set(channel, handler);
-    }
 
     setRouteRequestHandler((requestId, path) => this.handleRouteRequest(requestId, path));
 
@@ -191,6 +185,24 @@ export class AppRuntime {
     getNativeLibrary()?.symbols.bunite_quit();
     process.exitCode = code;
     process.exit(code);
+  }
+
+  createViewRuntime(viewId: number): ImplOf<typeof RuntimeCap> {
+    const notImpl = (name: string) => () => {
+      throw new Error(`Runtime.${name} not implemented in this build`);
+    };
+    void RuntimeCap;
+    return {
+      window: notImpl("window") as never,
+      dialogs: notImpl("dialogs") as never,
+      clipboard: notImpl("clipboard") as never,
+      shell: notImpl("shell") as never,
+      appName: () => "bunite-app",
+      appVersion: () => this.version,
+      theme: () => "light",
+      themeWatch: notImpl("themeWatch") as never,
+      surface: (_, ctx) => ctx.exportCap(SurfaceCap, createSurfaceCapImpl(viewId)),
+    };
   }
 
   handle(channel: string, handler: GlobalIPCHandler) {

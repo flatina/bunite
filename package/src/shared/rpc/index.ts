@@ -96,6 +96,7 @@ export {
   FileRefCap,
   ClipboardCap,
   ShellCap,
+  SurfaceCap,
   FRAMEWORK_TYPE_IDS,
 } from "./framework";
 

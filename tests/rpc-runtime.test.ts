@@ -63,6 +63,7 @@ function makeRuntimeImpl(): ImplOf<typeof RuntimeCap> {
     appVersion: () => "1.2.3",
     theme: () => "dark",
     themeWatch: () => { throw new Error("not used here"); },
+    surface: () => { throw new Error("not used here"); },
   };
 }
 

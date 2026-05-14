@@ -181,6 +181,7 @@ describe("framework typeId", () => {
       appVersion: () => "0",
       theme: () => "light",
       themeWatch: () => { throw new Error("not used"); },
+      surface: () => { throw new Error("not used"); },
     };
     createConnection({ transport: t2, mode: "native", origin: "s", runtime: runtimeImpl });
     const client = createConnection({ transport: t1, mode: "native", origin: "c" });

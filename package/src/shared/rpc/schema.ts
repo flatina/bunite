@@ -56,15 +56,13 @@ export interface CallDef<P = unknown, R = unknown> {
   readonly [CALL_TAG]: true;
   readonly idempotent: boolean;
   readonly returns?: AnyCapToken;
-  readonly _p?: P;
-  readonly _r?: R;
+  readonly _phantom?: (p: P) => R;
 }
 
 export interface StreamDef<P = unknown, Y = unknown> {
   readonly [STREAM_TAG]: true;
   readonly hint?: Record<string, unknown>;
-  readonly _p?: P;
-  readonly _y?: Y;
+  readonly _phantom?: (p: P) => Y;
 }
 
 export type MethodDef = CallDef<any, any> | StreamDef<any, any>;

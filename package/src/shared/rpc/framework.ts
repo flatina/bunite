@@ -69,6 +69,29 @@ export const ShellCap = defineCap({
   showItemInFolder: call<{ path: string }, void>(),
 });
 
+export type SurfaceMask = { x: number; y: number; w: number; h: number };
+
+export const SurfaceCap = defineCap({
+  init: call<{
+    src: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    hidden?: boolean;
+  }, { surfaceId: number }>(),
+  resize: call<{ surfaceId: number; x: number; y: number; w: number; h: number }, void>(),
+  remove: call<{ surfaceId: number }, void>(),
+  setHidden: call<{ surfaceId: number; hidden: boolean }, void>(),
+  setMasks: call<{ surfaceId: number; masks: SurfaceMask[] }, void>(),
+  setAllPassthrough: call<{ passthrough: boolean }, void>(),
+  bringAllVisiblesToFront: call<void, void>(),
+  navigate: call<{ surfaceId: number; url: string }, void>(),
+  goBack: call<{ surfaceId: number }, void>(),
+  reload: call<{ surfaceId: number }, void>(),
+  didNavigate: stream<void, { surfaceId: number; url: string }>(),
+});
+
 export const RuntimeCap = defineCap({
   window: call<void, typeof WindowCap>({ returns: cap(WindowCap), idempotent: true }),
   dialogs: call<void, typeof DialogsCap>({ returns: cap(DialogsCap), idempotent: true }),
@@ -78,6 +101,7 @@ export const RuntimeCap = defineCap({
   appVersion: call<void, string>({ idempotent: true }),
   theme: call<void, "light" | "dark">({ idempotent: true }),
   themeWatch: stream<void, "light" | "dark">(),
+  surface: call<void, typeof SurfaceCap>({ returns: cap(SurfaceCap), idempotent: true }),
 });
 
 export const FRAMEWORK_TYPE_IDS = {
@@ -100,6 +124,7 @@ const FRAMEWORK_CAP_TYPE_IDS = new Map<CapDef<any, any>, number>([
   [ClipboardCap, FRAMEWORK_TYPE_IDS.Clipboard],
   [ShellCap, FRAMEWORK_TYPE_IDS.Shell],
   [BrowserWindowCap, FRAMEWORK_TYPE_IDS.BrowserWindow],
+  [SurfaceCap, 8],
 ]);
 
 export function frameworkTypeIdOf(cap: CapDef<any, any>): number | undefined {
