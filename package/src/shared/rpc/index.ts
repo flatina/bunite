@@ -131,3 +131,5 @@ export type {
   WebSocketLike,
   PostMessageChannel,
 } from "./transport";
+
+export { createBunWebSocketServerHandler } from "./bun";
