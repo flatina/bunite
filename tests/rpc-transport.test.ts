@@ -1,9 +1,19 @@
 import { describe, test, expect } from "bun:test";
 import {
   call, defineCap, defineSchema,
-  createConnection, createFrameTransport, createInMemoryPipePair,
+  createConnection, createFrameTransport,
   type ImplOf,
+  type BytesPipe,
 } from "../package/src/shared/rpc/index";
+
+function createInMemoryPipePair(): [BytesPipe, BytesPipe] {
+  let aRecv: ((b: Uint8Array) => void) | undefined;
+  let bRecv: ((b: Uint8Array) => void) | undefined;
+  return [
+    { send: (b) => queueMicrotask(() => bRecv?.(b)), setReceive: (h) => { aRecv = h; }, close: () => {} },
+    { send: (b) => queueMicrotask(() => aRecv?.(b)), setReceive: (h) => { bRecv = h; }, close: () => {} },
+  ];
+}
 
 describe("frame transport over bytes pipe", () => {
   test("bootstrap + plain call survive msgpackr round-trip", async () => {

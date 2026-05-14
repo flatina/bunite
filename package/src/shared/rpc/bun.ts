@@ -1,5 +1,9 @@
 import type { ServerWebSocket, WebSocketHandler } from "bun";
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { BytesPipe } from "./transport";
+import { _setCallContextStorage } from "./peer";
+
+_setCallContextStorage(new AsyncLocalStorage<{ callId: number }>());
 
 interface PipeSlot {
   _bunitePipe?: { handler?: (bytes: Uint8Array) => void };

@@ -1,21 +1,18 @@
-export const IPC_CODES = [
-  "ok",
-  "cancelled",
-  "unknown",
-  "invalid_argument",
-  "deadline_exceeded",
-  "not_found",
-  "not_supported",
-  "already_exists",
-  "permission_denied",
-  "unauthenticated",
-  "resource_exhausted",
-  "failed_precondition",
-  "unavailable",
-  "protocol_error",
-] as const;
-
-export type IpcCode = (typeof IPC_CODES)[number];
+export type IpcCode =
+  | "ok"
+  | "cancelled"
+  | "unknown"
+  | "invalid_argument"
+  | "deadline_exceeded"
+  | "not_found"
+  | "not_supported"
+  | "already_exists"
+  | "permission_denied"
+  | "unauthenticated"
+  | "resource_exhausted"
+  | "failed_precondition"
+  | "unavailable"
+  | "protocol_error";
 
 export type FailedPreconditionReason =
   | "cap_disposed"
@@ -59,6 +56,3 @@ export class IpcError extends Error {
   }
 }
 
-export function ipcError(code: IpcCode, message?: string, details?: unknown, retry?: RetrySpec): IpcError {
-  return new IpcError({ code, message, details, retry });
-}

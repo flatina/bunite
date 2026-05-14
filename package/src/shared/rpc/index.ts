@@ -67,11 +67,7 @@ export type {
   u53,
 } from "./wire";
 
-export {
-  IpcError,
-  ipcError,
-  IPC_CODES,
-} from "./error";
+export { IpcError } from "./error";
 
 export type {
   IpcCode,
@@ -89,7 +85,6 @@ export {
   FIRST_USER_CAP_ID,
   FIRST_USER_TYPE_ID,
   MAX_CAPS_PER_CONNECTION,
-  MAX_CHANNELS_PER_CONNECTION,
   createConnection,
 } from "./peer";
 
@@ -122,14 +117,13 @@ export type {
 export {
   createFrameTransport,
   createWebSocketPipe,
-  createPostMessagePipe,
-  createInMemoryPipePair,
 } from "./transport";
 
 export type {
   BytesPipe,
   WebSocketLike,
-  PostMessageChannel,
 } from "./transport";
 
 export { createBunWebSocketServerHandler } from "./bun";
+
+export { createEncryptedPipe, importAesGcmKey } from "./encrypt";

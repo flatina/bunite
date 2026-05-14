@@ -46,7 +46,6 @@ export const FIRST_USER_CAP_ID = 2;
 export const FIRST_USER_TYPE_ID = 128;
 
 export const MAX_CAPS_PER_CONNECTION = 1024;
-export const MAX_CHANNELS_PER_CONNECTION = 8;
 
 const DEFAULT_DEADLINE_GRACE_MS = 500;
 const DEFAULT_STREAM_INITIAL_CREDIT = 32;
@@ -65,19 +64,16 @@ interface CallScope {
   readonly callId: number;
 }
 
-type AlsCtor = new <T>() => { getStore(): T | undefined; run<R>(store: T, fn: () => R): R };
+export interface CallContextStorage {
+  getStore(): CallScope | undefined;
+  run<R>(store: CallScope, fn: () => R): R;
+}
 
-const callContextStorage: { getStore(): CallScope | undefined; run<R>(store: CallScope, fn: () => R): R } | null =
-  await (async (): Promise<{ getStore(): CallScope | undefined; run<R>(store: CallScope, fn: () => R): R } | null> => {
-    if (typeof process === "undefined" || !process.versions?.node) return null;
-    try {
-      const mod = await import("node:async_hooks");
-      const Ctor = (mod as { AsyncLocalStorage: AlsCtor }).AsyncLocalStorage;
-      return new Ctor<CallScope>();
-    } catch {
-      return null;
-    }
-  })();
+let callContextStorage: CallContextStorage | null = null;
+
+export function _setCallContextStorage(als: CallContextStorage | null): void {
+  callContextStorage = als;
+}
 
 export interface CapTableEntry {
   capId: number;
@@ -463,8 +459,9 @@ class ConnectionImpl implements Connection {
       const hintBudget = resolveStreamBudget(methodDef.hint);
       try {
         const runStream = () => impl(frame.args, ctx) as StreamType<unknown>;
-        const scoped = callContextStorage
-          ? () => callContextStorage.run({ callId: frame.id }, runStream)
+        const als = callContextStorage;
+        const scoped = als
+          ? () => als.run({ callId: frame.id }, runStream)
           : runStream;
         const stream = scoped();
         this.runServerStream(frame.id, stream, ctx, hintBudget);
@@ -479,8 +476,9 @@ class ConnectionImpl implements Connection {
       this.serverActiveCalls.set(frame.id, (ctx as unknown as { _ctrl: AbortController })._ctrl);
       const encoder = makeReturnEncoder(methodDef.returns);
       const runImpl = () => Promise.resolve(impl(frame.args, ctx));
-      const scoped = callContextStorage
-        ? () => callContextStorage.run({ callId: frame.id }, runImpl)
+      const als = callContextStorage;
+      const scoped = als
+        ? () => als.run({ callId: frame.id }, runImpl)
         : runImpl;
       try {
         const result = await scoped();
