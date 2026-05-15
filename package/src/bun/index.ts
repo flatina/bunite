@@ -26,6 +26,9 @@ export {
 
 export { Stream } from "../shared/rpc/server";
 
+export { serveWeb } from "../shared/rpc/index";
+export type { WebRpcMount } from "../shared/rpc/index";
+
 export type {
   Schema,
   SchemaShape,

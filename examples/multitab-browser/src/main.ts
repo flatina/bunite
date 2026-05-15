@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { BrowserWindow, AppRuntime, createWebRpcHandler, defineBunRpc, type RpcSchema } from "bunite-core";
+import { AppRuntime, BrowserWindow, serveWeb, type ImplOf } from "bunite-core";
+import { schema, apiCap, type QuickLink, type TabInfo } from "./schema";
 
 process.env.BUNITE_REMOTE_DEBUGGING_PORT ??= "9222";
 
@@ -9,62 +10,50 @@ await app.ready;
 const webPort = Number(process.argv[process.argv.indexOf("--web-port") + 1]) || 0;
 const rendererDir = app.resolve("../dist/renderer");
 
-type MultitabRpcSchema = {
-  bun: RpcSchema<{
-    requests: {
-      getQuickLinks: { params: undefined; response: { url: string; label: string }[] };
-      createTab: { params: { url?: string }; response: { id: string; url: string; title: string } };
-      closeTab: { params: { id: string }; response: void };
-      navigateTo: { params: { id: string; url: string }; response: void };
-    };
-  }>;
-  webview: RpcSchema;
-};
-
-const tabs = new Map<string, { id: string; url: string; title: string }>();
+const tabs = new Map<string, TabInfo>();
 let nextTabId = 1;
 let origin = "";
 
-const rpcHandlers = {
-  getQuickLinks: () => [
+function quickLinks(): QuickLink[] {
+  return [
     { url: `${origin}/fast`, label: "Local Fast" },
     { url: `${origin}/slow?delay=2000`, label: "Local 2s" },
     { url: "https://google.com", label: "Google" },
-    { url: "https://github.com", label: "GitHub" }
-  ],
-  createTab: ({ url }: { url?: string }) => {
+    { url: "https://github.com", label: "GitHub" },
+  ];
+}
+
+const apiImpl: ImplOf<typeof apiCap> = {
+  getQuickLinks: () => quickLinks(),
+  createTab: ({ url }) => {
     const id = `tab-${nextTabId++}`;
-    const tab = { id, url: url || `${origin}/newtab.html`, title: "New Tab" };
+    const tab: TabInfo = { id, url: url || `${origin}/newtab.html`, title: "New Tab" };
     tabs.set(id, tab);
     return tab;
   },
-  closeTab: ({ id }: { id: string }) => { tabs.delete(id); },
-  navigateTo: ({ id, url }: { id: string; url: string }) => {
+  closeTab: ({ id }) => { tabs.delete(id); },
+  navigateTo: ({ id, url }) => {
     const tab = tabs.get(id);
     if (tab) tab.url = url;
-  }
+  },
 };
 
-const rpcConfig = { handlers: { requests: rpcHandlers } };
-const rendererRpc = defineBunRpc<MultitabRpcSchema>(rpcConfig);
-const webHandler = createWebRpcHandler<MultitabRpcSchema>(rpcConfig);
+const descriptor = schema.serve({ api: apiImpl });
+const webRpc = serveWeb(descriptor);
 
 const server = Bun.serve({
   port: webPort || 0,
   hostname: webPort ? "0.0.0.0" : "127.0.0.1",
-  async fetch(req, server) {
+  async fetch(req, srv) {
+    const rpc = webRpc.fetch(req, srv);
+    if (rpc !== undefined) return rpc;
+
     const url = new URL(req.url);
-
-    if (url.pathname === "/rpc") {
-      if (server.upgrade(req)) return;
-      return new Response("WebSocket upgrade failed", { status: 400 });
-    }
-
     if (url.pathname === "/fast")
       return html("Local Fast", `<p>served instantly</p><p><a href="/slow?delay=2000">Slow 2s</a></p>`);
     if (url.pathname === "/slow") {
       const delay = Math.min(Number(url.searchParams.get("delay") ?? "1000"), 5000);
-      return new Promise(r => setTimeout(() => r(html("Local Slow", `<p>waited ${delay}ms</p><p><a href="/fast">Fast</a></p>`)), delay));
+      return new Promise<Response>((r) => setTimeout(() => r(html("Local Slow", `<p>waited ${delay}ms</p><p><a href="/fast">Fast</a></p>`)), delay));
     }
 
     const pathname = decodeURIComponent(url.pathname);
@@ -73,7 +62,7 @@ const server = Bun.serve({
     if (!(await file.exists())) return new Response("Not Found", { status: 404 });
     return new Response(file);
   },
-  websocket: webHandler
+  websocket: webRpc.websocket,
 });
 
 origin = `http://127.0.0.1:${server.port}`;
@@ -83,7 +72,7 @@ const win = new BrowserWindow({
   frame: { x: 80, y: 80, width: 1280, height: 900 },
   url: `${origin}/`,
   preloadOrigins: [origin],
-  rpc: rendererRpc
+  serve: descriptor,
 });
 
 win.on("close", () => server.stop(true));

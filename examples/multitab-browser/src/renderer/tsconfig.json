@@ -1,9 +1,9 @@
 {
   "extends": "../../../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": ".",
+    "rootDir": "..",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "noUncheckedSideEffectImports": false
   },
-  "include": ["index.ts"]
+  "include": ["index.ts", "../schema.ts"]
 }

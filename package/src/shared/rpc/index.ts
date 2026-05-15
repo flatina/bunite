@@ -125,6 +125,7 @@ export type {
   WebSocketLike,
 } from "./transport";
 
-export { createBunWebSocketServerHandler } from "./bun";
+export { createBunWebSocketServerHandler, serveWeb } from "./bun";
+export type { WebRpcMount } from "./bun";
 
 export { createEncryptedPipe, importAesGcmKey } from "./encrypt";

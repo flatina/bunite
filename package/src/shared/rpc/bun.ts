@@ -1,7 +1,9 @@
-import type { ServerWebSocket, WebSocketHandler } from "bun";
+import type { Server, ServerWebSocket, WebSocketHandler } from "bun";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { BytesPipe } from "./transport";
-import { _setCallContextStorage } from "./peer";
+import { createConnection, _setCallContextStorage } from "./peer";
+import { createFrameTransport } from "./transport";
+import type { SchemaShape, ServerDescriptor } from "./schema";
 
 _setCallContextStorage(new AsyncLocalStorage<{ callId: number }>());
 
@@ -42,5 +44,34 @@ export function createBunWebSocketServerHandler<TData extends object>(
       slot._bunitePipe = undefined;
       onClose?.(ws);
     },
+  };
+}
+
+const DEFAULT_RPC_PATH = "/rpc";
+
+export interface WebRpcMount {
+  fetch(req: Request, srv: Server<object>): Response | undefined;
+  websocket: WebSocketHandler<object>;
+}
+
+export function serveWeb<S extends SchemaShape>(
+  descriptor: ServerDescriptor<S>,
+  opts: { path?: string } = {}
+): WebRpcMount {
+  const path = opts.path ?? DEFAULT_RPC_PATH;
+  return {
+    fetch(req, srv) {
+      if (new URL(req.url).pathname !== path) return undefined;
+      const upgraded = srv.upgrade(req, { data: {} });
+      return upgraded ? undefined : new Response("WebSocket upgrade failed", { status: 400 });
+    },
+    websocket: createBunWebSocketServerHandler<object>((_ws, pipe) => {
+      const conn = createConnection({
+        transport: createFrameTransport(pipe),
+        mode: "web",
+        origin: "web-client",
+      });
+      conn.serve(descriptor);
+    }),
   };
 }

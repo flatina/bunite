@@ -1,17 +1,6 @@
 import "./styles.css";
-import { BuniteView, defineWebviewRpc, type RpcSchema } from "bunite-core/view";
-
-type MultitabRpcSchema = {
-  bun: RpcSchema<{
-    requests: {
-      getQuickLinks: { params: undefined; response: { url: string; label: string }[] };
-      createTab: { params: { url?: string }; response: { id: string; url: string; title: string } };
-      closeTab: { params: { id: string }; response: void };
-      navigateTo: { params: { id: string; url: string }; response: void };
-    };
-  }>;
-  webview: RpcSchema;
-};
+import { bootstrap } from "bunite-core/view";
+import { schema, type TabInfo } from "../schema";
 
 type Tab = { id: string; webview: HTMLElement; url: string; title: string };
 
@@ -23,8 +12,7 @@ const content = document.getElementById("content")!;
 const tabs = new Map<string, Tab>();
 let activeId: string | null = null;
 
-const rpc = defineWebviewRpc<MultitabRpcSchema>({ handlers: {} });
-new BuniteView({ rpc });
+const api = await bootstrap(schema, "api");
 
 newTabBtn.addEventListener("click", () => createTab());
 document.querySelector('[data-action="back"]')!.addEventListener("click", () => activeWebview()?.goBack());
@@ -34,7 +22,7 @@ urlInput.addEventListener("keydown", e => { if (e.key === "Enter") navigate(); }
 createTab();
 
 async function createTab(url?: string) {
-  const tab = await rpc.requestProxy.createTab({ url });
+  const tab: TabInfo = await api.createTab({ url });
 
   const webview = document.createElement("bunite-webview") as HTMLElement & { goBack(): void; reload(): void };
   webview.setAttribute("src", tab.url);
@@ -45,7 +33,7 @@ async function createTab(url?: string) {
     const t = tabs.get(tab.id);
     if (t) {
       t.url = e.detail.url;
-      rpc.requestProxy.navigateTo({ id: tab.id, url: e.detail.url });
+      void api.navigateTo({ id: tab.id, url: e.detail.url });
       renderTabs();
     }
   }) as EventListener);
@@ -64,7 +52,7 @@ function switchTo(id: string) {
 async function closeTab(id: string) {
   const tab = tabs.get(id);
   if (!tab) return;
-  await rpc.requestProxy.closeTab({ id });
+  await api.closeTab({ id });
   tab.webview.remove();
   tabs.delete(id);
   if (activeId === id) {
@@ -85,7 +73,7 @@ function navigate() {
     if (tab) {
       tab.webview.setAttribute("src", url);
       tab.url = url;
-      rpc.requestProxy.navigateTo({ id: activeId, url });
+      void api.navigateTo({ id: activeId, url });
       renderTabs();
       return;
     }
@@ -115,7 +103,7 @@ function renderTabs() {
 
     const close = document.createElement("span");
     close.className = "tab-close";
-    close.textContent = "\u00d7";
+    close.textContent = "×";
 
     el.append(label, close);
     tabBar.insertBefore(el, newTabBtn);
