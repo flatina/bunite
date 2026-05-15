@@ -7,7 +7,8 @@
     "setup:cef": "bun ../tools/bunite-dev/scripts/setup-cef.ts",
     "build:native:win": "cmake -S . -B build/win -DBUNITE_TARGET_ARCH=x64 && cmake --build build/win --config Release",
     "build:native:linux": "cmake -S . -B build/linux -DCMAKE_BUILD_TYPE=Release && cmake --build build/linux",
-    "build:preload": "bun build src/preload/runtime.ts --outfile src/preload/runtime.built.js --target browser --minify"
+    "build:preload": "bun build src/preload/runtime.ts --outfile src/preload/runtime.built.js --target browser --minify",
+    "prepublishOnly": "bun run build:preload"
   },
   "exports": {
     ".": "./src/bun/index.ts",
