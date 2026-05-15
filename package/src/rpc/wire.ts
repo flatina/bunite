@@ -146,5 +146,5 @@ function readVarUint(buf: Buffer | Uint8Array): number {
   throw new Error("Truncated or oversize varuint");
 }
 
-export const DEFAULT_MAX_BYTES = 4 * 1024 * 1024;
+export const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 export const PROTOCOL_VERSION = 1;

@@ -1,6 +1,7 @@
 import type { Server, WebSocketHandler } from "bun";
 import type { BrowserView } from "./BrowserView";
 import { log } from "../log";
+import { DEFAULT_MAX_BYTES } from "../../rpc/wire";
 
 type ViewRegistry = {
   getById(id: number): BrowserView | undefined;
@@ -78,7 +79,7 @@ export function ensureRpcServer() {
           const upgraded = server.upgrade(req, { data: { webviewId } });
           return upgraded ? undefined : new Response("Upgrade failed", { status: 500 });
         },
-        websocket,
+        websocket: { ...websocket, maxPayloadLength: DEFAULT_MAX_BYTES },
       });
       rpcPort = port;
       break;

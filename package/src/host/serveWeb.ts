@@ -4,6 +4,7 @@ import type { BytesPipe } from "../rpc/transport";
 import { createConnection, _setCallContextStorage } from "../rpc/peer";
 import { createFrameTransport } from "../rpc/transport";
 import type { SchemaShape, ServerDescriptor } from "../rpc/schema";
+import { DEFAULT_MAX_BYTES } from "../rpc/wire";
 
 _setCallContextStorage(new AsyncLocalStorage<{ callId: number }>());
 
@@ -51,7 +52,7 @@ const DEFAULT_RPC_PATH = "/rpc";
 
 export interface WebRpcMount {
   fetch(req: Request, srv: Server<object>): Response | undefined;
-  websocket: WebSocketHandler<object>;
+  websocket: WebSocketHandler<object> & { maxPayloadLength: number };
 }
 
 export function serveWeb<S extends SchemaShape>(
@@ -65,13 +66,16 @@ export function serveWeb<S extends SchemaShape>(
       const upgraded = srv.upgrade(req, { data: {} });
       return upgraded ? undefined : new Response("WebSocket upgrade failed", { status: 400 });
     },
-    websocket: createBunWebSocketServerHandler<object>((_ws, pipe) => {
-      const conn = createConnection({
-        transport: createFrameTransport(pipe),
-        mode: "web",
-        origin: "web-client",
-      });
-      conn.serve(descriptor);
-    }),
+    websocket: {
+      ...createBunWebSocketServerHandler<object>((_ws, pipe) => {
+        const conn = createConnection({
+          transport: createFrameTransport(pipe),
+          mode: "web",
+          origin: "web-client",
+        });
+        conn.serve(descriptor);
+      }),
+      maxPayloadLength: DEFAULT_MAX_BYTES,
+    },
   };
 }
