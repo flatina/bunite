@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun src/main.ts",
-    "typecheck": "echo 'multichannel-windows typecheck skipped (demuxer pending post-1.0)'"
+    "typecheck": "bun x tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "bunite-core": "workspace:*",

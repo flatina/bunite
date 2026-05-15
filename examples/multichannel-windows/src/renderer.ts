@@ -1,21 +1,5 @@
-import {
-  BuniteView,
-  createRpcTransportDemuxer,
-  defineWebviewRpc,
-} from "bunite-core/view";
-import type { CalcSchema, LogEntry, LogSchema } from "./schema";
-
-const view = new BuniteView();
-const demux = createRpcTransportDemuxer(view.transport);
-
-const calcRpc = defineWebviewRpc<CalcSchema>({ handlers: {} });
-const logRpc = defineWebviewRpc<LogSchema>({
-  handlers: {
-    messages: {
-      entry: (e: LogEntry) => appendLogEntry(e),
-    },
-  },
-});
+import { bootstrap } from "bunite-core/view";
+import { schema, type LogEntry } from "./schema";
 
 const aInput = document.getElementById("a") as HTMLInputElement;
 const bInput = document.getElementById("b") as HTMLInputElement;
@@ -24,22 +8,26 @@ const resultEl = document.getElementById("result")!;
 const logEl = document.getElementById("log")!;
 const goBtn = document.getElementById("go")!;
 
-// Disable the button until the main-side calc channel is up.
 goBtn.setAttribute("disabled", "true");
-demux.channel("calc").bindTo(calcRpc)
-  .then(() => goBtn.removeAttribute("disabled"))
-  .catch((err: Error) => { resultEl.textContent = `calc not ready: ${err.message}`; });
 
-// log is receive-only in the renderer — no need to await.
-demux.channel("log").bindTo(logRpc);
+const calc = await bootstrap(schema, "calc");
+const log = await bootstrap(schema, "log");
+
+goBtn.removeAttribute("disabled");
 
 goBtn.addEventListener("click", async () => {
   const a = Number(aInput.value);
   const b = Number(bInput.value);
   const op = opSelect.value as "add" | "multiply";
-  const result = await calcRpc.request("compute", { a, b, op });
+  const result = await calc.compute({ a, b, op });
   resultEl.textContent = String(result);
 });
+
+void (async () => {
+  for await (const entry of log.entries()) {
+    appendLogEntry(entry);
+  }
+})();
 
 function appendLogEntry(e: LogEntry) {
   const row = document.createElement("div");

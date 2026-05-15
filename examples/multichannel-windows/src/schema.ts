@@ -1,4 +1,4 @@
-import type { RpcSchema } from "bunite-core";
+import { call, defineCap, defineSchema, stream } from "bunite-core";
 
 export type ComputeParams = { a: number; b: number; op: "add" | "multiply" };
 
@@ -9,18 +9,15 @@ export type LogEntry = {
   at: number;
 };
 
-export type CalcSchema = {
-  bun: RpcSchema<{
-    requests: {
-      compute: { params: ComputeParams; response: number };
-    };
-  }>;
-  webview: RpcSchema;
-};
+export const calcCap = defineCap({
+  compute: call<ComputeParams, number>(),
+});
 
-export type LogSchema = {
-  bun: RpcSchema<{
-    messages: { entry: LogEntry };
-  }>;
-  webview: RpcSchema;
-};
+export const logCap = defineCap({
+  entries: stream<void, LogEntry>(),
+});
+
+export const schema = defineSchema({
+  roots: { calc: calcCap, log: logCap },
+  caps: [],
+});

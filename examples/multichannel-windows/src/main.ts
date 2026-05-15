@@ -1,11 +1,6 @@
-import {
-  AppRuntime,
-  BrowserWindow,
-  createRpcTransportDemuxer,
-  defineBunRpc,
-} from "bunite-core";
+import { AppRuntime, BrowserWindow, Stream, type ImplOf } from "bunite-core";
 import indexHtml from "./index.html" with { type: "text" };
-import type { CalcSchema, ComputeParams, LogEntry, LogSchema } from "./schema";
+import { schema, calcCap, logCap, type LogEntry } from "./schema";
 
 const app = new AppRuntime();
 await app.ready;
@@ -20,54 +15,39 @@ if (!rendererBundle.success) {
 const rendererJs = await rendererBundle.outputs[0]!.text();
 const html = (indexHtml as unknown as string).replace("<!--RENDERER_BUNDLE-->", rendererJs);
 
-type LogRpc = ReturnType<typeof defineBunRpc<LogSchema>>;
-const logRpcs = new Set<LogRpc>();
+const logSubs = new Set<(entry: LogEntry) => void>();
 
 function broadcastLog(entry: LogEntry) {
-  for (const rpc of logRpcs) rpc.send("entry", entry);
+  for (const emit of logSubs) emit(entry);
 }
 
 function createDemoWindow(label: string, x: number) {
-  const win = new BrowserWindow({
+  const calcImpl: ImplOf<typeof calcCap> = {
+    compute: ({ a, b, op }) => {
+      const result = op === "add" ? a + b : a * b;
+      const symbol = op === "add" ? "+" : "×";
+      broadcastLog({
+        from: label,
+        expr: `${a} ${symbol} ${b} = ${result}`,
+        result,
+        at: Date.now(),
+      });
+      return result;
+    },
+  };
+
+  const logImpl: ImplOf<typeof logCap> = {
+    entries: () => Stream.from<LogEntry>((emit, signal) => {
+      logSubs.add(emit);
+      signal.addEventListener("abort", () => logSubs.delete(emit));
+    }),
+  };
+
+  new BrowserWindow({
     title: `Multi-channel — ${label}`,
     html,
     frame: { x, y: 100, width: 420, height: 520 },
-  });
-
-  const demux = createRpcTransportDemuxer(win.view.transport);
-
-  const calcRpc = defineBunRpc<CalcSchema>({
-    handlers: {
-      requests: {
-        compute: ({ a, b, op }: ComputeParams) => {
-          const result = op === "add" ? a + b : a * b;
-          const symbol = op === "add" ? "+" : "×";
-          broadcastLog({
-            from: label,
-            expr: `${a} ${symbol} ${b} = ${result}`,
-            result,
-            at: Date.now(),
-          });
-          return result;
-        },
-      },
-    },
-  });
-  demux.channel("calc").bindTo(calcRpc).catch((err: Error) => {
-    console.error(`[${label}] calc channel: ${err.message}`);
-  });
-
-  const logRpc = defineBunRpc<LogSchema>({ handlers: {} });
-  // Only broadcast after renderer registers the log channel — earlier entries would drop.
-  demux.channel("log").bindTo(logRpc).then(() => logRpcs.add(logRpc)).catch((err: Error) => {
-    console.error(`[${label}] log channel: ${err.message}`);
-  });
-
-  win.on("close", () => {
-    calcRpc.dispose();
-    logRpc.dispose();
-    demux.dispose();
-    logRpcs.delete(logRpc);
+    serve: schema.serve({ calc: calcImpl, log: logImpl }),
   });
 }
 
