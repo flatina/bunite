@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "bun src/main.ts",
     "build": "bunite-build",
-    "typecheck": "echo 'webview-surface typecheck skipped (app.handle pending schema-driven migration)'"
+    "typecheck": "bun x tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "bunite-core": "workspace:*",

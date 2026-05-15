@@ -17,7 +17,12 @@ function getSurfaceCap(): Promise<SurfaceClient> {
 }
 
 function callSurface<R>(fn: (s: SurfaceClient) => Promise<R> | R): Promise<R | void> {
-  return getSurfaceCap().then(fn).catch(() => undefined);
+  return getSurfaceCap().then(fn).catch((err) => {
+    if ((globalThis as { __BUNITE_DEBUG__?: boolean }).__BUNITE_DEBUG__) {
+      console.warn("[bunite] surface call failed", err);
+    }
+    return undefined;
+  });
 }
 
 // OverlaySyncController: ResizeObserver + rAF position polling; dirty-flag coalescing ≤1 IPC/frame.
@@ -122,16 +127,20 @@ class BuniteWebviewElement extends HTMLElement {
     const ctrl = new AbortController();
     this._unsubNavigate = () => ctrl.abort();
     void (async () => {
-      const s = await getSurfaceCap();
-      const stream = s.didNavigate();
       try {
+        const s = await getSurfaceCap();
+        const stream = s.didNavigate();
         for await (const ev of stream) {
           if (ctrl.signal.aborted) break;
           if (ev.surfaceId === this._surfaceId) {
             this.dispatchEvent(new CustomEvent("did-navigate", { detail: { url: ev.url } }));
           }
         }
-      } catch { /* swallow */ }
+      } catch (err) {
+        if ((globalThis as { __BUNITE_DEBUG__?: boolean }).__BUNITE_DEBUG__) {
+          console.warn("[bunite] didNavigate stream failed", err);
+        }
+      }
     })();
     this._waitForLayout();
   }

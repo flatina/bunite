@@ -19,7 +19,7 @@ import { BrowserWindow } from "./BrowserWindow";
 import { createSurfaceCapImpl } from "./SurfaceManager";
 import "./SurfaceBrowserIPC";
 import { log, logLevelToInt } from "../../shared/log";
-import { RuntimeCap, SurfaceCap, type ImplOf } from "../../shared/rpc/index";
+import { RuntimeCap, SurfaceCap, IpcError, type ImplOf } from "../../shared/rpc/index";
 
 import type { LogLevel } from "../../shared/log";
 
@@ -183,21 +183,22 @@ export class AppRuntime {
   }
 
   createViewRuntime(viewId: number): ImplOf<typeof RuntimeCap> {
-    const notImpl = (name: string) => () => {
-      throw new Error(`Runtime.${name} not implemented in this build`);
+    const notImpl = (name: string) => {
+      throw new IpcError({ code: "not_supported", message: `Runtime.${name}` });
     };
-    void RuntimeCap;
-    return {
-      window: notImpl("window") as never,
-      dialogs: notImpl("dialogs") as never,
-      clipboard: notImpl("clipboard") as never,
-      shell: notImpl("shell") as never,
+    const impl = {
+      window: () => notImpl("window"),
+      dialogs: () => notImpl("dialogs"),
+      clipboard: () => notImpl("clipboard"),
+      shell: () => notImpl("shell"),
       appName: () => "bunite-app",
       appVersion: () => this.version,
-      theme: () => "light",
-      themeWatch: notImpl("themeWatch") as never,
-      surface: (_, ctx) => ctx.exportCap(SurfaceCap, createSurfaceCapImpl(viewId)),
-    };
+      theme: (): "light" | "dark" => "light",
+      themeWatch: () => notImpl("themeWatch"),
+      surface: (_: void, ctx: Parameters<ImplOf<typeof RuntimeCap>["surface"]>[1]) =>
+        ctx.exportCap(SurfaceCap, createSurfaceCapImpl(viewId)),
+    } satisfies ImplOf<typeof RuntimeCap>;
+    return impl;
   }
 
   private readonly appresHandlers = new Map<string, () => string>();

@@ -32,13 +32,7 @@
 
   <div class="container">
     <bunite-webview src="appres://app.internal/surface-a.html"></bunite-webview>
-    <bunite-webview id="surface-b"></bunite-webview>
+    <bunite-webview id="surface-b" src="http://localhost:18901"></bunite-webview>
   </div>
-
-  <script>
-    bunite.invoke("getServerUrl").then(url => {
-      document.getElementById("surface-b").setAttribute("src", url);
-    });
-  </script>
 </body>
 </html>

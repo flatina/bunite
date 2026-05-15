@@ -1,7 +1,39 @@
-export { registerBuniteWebviewPolyfill } from "../shared/webviewPolyfill";
+import { registerBuniteWebviewPolyfill } from "../shared/webviewPolyfill";
 
-export * from "../shared/rpc/index";
+export { registerBuniteWebviewPolyfill };
+
+export {
+  call,
+  stream,
+  cap,
+  defineCap,
+  defineSchema,
+  IpcError,
+  RuntimeCap,
+  SurfaceCap,
+} from "../shared/rpc/index";
+
 export { Stream } from "../shared/rpc/server";
 
-import { registerBuniteWebviewPolyfill as _register } from "../shared/webviewPolyfill";
-_register();
+export type {
+  Schema,
+  SchemaShape,
+  ServerDescriptor,
+  ImplsOf,
+  CapDef,
+  CallDef,
+  StreamDef,
+  CallCtx,
+  ClientOf,
+  ImplOf,
+  ExportedCap,
+  IpcCode,
+  IpcStatus,
+  RetrySpec,
+  FailedPreconditionReason,
+  AnyCapToken,
+  ReturnsKind,
+  Attestation,
+} from "../shared/rpc/index";
+
+registerBuniteWebviewPolyfill();

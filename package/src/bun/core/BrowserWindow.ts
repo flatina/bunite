@@ -2,7 +2,7 @@ import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { BuniteEvent } from "../events/event";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import { ensureNativeRuntime, getNativeLibrary, toCString } from "../proc/native";
-import { BrowserView, type BrowserViewOptions } from "./BrowserView";
+import { BrowserView } from "./BrowserView";
 import type { SchemaShape, ServerDescriptor } from "../../shared/rpc/index";
 import { getNextWindowId } from "./windowIds";
 import { getBaseDir, resolveDefaultAppResRoot } from "../../shared/paths";
@@ -181,7 +181,7 @@ export class BrowserWindow<S extends SchemaShape = SchemaShape> {
     buniteEventEmitter.on(`resize-${this.id}`, this.handleNativeResize);
     buniteEventEmitter.on(`close-${this.id}`, this.handleNativeClose);
 
-    const webview = new BrowserView({
+    const webview = new BrowserView<S>({
       url: this.url,
       html: this.html,
       preload: this.preload,
@@ -193,7 +193,7 @@ export class BrowserWindow<S extends SchemaShape = SchemaShape> {
         width: this.frame.width,
         height: this.frame.height
       },
-      serve: options.serve as BrowserViewOptions<any>["serve"],
+      serve: options.serve,
       windowId: this.id,
       navigationRules: this.navigationRules,
       sandbox: this.sandbox
@@ -202,10 +202,10 @@ export class BrowserWindow<S extends SchemaShape = SchemaShape> {
     this.webviewId = webview.id;
   }
 
-  get view(): BrowserView<any> {
+  get view(): BrowserView<S> {
     const view = BrowserView.getById(this.webviewId);
     if (!view) throw new Error(`BrowserWindow ${this.id} has no attached view`);
-    return view;
+    return view as BrowserView<S>;
   }
 
   static getById(id: number) {
@@ -216,8 +216,8 @@ export class BrowserWindow<S extends SchemaShape = SchemaShape> {
     return Object.values(BrowserWindowMap);
   }
 
-  get webview() {
-    return BrowserView.getById(this.webviewId);
+  get webview(): BrowserView<S> | undefined {
+    return BrowserView.getById(this.webviewId) as BrowserView<S> | undefined;
   }
 
   show() {

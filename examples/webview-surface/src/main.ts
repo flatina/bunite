@@ -1,7 +1,9 @@
 import { AppRuntime, BrowserWindow } from "bunite-core";
 
-const server = Bun.serve({
-  port: 0,
+const SURFACE_B_PORT = 18901;
+
+Bun.serve({
+  port: SURFACE_B_PORT,
   fetch(_req, srv) {
     return new Response(`<!doctype html>
 <html><head><meta charset="utf-8"><style>
@@ -25,8 +27,6 @@ const server = Bun.serve({
 
 const app = new AppRuntime();
 await app.ready;
-
-app.handle("getServerUrl", () => `http://localhost:${server.port}`);
 
 new BrowserWindow({
   title: `Webview Surface Test v${app.version} — ${app.engineName ?? "?"} ${app.engineVersion ?? "unknown"}`,
