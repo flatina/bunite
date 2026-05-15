@@ -1,4 +1,4 @@
-import { call, defineCap, defineSchema } from "bunite-core";
+import { call, defineCap, defineSchema } from "bunite-core/rpc";
 
 export type QuickLink = { url: string; label: string };
 export type TabInfo = { id: string; url: string; title: string };

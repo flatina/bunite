@@ -1,17 +1,5 @@
-import { BuniteView, defineWebviewRpc } from "bunite-core/view";
-
-type SmokeSchema = {
-  bun: {
-    requests: {
-      ping: { params: { value: string }; response: { pong: string } };
-    };
-    messages: {};
-  };
-  webview: { requests: {}; messages: {} };
-};
-
-const rpc = defineWebviewRpc<SmokeSchema>({ handlers: { requests: {} } });
-new BuniteView({ rpc });
+import { bootstrap } from "bunite-core/view";
+import { schema } from "../schema";
 
 function setStatus(text: string) {
   const el = document.getElementById("status");
@@ -19,7 +7,8 @@ function setStatus(text: string) {
 }
 
 try {
-  const { pong } = await rpc.request("ping", { value: "smoke" });
+  const api = await bootstrap(schema, "api");
+  const { pong } = await api.ping({ value: "smoke" });
   setStatus(`rpc ok: ${pong}`);
 
   // Attempt blocked navigation (should be rejected by rules)

@@ -1,4 +1,4 @@
-import { call, defineCap, defineSchema, stream } from "bunite-core";
+import { call, defineCap, defineSchema, stream } from "bunite-core/rpc";
 
 export type ComputeParams = { a: number; b: number; op: "add" | "multiply" };
 
