@@ -65,6 +65,12 @@ function resolveEngineDir(searchDirs: string[]): string | null {
     }
   }
 
+  // 1b. App's own dist/cef (dev mode reuses `bunite-build`-produced binaries).
+  const cwdDist = join(process.cwd(), "dist", "cef");
+  if (hasCefRuntime(cwdDist)) {
+    return cwdDist;
+  }
+
   // 2. Shared CEF root: BUNITE_CEF_ROOTDIR/cef-<version>/
   const rootDir = process.env.BUNITE_CEF_ROOTDIR;
   if (rootDir && existsSync(rootDir)) {
@@ -89,15 +95,6 @@ function resolveEngineDir(searchDirs: string[]): string | null {
     } catch {}
   }
 
-  // 3. vendors/cef inside bunite-core package (monorepo dev)
-  const packageRoot = resolveBunitePackageRoot();
-  if (packageRoot) {
-    const vendorPath = join(packageRoot, "vendors", "cef");
-    if (hasCefRuntime(vendorPath)) {
-      return vendorPath;
-    }
-  }
-
   return null;
 }
 
@@ -114,9 +111,10 @@ export function resolveDefaultAppResRoot(): string | null {
 }
 
 export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
-  const exeDir = dirname(process.execPath);
+  const exeDir = getBaseDir();
 
-  // 1. Executable-relative (compiled standalone binary)
+  // 1. Entry-script-dir / executable-relative — covers both `bun dist/main.js`
+  //    and a compiled standalone binary, where artifacts ship alongside the entry.
   const exeNativeLib = join(exeDir, `libBuniteNative${NATIVE_LIB_EXT}`);
   if (existsSync(exeNativeLib)) {
     return {
