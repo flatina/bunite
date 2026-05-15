@@ -1,10 +1,24 @@
 // <bunite-webview> custom element — registered in every appres:// page via preload.
 
+import type { ClientOf } from "../shared/rpc/index";
+import type { SurfaceCap } from "../shared/rpc/framework";
+
 declare const bunite: {
-  invoke: (method: string, params?: unknown) => Promise<any>;
-  on: (channel: string, handler: (data: any) => void) => (() => void);
-  off: (channel: string, handler: (data: any) => void) => void;
+  runtime(): Promise<ClientOf<typeof import("../shared/rpc/framework").RuntimeCap>>;
 };
+
+type SurfaceClient = ClientOf<typeof SurfaceCap>;
+let _surfaceCap: Promise<SurfaceClient> | null = null;
+function getSurfaceCap(): Promise<SurfaceClient> {
+  if (!_surfaceCap) {
+    _surfaceCap = bunite.runtime().then((r) => r.surface());
+  }
+  return _surfaceCap;
+}
+
+function callSurface<R>(fn: (s: SurfaceClient) => Promise<R> | R): Promise<R | void> {
+  return getSurfaceCap().then(fn).catch(() => undefined);
+}
 
 // OverlaySyncController: ResizeObserver + rAF position polling; dirty-flag coalescing ≤1 IPC/frame.
 
@@ -105,11 +119,20 @@ class BuniteWebviewElement extends HTMLElement {
     this._aborted = false;
     this._syncHidden = false;
     this._userHidden = false;
-    this._unsubNavigate = bunite.on("__bunite:webview.didNavigate", (data: any) => {
-      if (data?.surfaceId === this._surfaceId) {
-        this.dispatchEvent(new CustomEvent("did-navigate", { detail: { url: data.url } }));
-      }
-    });
+    const ctrl = new AbortController();
+    this._unsubNavigate = () => ctrl.abort();
+    void (async () => {
+      const s = await getSurfaceCap();
+      const stream = s.didNavigate();
+      try {
+        for await (const ev of stream) {
+          if (ctrl.signal.aborted) break;
+          if (ev.surfaceId === this._surfaceId) {
+            this.dispatchEvent(new CustomEvent("did-navigate", { detail: { url: ev.url } }));
+          }
+        }
+      } catch { /* swallow */ }
+    })();
     this._waitForLayout();
   }
 
@@ -152,12 +175,10 @@ class BuniteWebviewElement extends HTMLElement {
     if (this._surfaceId != null) {
       const id = this._surfaceId;
       this._surfaceId = null;
-      bunite.invoke("__bunite:surface.remove", { surfaceId: id }).catch(() => {});
+      void callSurface((s) => s.remove({ surfaceId: id }));
     } else if (this._initPromise) {
       this._initPromise
-        .then((r) => {
-          bunite.invoke("__bunite:surface.remove", { surfaceId: r.surfaceId }).catch(() => {});
-        })
+        .then((r) => { void callSurface((s) => s.remove({ surfaceId: r.surfaceId })); })
         .catch(() => {});
     }
     this._initPromise = null;
@@ -166,10 +187,8 @@ class BuniteWebviewElement extends HTMLElement {
   attributeChangedCallback(name: string, _oldValue: string | null, newValue: string | null) {
     if (name !== "src") return;
     if (this._surfaceId != null) {
-      bunite.invoke("__bunite:webview.navigate", {
-        surfaceId: this._surfaceId,
-        url: newValue || ""
-      }).catch(() => {});
+      const sid = this._surfaceId;
+      void callSurface((s) => s.navigate({ surfaceId: sid, url: newValue || "" }));
     } else if (this._initPromise) {
       // Init in progress — queue for after completion
       this._pendingSrc = newValue || "";
@@ -185,13 +204,13 @@ class BuniteWebviewElement extends HTMLElement {
   }
 
   goBack() {
-    if (this._surfaceId != null)
-      bunite.invoke("__bunite:webview.goBack", { surfaceId: this._surfaceId }).catch(() => {});
+    const sid = this._surfaceId;
+    if (sid != null) void callSurface((s) => s.goBack({ surfaceId: sid }));
   }
 
   reload() {
-    if (this._surfaceId != null)
-      bunite.invoke("__bunite:webview.reload", { surfaceId: this._surfaceId }).catch(() => {});
+    const sid = this._surfaceId;
+    if (sid != null) void callSurface((s) => s.reload({ surfaceId: sid }));
   }
 
   navigate(url: string) {
@@ -199,11 +218,10 @@ class BuniteWebviewElement extends HTMLElement {
   }
 
   private _applySurfaceHidden() {
-    if (this._surfaceId == null) return;
-    bunite.invoke("__bunite:surface.setHidden", {
-      surfaceId: this._surfaceId,
-      hidden: this._userHidden || this._syncHidden
-    }).catch(() => {});
+    const sid = this._surfaceId;
+    if (sid == null) return;
+    const hidden = this._userHidden || this._syncHidden;
+    void callSurface((s) => s.setHidden({ surfaceId: sid, hidden }));
   }
 
   private initSurface() {
@@ -214,43 +232,42 @@ class BuniteWebviewElement extends HTMLElement {
     const src = this._pendingSrc || this.getAttribute("src") || "";
     this._pendingSrc = null;
 
-    const initPromise = bunite.invoke("__bunite:surface.init", {
+    const initPromise = getSurfaceCap().then((s) => s.init({
       src,
       x: Math.round(r.x * dpr),
       y: Math.round(r.y * dpr),
       width: Math.round(r.width * dpr),
       height: Math.round(r.height * dpr),
-      hidden: this._userHidden
-    }) as Promise<SurfaceInitResponse>;
+      hidden: this._userHidden,
+    })) as Promise<SurfaceInitResponse>;
     this._initPromise = initPromise;
 
     initPromise
       .then((response) => {
         if (this._initPromise !== initPromise) return;
         if (this._aborted) {
-          bunite.invoke("__bunite:surface.remove", { surfaceId: response.surfaceId }).catch(() => {});
+          void callSurface((s) => s.remove({ surfaceId: response.surfaceId }));
           return;
         }
 
         this._surfaceId = response.surfaceId;
 
-        // Apply hidden state that was set during init
         if (this._userHidden) {
           this._applySurfaceHidden();
         }
 
-        // Apply src that was set before init completed
         if (this._pendingSrc != null) {
           const pending = this._pendingSrc;
           this._pendingSrc = null;
-          bunite.invoke("__bunite:webview.navigate", {
-            surfaceId: this._surfaceId,
-            url: pending
-          }).catch(() => {});
+          const sid = this._surfaceId;
+          if (sid != null) {
+            void callSurface((s) => s.navigate({ surfaceId: sid, url: pending }));
+          }
         }
 
         this._syncCtrl = new OverlaySyncController(this, (rect) => {
-          if (this._surfaceId == null) return;
+          const sid = this._surfaceId;
+          if (sid == null) return;
 
           const isZero = rect.width === 0 && rect.height === 0;
           if (isZero) {
@@ -265,13 +282,9 @@ class BuniteWebviewElement extends HTMLElement {
             this._applySurfaceHidden();
           }
 
-          bunite.invoke("__bunite:surface.resize", {
-            surfaceId: this._surfaceId,
-            x: rect.x,
-            y: rect.y,
-            w: rect.width,
-            h: rect.height
-          }).catch(() => {});
+          void callSurface((s) => s.resize({
+            surfaceId: sid, x: rect.x, y: rect.y, w: rect.width, h: rect.height,
+          }));
         });
         this._syncCtrl.start();
       })
@@ -287,16 +300,14 @@ class BuniteWebviewElement extends HTMLElement {
 if (typeof customElements !== "undefined") {
   customElements.define("bunite-webview", BuniteWebviewElement);
 
-  // Host BrowserView HWND covers surface HWNDs on focus — re-raise.
-  const raiseAll = () => bunite.invoke("__bunite:surface.bringAllVisiblesToFront").catch(() => {});
+  const raiseAll = () => { void callSurface((s) => s.bringAllVisiblesToFront()); };
   document.addEventListener("pointerdown", raiseAll, true);
 
-  // Send surfaces behind host during drag so OLE DragDrop reaches host's IDropTarget.
   document.addEventListener("dragstart", () => {
-    bunite.invoke("__bunite:surface.setAllPassthrough", { passthrough: true }).catch(() => {});
+    void callSurface((s) => s.setAllPassthrough({ passthrough: true }));
   }, true);
   document.addEventListener("dragend", () => {
-    bunite.invoke("__bunite:surface.setAllPassthrough", { passthrough: false }).catch(() => {});
+    void callSurface((s) => s.setAllPassthrough({ passthrough: false }));
     raiseAll();
   }, true);
 }

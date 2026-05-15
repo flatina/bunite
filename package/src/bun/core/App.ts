@@ -14,7 +14,7 @@ import {
   toCString,
   type NativeBootstrapOptions
 } from "../proc/native";
-import { attachGlobalIPCResolver, ensureRpcServer } from "./Socket";
+import { ensureRpcServer } from "./Socket";
 import { BrowserWindow } from "./BrowserWindow";
 import { createSurfaceCapImpl } from "./SurfaceManager";
 import "./SurfaceBrowserIPC";
@@ -29,7 +29,11 @@ type AppOptions = NativeBootstrapOptions & {
   logLevel?: LogLevel;
 };
 
-export type GlobalIPCHandler = (params: unknown, ctx: { viewId: number }) => unknown | Promise<unknown>;
+let _instance: AppRuntime | null = null;
+export function getAppRuntimeOrThrow(): AppRuntime {
+  if (!_instance) throw new Error("AppRuntime not yet instantiated");
+  return _instance;
+}
 
 function normalizeAppResPath(path: string): string {
   return path.replace(/^\/+/, "").replace(/\/+$/, "");
@@ -37,7 +41,6 @@ function normalizeAppResPath(path: string): string {
 
 export class AppRuntime {
   private stubKeepAliveTimer: ReturnType<typeof setInterval> | null = null;
-  private readonly globalIPCHandlers = new Map<string, GlobalIPCHandler>();
   private exitOnLastWindowClosed = true;
   private quitting = false;
   private pumpActive = false;
@@ -45,7 +48,11 @@ export class AppRuntime {
   readonly ready: Promise<void>;
 
   constructor(options: AppOptions = {}) {
+    if (_instance) throw new Error("AppRuntime already instantiated");
+    _instance = this;
+    ensureRpcServer();
     this.ready = this.bootstrap(options);
+    this.ready.catch(() => { if (_instance === this) _instance = null; });
   }
 
   private async bootstrap(options: AppOptions) {
@@ -94,8 +101,6 @@ export class AppRuntime {
       setNativeLogLevel(logLevelToInt(options.logLevel));
     }
 
-    attachGlobalIPCResolver((channel) => this.getGlobalIPCHandler(channel));
-
     setRouteRequestHandler((requestId, path) => this.handleRouteRequest(requestId, path));
 
     for (const path of this.appresHandlers.keys()) {
@@ -104,21 +109,14 @@ export class AppRuntime {
 
     if (this.exitOnLastWindowClosed && runtime.nativeLoaded) {
       buniteEventEmitter.on("all-windows-closed", () => {
-        if (this.quitting) {
-          return;
-        }
+        if (this.quitting) return;
         queueMicrotask(() => {
-          if (this.quitting) {
-            return;
-          }
-          if (BrowserWindow.getAll().length === 0) {
-            this.quit();
-          }
+          if (this.quitting) return;
+          if (BrowserWindow.getAll().length === 0) this.quit();
         });
       });
     }
 
-    ensureRpcServer();
     buniteEventEmitter.emitEvent(
       new BuniteEvent("ready", {
         usingStub: runtime.usingStub,
@@ -151,7 +149,6 @@ export class AppRuntime {
     lib?.symbols.bunite_run_loop();
 
     if (process.platform === "darwin" || process.platform === "linux") {
-      // AppKit / WebKitGTK share Bun's main thread — step-drive via setImmediate (no blocking loop).
       this.pumpActive = true;
       const pump = () => {
         if (!this.pumpActive) return;
@@ -160,15 +157,12 @@ export class AppRuntime {
       };
       pump();
     } else if (!this.stubKeepAliveTimer) {
-      // Engines with a dedicated UI thread (Windows CEF) only need Bun's loop kept alive.
       this.stubKeepAliveTimer = setInterval(() => {}, 60_000);
     }
   }
 
   quit(code = 0) {
-    if (this.quitting) {
-      return;
-    }
+    if (this.quitting) return;
     this.quitting = true;
 
     const event = buniteEventEmitter.events.app.beforeQuit({});
@@ -183,6 +177,7 @@ export class AppRuntime {
       this.stubKeepAliveTimer = null;
     }
     getNativeLibrary()?.symbols.bunite_quit();
+    if (_instance === this) _instance = null;
     process.exitCode = code;
     process.exit(code);
   }
@@ -203,26 +198,6 @@ export class AppRuntime {
       themeWatch: notImpl("themeWatch") as never,
       surface: (_, ctx) => ctx.exportCap(SurfaceCap, createSurfaceCapImpl(viewId)),
     };
-  }
-
-  handle(channel: string, handler: GlobalIPCHandler) {
-    if (channel.startsWith("__bunite:")) {
-      throw new Error(`Channel prefix "__bunite:" is reserved: ${channel}`);
-    }
-    if (this.globalIPCHandlers.has(channel)) {
-      throw new Error(`Global IPC handler already registered for: ${channel}`);
-    }
-    this.globalIPCHandlers.set(channel, handler);
-    return () => this.globalIPCHandlers.delete(channel);
-  }
-
-  removeHandler(channel: string) {
-    this.globalIPCHandlers.delete(channel);
-  }
-
-  /** @internal */
-  getGlobalIPCHandler(channel: string): GlobalIPCHandler | undefined {
-    return this.globalIPCHandlers.get(channel);
   }
 
   private readonly appresHandlers = new Map<string, () => string>();
@@ -274,14 +249,12 @@ export class AppRuntime {
   private cachedEngineName: string | null | undefined;
   private cachedEngineVersion: string | null | undefined;
 
-  /** Active engine identifier reported by the native adapter (e.g. `"cef"`, `"wkwebview"`, `"webkitgtk"`). */
   get engineName(): string | null {
     if (this.cachedEngineName !== undefined) return this.cachedEngineName;
     this.cachedEngineName = getNativeEngineName();
     return this.cachedEngineName;
   }
 
-  /** Engine version string reported by the native adapter. Format depends on engine. */
   get engineVersion(): string | null {
     if (this.cachedEngineVersion !== undefined) return this.cachedEngineVersion;
     this.cachedEngineVersion = getNativeEngineVersion();

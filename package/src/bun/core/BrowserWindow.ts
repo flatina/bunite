@@ -3,11 +3,11 @@ import { BuniteEvent } from "../events/event";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import { ensureNativeRuntime, getNativeLibrary, toCString } from "../proc/native";
 import { BrowserView, type BrowserViewOptions } from "./BrowserView";
-import type { RpcWithTransport } from "../../shared/rpc";
+import type { SchemaShape, ServerDescriptor } from "../../shared/rpc/index";
 import { getNextWindowId } from "./windowIds";
 import { getBaseDir, resolveDefaultAppResRoot } from "../../shared/paths";
 
-export type WindowOptionsType<T = undefined> = {
+export type WindowOptionsType<S extends SchemaShape = SchemaShape> = {
   title: string;
   frame: {
     x: number;
@@ -22,7 +22,7 @@ export type WindowOptionsType<T = undefined> = {
   preload: string | null;
   appresRoot: string | null;
   preloadOrigins?: string[];
-  rpc?: T;
+  serve?: ServerDescriptor<S>;
   titleBarStyle: "hidden" | "hiddenInset" | "default";
   transparent: boolean;
   hidden?: boolean;
@@ -58,7 +58,7 @@ export function getLastFocusedWindowId(): number | null {
   return lastFocusedWindowId;
 }
 
-export class BrowserWindow<T extends RpcWithTransport = RpcWithTransport> {
+export class BrowserWindow<S extends SchemaShape = SchemaShape> {
   id = getNextWindowId();
   private nativeAttached = false;
   title: string;
@@ -127,7 +127,7 @@ export class BrowserWindow<T extends RpcWithTransport = RpcWithTransport> {
     buniteEventEmitter.removeAllListeners(`close-requested-${this.id}`);
   };
 
-  constructor(options: Partial<WindowOptionsType<T>> = {}) {
+  constructor(options: Partial<WindowOptionsType<S>> = {}) {
     ensureNativeRuntime();
 
     this.title = options.title ?? defaultOptions.title;
@@ -193,7 +193,7 @@ export class BrowserWindow<T extends RpcWithTransport = RpcWithTransport> {
         width: this.frame.width,
         height: this.frame.height
       },
-      rpc: options.rpc as BrowserViewOptions<T>["rpc"],
+      serve: options.serve as BrowserViewOptions<any>["serve"],
       windowId: this.id,
       navigationRules: this.navigationRules,
       sandbox: this.sandbox
@@ -202,10 +202,10 @@ export class BrowserWindow<T extends RpcWithTransport = RpcWithTransport> {
     this.webviewId = webview.id;
   }
 
-  get view(): BrowserView<T> {
+  get view(): BrowserView<any> {
     const view = BrowserView.getById(this.webviewId);
     if (!view) throw new Error(`BrowserWindow ${this.id} has no attached view`);
-    return view as BrowserView<T>;
+    return view;
   }
 
   static getById(id: number) {
@@ -217,7 +217,7 @@ export class BrowserWindow<T extends RpcWithTransport = RpcWithTransport> {
   }
 
   get webview() {
-    return BrowserView.getById(this.webviewId) as BrowserView<T>;
+    return BrowserView.getById(this.webviewId);
   }
 
   show() {

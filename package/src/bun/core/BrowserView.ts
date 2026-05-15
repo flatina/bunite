@@ -2,7 +2,6 @@ import { ptr } from "bun:ffi";
 import { buildViewPreloadScript } from "../preload/inline";
 import { log } from "../../shared/log";
 import { buniteEventEmitter } from "../events/eventEmitter";
-import { type RpcPacket, type RpcTransport, type RpcWithTransport } from "../../shared/rpc";
 import {
   createConnection,
   createFrameTransport,
@@ -14,7 +13,8 @@ import {
   type ServerDescriptor,
 } from "../../shared/rpc/index";
 import { ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady } from "../proc/native";
-import { attachBrowserViewRegistry, getRpcPort, sendMessageToView } from "./Socket";
+import { attachBrowserViewRegistry, getRpcPort } from "./Socket";
+import { getAppRuntimeOrThrow } from "./App";
 import { randomBytes } from "node:crypto";
 import { resolveDefaultAppResRoot } from "../../shared/paths";
 import { removeSurfacesForHostView } from "./SurfaceRegistry";
@@ -22,17 +22,7 @@ import { removeSurfacesForHostView } from "./SurfaceRegistry";
 const BrowserViewMap: Record<number, BrowserView<any>> = {};
 let nextWebviewId = 1;
 
-function createNativeViewPipe(viewId: number) {
-  let handler: ((packet: RpcPacket) => void) | undefined;
-  const transport: RpcTransport = {
-    send: (packet) => { sendMessageToView(viewId, packet); },
-    registerHandler: (h) => { handler = h; },
-    unregisterHandler: () => { handler = undefined; }
-  };
-  return { transport, receive: (packet: RpcPacket) => handler?.(packet) };
-}
-
-export type BrowserViewOptions<T = undefined, S extends SchemaShape = SchemaShape> = {
+export type BrowserViewOptions<S extends SchemaShape = SchemaShape> = {
   url: string | null;
   html: string | null;
   preload: string | null;
@@ -45,7 +35,6 @@ export type BrowserViewOptions<T = undefined, S extends SchemaShape = SchemaShap
     width: number;
     height: number;
   };
-  rpc?: T;
   serve?: ServerDescriptor<S>;
   windowId: number;
   autoResize: boolean;
@@ -60,19 +49,14 @@ const defaultOptions: BrowserViewOptions = {
   appresRoot: null,
   preloadOrigins: undefined,
   partition: null,
-  frame: {
-    x: 0,
-    y: 0,
-    width: 800,
-    height: 600
-  },
+  frame: { x: 0, y: 0, width: 800, height: 600 },
   windowId: 0,
   autoResize: true,
   navigationRules: null,
   sandbox: false
 };
 
-export class BrowserView<T extends RpcWithTransport = RpcWithTransport, S extends SchemaShape = SchemaShape> {
+export class BrowserView<S extends SchemaShape = SchemaShape> {
   id = nextWebviewId++;
   private nativeAttached = false;
   private _readyPromise: Promise<void>;
@@ -84,21 +68,16 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport, S extend
   preloadOrigins?: string[];
   partition: string | null;
   frame: BrowserViewOptions["frame"];
-  rpc?: T;
   readonly serveDescriptor?: ServerDescriptor<S>;
-  readonly transport: RpcTransport;
-  private pipe: ReturnType<typeof createNativeViewPipe>;
-  private newConnection: Connection | null = null;
+  private connection: Connection | null = null;
+  private connectionGeneration = 0;
   autoResize: boolean;
   navigationRules: string[] | null;
   sandbox: boolean;
   secretKey: Uint8Array;
 
-  constructor(options: Partial<BrowserViewOptions<T, S>>) {
+  constructor(options: Partial<BrowserViewOptions<S>>) {
     ensureNativeRuntime();
-
-    this.pipe = createNativeViewPipe(this.id);
-    this.transport = this.pipe.transport;
 
     this.windowId = options.windowId ?? defaultOptions.windowId;
     this.url = options.url ?? defaultOptions.url;
@@ -108,7 +87,6 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport, S extend
     this.preloadOrigins = options.preloadOrigins ?? defaultOptions.preloadOrigins;
     this.partition = options.partition ?? defaultOptions.partition;
     this.frame = options.frame ?? defaultOptions.frame;
-    this.rpc = options.rpc;
     this.serveDescriptor = options.serve;
     this.autoResize = options.autoResize ?? defaultOptions.autoResize;
     this.navigationRules = options.navigationRules ?? defaultOptions.navigationRules;
@@ -116,10 +94,10 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport, S extend
     this.secretKey = new Uint8Array(randomBytes(32));
 
     if (this.sandbox) {
-      throw new Error("sandboxed BrowserView is not implemented in Bunite Windows Phase 1 yet.");
+      throw new Error("sandboxed BrowserView is not implemented yet.");
     }
     if (this.partition) {
-      log.warn("BrowserView.partition is not implemented in Bunite Windows Phase 1 yet.");
+      log.warn("BrowserView.partition is not implemented yet.");
     }
 
     const preloadScript = buildViewPreloadScript({
@@ -131,8 +109,6 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport, S extend
     });
 
     BrowserViewMap[this.id] = this;
-    this.rpc?.setTransport(this.transport);
-    // Register before native create — view-ready can fire on the UI thread before bunite_view_create returns.
     this._readyPromise = waitForViewReady(this.id);
     this.nativeAttached =
       getNativeLibrary()?.symbols.bunite_view_create(
@@ -153,8 +129,6 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport, S extend
       ) ?? false;
 
     if (this.nativeAttached) {
-      // did-navigate (not will-): nav destroys JS context without disconnectedCallback;
-      // will-navigate fires even when rules deny → would leak surfaces.
       this.on("did-navigate", (event: any) => {
         this.url = event.data?.detail ?? this.url;
         removeSurfacesForHostView(this.id);
@@ -162,7 +136,7 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport, S extend
     } else {
       cancelWaitForViewReady(this.id);
       this._readyPromise = Promise.reject(new Error("Native view creation failed"));
-      this._readyPromise.catch(() => {}); // prevent unhandled rejection
+      this._readyPromise.catch(() => {});
     }
   }
 
@@ -183,32 +157,41 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport, S extend
     return Object.values(BrowserViewMap);
   }
 
-  handleIncomingRpc(packet: RpcPacket) {
-    this.pipe.receive(packet);
-  }
-
   async attachNewConnection(pipe: BytesPipe): Promise<void> {
-    if (this.newConnection) {
-      this.newConnection = null;
+    this.connectionGeneration += 1;
+    const myGen = this.connectionGeneration;
+    if (this.connection) {
+      try { (this.connection as { transport?: { close?(): void } }).transport?.close?.(); } catch { /* swallow */ }
+      this.connection = null;
     }
     const key = await importAesGcmKey(this.secretKey);
+    if (myGen !== this.connectionGeneration) {
+      try { pipe.close(); } catch { /* swallow */ }
+      return;
+    }
     const encPipe = createEncryptedPipe(pipe, key);
-    this.newConnection = createConnection({
+    const runtime = getAppRuntimeOrThrow().createViewRuntime(this.id);
+    this.connection = createConnection({
       transport: createFrameTransport(encPipe),
       mode: "native",
       origin: "appres://app.internal",
+      runtime,
     });
     if (this.serveDescriptor) {
-      this.newConnection.serve(this.serveDescriptor);
+      this.connection.serve(this.serveDescriptor);
     }
   }
 
   detachNewConnection(): void {
-    this.newConnection = null;
+    this.connectionGeneration += 1;
+    if (this.connection) {
+      try { (this.connection as { transport?: { close?(): void } }).transport?.close?.(); } catch { /* swallow */ }
+      this.connection = null;
+    }
   }
 
   get rpcConnection(): Connection | null {
-    return this.newConnection;
+    return this.connection;
   }
 
   get rpcPort() {
@@ -283,7 +266,6 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport, S extend
     }
   }
 
-  /** Fire-and-forget setBounds — does not block on the UI thread. */
   setBoundsAsync(x: number, y: number, width: number, height: number) {
     this.frame = { x, y, width, height };
     if (this.nativeAttached) {
@@ -335,11 +317,7 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport, S extend
     cancelWaitForViewReady(this.id);
     this.nativeAttached = false;
     for (const eventName of [
-      "will-navigate",
-      "did-navigate",
-      "dom-ready",
-      "new-window-open",
-      "permission-requested"
+      "will-navigate", "did-navigate", "dom-ready", "new-window-open", "permission-requested"
     ]) {
       buniteEventEmitter.removeAllListeners(`${eventName}-${this.id}`);
     }
@@ -347,12 +325,7 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport, S extend
   }
 
   on(
-    name:
-      | "will-navigate"
-      | "did-navigate"
-      | "dom-ready"
-      | "new-window-open"
-      | "permission-requested",
+    name: "will-navigate" | "did-navigate" | "dom-ready" | "new-window-open" | "permission-requested",
     handler: (event: unknown) => void
   ) {
     const specificName = `${name}-${this.id}`;
@@ -362,7 +335,5 @@ export class BrowserView<T extends RpcWithTransport = RpcWithTransport, S extend
 }
 
 attachBrowserViewRegistry({
-  getById(id) {
-    return BrowserView.getById(id);
-  }
+  getById(id) { return BrowserView.getById(id); }
 });

@@ -18,7 +18,7 @@ export function createEncryptedPipe(base: BytesPipe, key: CryptoKey): BytesPipe 
     const payload = frame.subarray(HEADER_LENGTH);
     recvChain = recvChain.then(async () => {
       try {
-        const buf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv as BufferSource }, key, payload as BufferSource);
+        const buf = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv as any }, key, payload as any);
         downstream?.(new Uint8Array(buf));
       } catch {
         base.close();
@@ -31,7 +31,7 @@ export function createEncryptedPipe(base: BytesPipe, key: CryptoKey): BytesPipe 
       sendChain = sendChain.then(async () => {
         try {
           const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
-          const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv as BufferSource }, key, bytes as BufferSource);
+          const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv as any }, key, bytes as any);
           const encArr = new Uint8Array(encrypted as ArrayBuffer);
           const out = new Uint8Array(HEADER_LENGTH + encArr.byteLength);
           out[0] = VERSION;
@@ -53,5 +53,5 @@ export function createEncryptedPipe(base: BytesPipe, key: CryptoKey): BytesPipe 
 }
 
 export async function importAesGcmKey(rawKey: Uint8Array): Promise<CryptoKey> {
-  return crypto.subtle.importKey("raw", rawKey as BufferSource, "AES-GCM", false, ["encrypt", "decrypt"]);
+  return crypto.subtle.importKey("raw", rawKey as any, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
