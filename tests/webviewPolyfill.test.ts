@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { isBlockedSrc } from "../package/src/shared/webviewPolyfill";
+import { isBlockedSrc } from "../package/src/webview/polyfill";
 
 describe("isBlockedSrc — scheme guard", () => {
   test.each([

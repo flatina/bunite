@@ -11,11 +11,10 @@
     "prepublishOnly": "bun run build:preload"
   },
   "exports": {
-    ".": "./src/bun/index.ts",
-    "./bun": "./src/bun/index.ts",
-    "./view": "./src/view/index.ts",
-    "./rpc": "./src/shared/rpc/index.ts",
-    "./rpc/server": "./src/shared/rpc/server.ts",
+    ".": "./src/host/index.ts",
+    "./rpc": "./src/rpc/index.ts",
+    "./rpc/renderer": "./src/rpc/renderer.ts",
+    "./polyfill": "./src/webview/polyfill.ts",
     "./package.json": "./package.json"
   },
   "files": [

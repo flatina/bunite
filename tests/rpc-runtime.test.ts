@@ -3,8 +3,8 @@ import {
   createConnection,
   RuntimeCap, WindowCap, BrowserWindowCap, DialogsCap, ClipboardCap, ShellCap,
   type Transport, type Frame,
-} from "../package/src/shared/rpc/index";
-import type { ImplOf } from "../package/src/shared/rpc/schema";
+} from "../package/src/rpc/index";
+import type { ImplOf } from "../package/src/rpc/schema";
 
 function loopback(): [Transport, Transport] {
   let a: ((f: Frame) => void) | undefined;

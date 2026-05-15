@@ -3,10 +3,10 @@ import type { Server } from "bun";
 import {
   call, stream, defineCap, defineSchema,
   createConnection, createFrameTransport, createWebSocketPipe,
-  createBunWebSocketServerHandler,
   type ImplOf, type Connection,
-} from "../package/src/shared/rpc/index";
-import { Stream } from "../package/src/shared/rpc/server";
+} from "../package/src/rpc/index";
+import { createBunWebSocketServerHandler } from "../package/src/host/serveWeb";
+import { Stream } from "../package/src/rpc/stream";
 
 const counterCap = defineCap({
   getCount: call<void, { count: number }>(),

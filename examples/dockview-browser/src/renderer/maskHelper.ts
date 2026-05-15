@@ -3,7 +3,7 @@
  * so the DOM-rendered indicators remain visible during tab drag.
  */
 
-import { type ClientOf, SurfaceCap } from "bunite-core/view";
+import { type ClientOf, SurfaceCap } from "bunite-core/rpc/renderer";
 
 type SurfaceClient = ClientOf<typeof SurfaceCap>;
 

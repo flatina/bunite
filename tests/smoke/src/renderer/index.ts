@@ -1,4 +1,4 @@
-import { bootstrap } from "bunite-core/view";
+import { bootstrap } from "bunite-core/rpc/renderer";
 import { schema } from "../schema";
 
 function setStatus(text: string) {

@@ -6,8 +6,8 @@ import {
   RUNTIME_CAP_ID,
   type Transport, type Frame, type Connection,
   type ImplOf,
-} from "../package/src/shared/rpc/index";
-import { Stream } from "../package/src/shared/rpc/server";
+} from "../package/src/rpc/index";
+import { Stream } from "../package/src/rpc/stream";
 
 function loopback(): [Transport, Transport] {
   let a: ((f: Frame) => void) | undefined;

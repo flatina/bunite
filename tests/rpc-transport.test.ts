@@ -4,7 +4,7 @@ import {
   createConnection, createFrameTransport,
   type ImplOf,
   type BytesPipe,
-} from "../package/src/shared/rpc/index";
+} from "../package/src/rpc/index";
 
 function createInMemoryPipePair(): [BytesPipe, BytesPipe] {
   let aRecv: ((b: Uint8Array) => void) | undefined;

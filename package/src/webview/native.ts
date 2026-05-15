@@ -1,10 +1,10 @@
 // <bunite-webview> custom element — registered in every appres:// page via preload.
 
-import type { ClientOf } from "../shared/rpc/index";
-import type { SurfaceCap } from "../shared/rpc/framework";
+import type { ClientOf } from "../rpc/index";
+import type { SurfaceCap } from "../rpc/framework";
 
 declare const host: {
-  runtime(): Promise<ClientOf<typeof import("../shared/rpc/framework").RuntimeCap>>;
+  runtime(): Promise<ClientOf<typeof import("../rpc/framework").RuntimeCap>>;
 };
 
 type SurfaceClient = ClientOf<typeof SurfaceCap>;

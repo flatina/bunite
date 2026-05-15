@@ -1,6 +1,6 @@
 import { isAbsolute, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
-import { getBaseDir } from "../../shared/paths";
+import { getBaseDir } from "../paths";
 import { BuniteEvent } from "../events/event";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import {
@@ -13,15 +13,15 @@ import {
   setNativeLogLevel,
   toCString,
   type NativeBootstrapOptions
-} from "../proc/native";
+} from "../native";
 import { ensureRpcServer } from "./Socket";
 import { BrowserWindow } from "./BrowserWindow";
 import { createSurfaceCapImpl } from "./SurfaceManager";
 import "./SurfaceBrowserIPC";
-import { log, logLevelToInt } from "../../shared/log";
-import { RuntimeCap, SurfaceCap, IpcError, type ImplOf } from "../../shared/rpc/index";
+import { log, logLevelToInt } from "../log";
+import { RuntimeCap, SurfaceCap, IpcError, type ImplOf } from "../../rpc/index";
 
-import type { LogLevel } from "../../shared/log";
+import type { LogLevel } from "../log";
 
 type AppOptions = NativeBootstrapOptions & {
   userDataDir?: string;

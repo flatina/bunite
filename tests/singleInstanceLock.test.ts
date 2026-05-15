@@ -1,6 +1,6 @@
 import { describe, test, expect, afterEach } from "bun:test";
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
-import { acquireSingleInstanceLock, lockPathFor } from "../package/src/bun/core/singleInstanceLock";
+import { acquireSingleInstanceLock, lockPathFor } from "../package/src/host/core/singleInstanceLock";
 
 const pathFor = lockPathFor;
 

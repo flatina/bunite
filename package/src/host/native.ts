@@ -1,9 +1,9 @@
 import { CString, dlopen, FFIType, JSCallback, ptr, type Pointer } from "bun:ffi";
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { buniteEventEmitter } from "../events/eventEmitter";
-import { resolveNativeArtifacts, type ResolvedNativeArtifacts } from "../../shared/paths";
-import { log } from "../../shared/log";
+import { buniteEventEmitter } from "./events/eventEmitter";
+import { resolveNativeArtifacts, type ResolvedNativeArtifacts } from "./paths";
+import { log } from "./log";
 
 export type NativeBootstrapOptions = {
   allowStub?: boolean;

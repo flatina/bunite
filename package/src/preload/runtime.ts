@@ -10,7 +10,7 @@ import {
   type ClientOf,
   type ServerDescriptor,
   type WebSocketLike,
-} from "../shared/rpc/index";
+} from "../rpc/index";
 
 declare const __buniteWebviewId: number;
 declare const __buniteRpcSocketPort: number;
@@ -70,4 +70,4 @@ w.host.releaseRef = async (proxy: unknown): Promise<void> => {
   (await ensureConnection()).releaseRef(proxy);
 };
 
-import "./webviewElement";
+import "../webview/native";

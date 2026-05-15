@@ -1,9 +1,9 @@
 import type { Server, ServerWebSocket, WebSocketHandler } from "bun";
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { BytesPipe } from "./transport";
-import { createConnection, _setCallContextStorage } from "./peer";
-import { createFrameTransport } from "./transport";
-import type { SchemaShape, ServerDescriptor } from "./schema";
+import type { BytesPipe } from "../rpc/transport";
+import { createConnection, _setCallContextStorage } from "../rpc/peer";
+import { createFrameTransport } from "../rpc/transport";
+import type { SchemaShape, ServerDescriptor } from "../rpc/schema";
 
 _setCallContextStorage(new AsyncLocalStorage<{ callId: number }>());
 

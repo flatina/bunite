@@ -1,4 +1,3 @@
-import { registerBuniteWebviewPolyfill } from "../shared/webviewPolyfill";
 import {
   createConnection,
   createFrameTransport,
@@ -9,7 +8,7 @@ import {
   type ClientOf,
   type ServerDescriptor,
   type WebSocketLike,
-} from "../shared/rpc/index";
+} from "./index";
 
 declare global {
   interface Window {
@@ -19,49 +18,14 @@ declare global {
         name: K
       ): Promise<ClientOf<S["roots"][K]>>;
       serve<S extends SchemaShape>(descriptor: ServerDescriptor<S>): Promise<void>;
-      runtime(): Promise<ClientOf<typeof import("../shared/rpc/framework").RuntimeCap>>;
+      runtime(): Promise<ClientOf<typeof import("./framework").RuntimeCap>>;
       releaseRef(proxy: unknown): Promise<void>;
     };
   }
 }
 
-export { registerBuniteWebviewPolyfill };
-
-export {
-  call,
-  stream,
-  cap,
-  defineCap,
-  defineSchema,
-  IpcError,
-  RuntimeCap,
-  SurfaceCap,
-} from "../shared/rpc/index";
-
-export { Stream } from "../shared/rpc/server";
-
-export type {
-  Schema,
-  SchemaShape,
-  ServerDescriptor,
-  ImplsOf,
-  CapDef,
-  CallDef,
-  StreamDef,
-  CallCtx,
-  ClientOf,
-  ImplOf,
-  ExportedCap,
-  IpcCode,
-  IpcStatus,
-  RetrySpec,
-  FailedPreconditionReason,
-  AnyCapToken,
-  ReturnsKind,
-  Attestation,
-} from "../shared/rpc/index";
-
-registerBuniteWebviewPolyfill();
+export * from "./index";
+export { Stream } from "./stream";
 
 let _webConn: Connection | null = null;
 let _webConnPromise: Promise<Connection> | null = null;

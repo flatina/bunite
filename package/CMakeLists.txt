@@ -9,7 +9,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
 
-# Platform/arch tags matching package/src/shared/platform.ts PLATFORM_TAG and process.arch.
+# Platform/arch tags matching package/src/host/platform.ts PLATFORM_TAG and process.arch.
 if(WIN32)
   set(BUNITE_PLATFORM_TAG "win")
   if(NOT DEFINED BUNITE_TARGET_ARCH)

@@ -1,5 +1,5 @@
 import "./styles.css";
-import { bootstrap } from "bunite-core/view";
+import { bootstrap } from "bunite-core/rpc/renderer";
 import { schema, type TabInfo } from "../schema";
 
 type Tab = { id: string; webview: HTMLElement; url: string; title: string };

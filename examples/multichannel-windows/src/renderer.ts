@@ -1,4 +1,4 @@
-import { bootstrap } from "bunite-core/view";
+import { bootstrap } from "bunite-core/rpc/renderer";
 import { schema, type LogEntry } from "./schema";
 
 const aInput = document.getElementById("a") as HTMLInputElement;

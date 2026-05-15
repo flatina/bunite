@@ -5,7 +5,7 @@ import {
   createCodec, CapRef, isFrame, IpcError,
   CapTable, FIRST_USER_CAP_ID, MAX_CAPS_PER_CONNECTION,
   type ClientOf, type ImplOf,
-} from "../package/src/shared/rpc/index";
+} from "../package/src/rpc/index";
 
 const PlotCap = defineCap({
   setData: call<{ data: Float32Array }, void>(),

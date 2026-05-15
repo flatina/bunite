@@ -1,5 +1,6 @@
 import { join } from "node:path";
-import { AppRuntime, BrowserWindow, serveWeb, type ImplOf } from "bunite-core";
+import { AppRuntime, BrowserWindow, serveWeb } from "bunite-core";
+import type { ImplOf } from "bunite-core/rpc";
 import { schema, apiCap, type QuickLink, type TabInfo } from "./schema";
 
 process.env.BUNITE_REMOTE_DEBUGGING_PORT ??= "9222";

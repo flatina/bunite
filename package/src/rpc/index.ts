@@ -36,7 +36,6 @@ export type {
   ClientOf,
   ImplOf,
   ClientReturn,
-  Stream,
 } from "./schema";
 
 export { topologyHash, canonicalize } from "./hash";
@@ -125,7 +124,6 @@ export type {
   WebSocketLike,
 } from "./transport";
 
-export { createBunWebSocketServerHandler, serveWeb } from "./bun";
-export type { WebRpcMount } from "./bun";
-
 export { createEncryptedPipe, importAesGcmKey } from "./encrypt";
+
+export { Stream } from "./stream";

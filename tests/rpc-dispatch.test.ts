@@ -5,8 +5,8 @@ import {
   type ImplOf, type ClientOf,
   type Connection, type Transport, type Frame,
   IpcError,
-} from "../package/src/shared/rpc/index";
-import { Stream } from "../package/src/shared/rpc/server";
+} from "../package/src/rpc/index";
+import { Stream } from "../package/src/rpc/stream";
 
 function loopback(): [Transport, Transport] {
   let a: ((f: Frame) => void) | undefined;

@@ -1,4 +1,5 @@
-import { AppRuntime, BrowserWindow, Stream, type ImplOf } from "bunite-core";
+import { AppRuntime, BrowserWindow } from "bunite-core";
+import { Stream, type ImplOf } from "bunite-core/rpc";
 import indexHtml from "./index.html" with { type: "text" };
 import { schema, calcCap, logCap, type LogEntry } from "./schema";
 

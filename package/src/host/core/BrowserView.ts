@@ -1,6 +1,6 @@
 import { ptr } from "bun:ffi";
-import { buildViewPreloadScript } from "../preload/inline";
-import { log } from "../../shared/log";
+import { buildViewPreloadScript } from "../preloadBundle";
+import { log } from "../log";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import {
   createConnection,
@@ -11,12 +11,12 @@ import {
   type BytesPipe,
   type SchemaShape,
   type ServerDescriptor,
-} from "../../shared/rpc/index";
-import { ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady } from "../proc/native";
+} from "../../rpc/index";
+import { ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady } from "../native";
 import { attachBrowserViewRegistry, getRpcPort } from "./Socket";
 import { getAppRuntimeOrThrow } from "./App";
 import { randomBytes } from "node:crypto";
-import { resolveDefaultAppResRoot } from "../../shared/paths";
+import { resolveDefaultAppResRoot } from "../paths";
 import { removeSurfacesForHostView } from "./SurfaceRegistry";
 
 const BrowserViewMap: Record<number, BrowserView<any>> = {};

@@ -1,11 +1,11 @@
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { BuniteEvent } from "../events/event";
 import { buniteEventEmitter } from "../events/eventEmitter";
-import { ensureNativeRuntime, getNativeLibrary, toCString } from "../proc/native";
+import { ensureNativeRuntime, getNativeLibrary, toCString } from "../native";
 import { BrowserView } from "./BrowserView";
-import type { SchemaShape, ServerDescriptor } from "../../shared/rpc/index";
+import type { SchemaShape, ServerDescriptor } from "../../rpc/index";
 import { getNextWindowId } from "./windowIds";
-import { getBaseDir, resolveDefaultAppResRoot } from "../../shared/paths";
+import { getBaseDir, resolveDefaultAppResRoot } from "../paths";
 
 export type WindowOptionsType<S extends SchemaShape = SchemaShape> = {
   title: string;

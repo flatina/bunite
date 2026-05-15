@@ -4,8 +4,8 @@ import {
   getHostSurfaceIds, getSurfaceRecord,
   MAX_SURFACES_PER_HOST
 } from "./SurfaceRegistry";
-import { SurfaceCap, type ImplOf, IpcError } from "../../shared/rpc/index";
-import { Stream } from "../../shared/rpc/server";
+import { SurfaceCap, type ImplOf, IpcError } from "../../rpc/index";
+import { Stream } from "../../rpc/stream";
 
 function applyHostOffset(hostView: BrowserView, x: number, y: number) {
   return { x: x + hostView.frame.x, y: y + hostView.frame.y };

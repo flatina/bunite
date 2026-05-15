@@ -1,6 +1,6 @@
 import type { Server, WebSocketHandler } from "bun";
 import type { BrowserView } from "./BrowserView";
-import { log } from "../../shared/log";
+import { log } from "../log";
 
 type ViewRegistry = {
   getById(id: number): BrowserView | undefined;
