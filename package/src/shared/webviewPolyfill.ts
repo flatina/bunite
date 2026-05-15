@@ -126,8 +126,8 @@ function definePolyfillClass(): CustomElementConstructor {
 /**
  * Register the `<bunite-webview>` iframe polyfill. No-op in non-browser
  * environments and when the native CEF preload has already registered the element.
- * `BuniteView` calls this automatically on construction; call directly only when
- * using `<bunite-webview>` markup without instantiating `BuniteView`.
+ * Auto-called when importing `bunite-core/view`; call directly only if you
+ * import a sub-path that does not pull in the view entry.
  *
  * Defaults (web fallback only — native paths bypass these):
  * - `sandbox="allow-scripts allow-forms allow-popups"` (popup-escape stays opt-in).

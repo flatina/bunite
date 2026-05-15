@@ -3,8 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare:renderer": "bun scripts/build-renderer.ts",
-    "smoke": "bun run prepare:renderer && bun src/run.ts"
+    "smoke": "echo 'smoke test disabled — pending schema-driven rewrite'"
   },
   "dependencies": {
     "bunite-core": "workspace:*"

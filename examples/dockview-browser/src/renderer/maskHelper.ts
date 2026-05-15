@@ -3,17 +3,31 @@
  * so the DOM-rendered indicators remain visible during tab drag.
  */
 
+import { type ClientOf, RuntimeCap, SurfaceCap } from "bunite-core/view";
+
+type RuntimeClient = ClientOf<typeof RuntimeCap>;
+type SurfaceClient = ClientOf<typeof SurfaceCap>;
+
 declare global {
   interface Window {
-    bunite?: { invoke: (method: string, params?: unknown) => Promise<unknown> };
+    bunite?: { runtime(): Promise<RuntimeClient> };
   }
 }
 
 type WebviewElement = HTMLElement & { _surfaceId?: number | null };
 
+let _surfaceCap: Promise<SurfaceClient> | null = null;
+function getSurfaceCap(): Promise<SurfaceClient> {
+  if (_surfaceCap) return _surfaceCap;
+  if (!window.bunite?.runtime) return Promise.reject(new Error("bunite preload not ready"));
+  const attempt = window.bunite.runtime().then((r) => r.surface());
+  _surfaceCap = attempt;
+  attempt.catch(() => { if (_surfaceCap === attempt) _surfaceCap = null; });
+  return attempt;
+}
+
 export function setupDropIndicatorMasks() {
-  if (!window.bunite?.invoke) return;
-  const invoke = window.bunite.invoke;
+  if (!window.bunite?.runtime) return;
 
   let scheduled = false;
   let dragging = false;
@@ -44,7 +58,7 @@ export function setupDropIndicatorMasks() {
           });
         }
       }
-      invoke("__bunite:surface.setMasks", { surfaceId: sid, masks }).catch(() => {});
+      void getSurfaceCap().then((s) => s.setMasks({ surfaceId: sid, masks })).catch(() => {});
     }
   }
 
@@ -52,7 +66,7 @@ export function setupDropIndicatorMasks() {
     for (const wv of document.querySelectorAll<HTMLElement>("bunite-webview")) {
       const sid = (wv as WebviewElement)._surfaceId;
       if (sid == null) continue;
-      invoke("__bunite:surface.setMasks", { surfaceId: sid, masks: [] }).catch(() => {});
+      void getSurfaceCap().then((s) => s.setMasks({ surfaceId: sid, masks: [] })).catch(() => {});
     }
   }
 
