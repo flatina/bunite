@@ -3,31 +3,24 @@
  * so the DOM-rendered indicators remain visible during tab drag.
  */
 
-import { type ClientOf, RuntimeCap, SurfaceCap } from "bunite-core/view";
+import { type ClientOf, SurfaceCap } from "bunite-core/view";
 
-type RuntimeClient = ClientOf<typeof RuntimeCap>;
 type SurfaceClient = ClientOf<typeof SurfaceCap>;
-
-declare global {
-  interface Window {
-    bunite?: { runtime(): Promise<RuntimeClient> };
-  }
-}
 
 type WebviewElement = HTMLElement & { _surfaceId?: number | null };
 
 let _surfaceCap: Promise<SurfaceClient> | null = null;
 function getSurfaceCap(): Promise<SurfaceClient> {
   if (_surfaceCap) return _surfaceCap;
-  if (!window.bunite?.runtime) return Promise.reject(new Error("bunite preload not ready"));
-  const attempt = window.bunite.runtime().then((r) => r.surface());
+  if (!window.host?.runtime) return Promise.reject(new Error("host preload not ready"));
+  const attempt = window.host.runtime().then((r) => r.surface());
   _surfaceCap = attempt;
   attempt.catch(() => { if (_surfaceCap === attempt) _surfaceCap = null; });
   return attempt;
 }
 
 export function setupDropIndicatorMasks() {
-  if (!window.bunite?.runtime) return;
+  if (!window.host?.runtime) return;
 
   let scheduled = false;
   let dragging = false;

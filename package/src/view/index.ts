@@ -11,6 +11,20 @@ import {
   type WebSocketLike,
 } from "../shared/rpc/index";
 
+declare global {
+  interface Window {
+    host?: {
+      bootstrap<S extends SchemaShape, K extends keyof S["roots"] & string>(
+        schema: Schema<S>,
+        name: K
+      ): Promise<ClientOf<S["roots"][K]>>;
+      serve<S extends SchemaShape>(descriptor: ServerDescriptor<S>): Promise<void>;
+      runtime(): Promise<ClientOf<typeof import("../shared/rpc/framework").RuntimeCap>>;
+      releaseRef(proxy: unknown): Promise<void>;
+    };
+  }
+}
+
 export { registerBuniteWebviewPolyfill };
 
 export {
@@ -87,9 +101,8 @@ export async function bootstrap<S extends SchemaShape, K extends keyof S["roots"
   name: K
 ): Promise<ClientOf<S["roots"][K]>> {
   if (isNative()) {
-    const buniteApi = (globalThis as { bunite?: { bootstrap?: (s: Schema<S>, n: K) => Promise<ClientOf<S["roots"][K]>> } }).bunite;
-    if (!buniteApi?.bootstrap) throw new Error("bunite preload not ready");
-    return buniteApi.bootstrap(schema, name);
+    if (!window.host?.bootstrap) throw new Error("host preload not ready");
+    return window.host.bootstrap(schema, name);
   }
   const conn = await ensureWebConnection();
   return conn.bootstrap(schema, name);
@@ -97,9 +110,8 @@ export async function bootstrap<S extends SchemaShape, K extends keyof S["roots"
 
 export async function serve<S extends SchemaShape>(descriptor: ServerDescriptor<S>): Promise<void> {
   if (isNative()) {
-    const buniteApi = (globalThis as { bunite?: { serve?: (d: ServerDescriptor<S>) => Promise<void> } }).bunite;
-    if (!buniteApi?.serve) throw new Error("bunite preload not ready");
-    return buniteApi.serve(descriptor);
+    if (!window.host?.serve) throw new Error("host preload not ready");
+    return window.host.serve(descriptor);
   }
   const conn = await ensureWebConnection();
   conn.serve(descriptor);

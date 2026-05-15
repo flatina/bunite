@@ -53,20 +53,20 @@ const w = window as any;
 w.__bunite ??= {};
 w.__buniteWebviewId = __buniteWebviewId;
 w.__buniteRpcSocketPort = __buniteRpcSocketPort;
-w.bunite ??= {};
+w.host ??= {};
 
-w.bunite.bootstrap = async <S extends SchemaShape, K extends keyof S["roots"] & string>(
+w.host.bootstrap = async <S extends SchemaShape, K extends keyof S["roots"] & string>(
   schema: Schema<S>,
   name: K
 ): Promise<ClientOf<S["roots"][K]>> => (await ensureConnection()).bootstrap(schema, name);
 
-w.bunite.serve = async <S extends SchemaShape>(descriptor: ServerDescriptor<S>): Promise<void> => {
+w.host.serve = async <S extends SchemaShape>(descriptor: ServerDescriptor<S>): Promise<void> => {
   (await ensureConnection()).serve(descriptor);
 };
 
-w.bunite.runtime = async () => (await ensureConnection()).runtime();
+w.host.runtime = async () => (await ensureConnection()).runtime();
 
-w.bunite.releaseRef = async (proxy: unknown): Promise<void> => {
+w.host.releaseRef = async (proxy: unknown): Promise<void> => {
   (await ensureConnection()).releaseRef(proxy);
 };
 

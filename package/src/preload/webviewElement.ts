@@ -3,7 +3,7 @@
 import type { ClientOf } from "../shared/rpc/index";
 import type { SurfaceCap } from "../shared/rpc/framework";
 
-declare const bunite: {
+declare const host: {
   runtime(): Promise<ClientOf<typeof import("../shared/rpc/framework").RuntimeCap>>;
 };
 
@@ -11,7 +11,7 @@ type SurfaceClient = ClientOf<typeof SurfaceCap>;
 let _surfaceCap: Promise<SurfaceClient> | null = null;
 function getSurfaceCap(): Promise<SurfaceClient> {
   if (!_surfaceCap) {
-    _surfaceCap = bunite.runtime().then((r) => r.surface());
+    _surfaceCap = host.runtime().then((r) => r.surface());
   }
   return _surfaceCap;
 }
