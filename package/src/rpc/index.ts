@@ -124,6 +124,6 @@ export type {
   WebSocketLike,
 } from "./transport";
 
-export { createEncryptedPipe, importAesGcmKey } from "./encrypt";
+export { createEncryptedPipe } from "./encrypt";
 
 export { Stream } from "./stream";

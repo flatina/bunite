@@ -2,10 +2,11 @@ import { describe, test, expect } from "bun:test";
 import {
   call, defineCap, defineSchema,
   createConnection, createFrameTransport,
-  createEncryptedPipe, importAesGcmKey,
   type ImplOf,
   type BytesPipe,
 } from "../package/src/rpc/index";
+import { createEncryptedPipe } from "../package/src/host/encryptedPipe";
+import { createEncryptedPipe as createEncryptedPipeWebCrypto } from "../package/src/rpc/encrypt";
 
 function pipePair(): [BytesPipe, BytesPipe] {
   let aRecv: ((b: Uint8Array) => void) | undefined;
@@ -21,14 +22,13 @@ describe("encrypted pipe", () => {
     const apiCap = defineCap({
       ping: call<{ n: number }, { pong: number }>(),
     });
-    const schema = defineSchema({ roots: { api: apiCap }, caps: [] });
+    const schema = defineSchema({ roots: { api: apiCap } });
 
     const rawKey = crypto.getRandomValues(new Uint8Array(32));
-    const key = await importAesGcmKey(rawKey);
 
     const [a, b] = pipePair();
-    const ea = createEncryptedPipe(a, key);
-    const eb = createEncryptedPipe(b, key);
+    const ea = await createEncryptedPipe(a, rawKey);
+    const eb = await createEncryptedPipe(b, rawKey);
 
     const server = createConnection({
       transport: createFrameTransport(ea),
@@ -58,8 +58,25 @@ describe("encrypted pipe", () => {
     expect(results.map((r) => r.pong)).toEqual([2, 4, 6, 8, 10]);
   });
 
+  test("node:crypto host ↔ WebCrypto preload wire compatibility", async () => {
+    const rawKey = crypto.getRandomValues(new Uint8Array(32));
+    const [a, b] = pipePair();
+    const nodeSide = await createEncryptedPipe(a, rawKey);
+    const webSide = await createEncryptedPipeWebCrypto(b, rawKey);
+
+    const payload = new Uint8Array([1, 2, 3, 4, 5, 0xff, 0x00, 0xaa]);
+
+    const nodeToWeb = new Promise<Uint8Array>((resolve) => { webSide.setReceive(resolve); });
+    nodeSide.send(payload);
+    expect(await nodeToWeb).toEqual(payload);
+
+    const webToNode = new Promise<Uint8Array>((resolve) => { nodeSide.setReceive(resolve); });
+    webSide.send(payload);
+    expect(await webToNode).toEqual(payload);
+  });
+
   test("invalid frame version closes the pipe", async () => {
-    const key = await importAesGcmKey(crypto.getRandomValues(new Uint8Array(32)));
+    const rawKey = crypto.getRandomValues(new Uint8Array(32));
     let closed = false;
     const base: BytesPipe = {
       send: () => {},
@@ -68,7 +85,7 @@ describe("encrypted pipe", () => {
     };
     let recv: ((b: Uint8Array) => void) | undefined;
     base.setReceive = (h) => { recv = h; };
-    const enc = createEncryptedPipe(base, key);
+    const enc = await createEncryptedPipe(base, rawKey);
     enc.setReceive(() => {});
     recv!(new Uint8Array([99, 0, 0]));
     expect(closed).toBe(true);

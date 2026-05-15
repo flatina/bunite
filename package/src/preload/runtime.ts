@@ -3,7 +3,6 @@ import {
   createFrameTransport,
   createWebSocketPipe,
   createEncryptedPipe,
-  importAesGcmKey,
   type Connection,
   type Schema,
   type SchemaShape,
@@ -32,8 +31,7 @@ function ensureConnection(): Promise<Connection> {
       ws.addEventListener("error", () => reject(new Error("bunite preload ws connect failed")), { once: true });
     });
     const rawKey = Uint8Array.from(atob(__buniteSecretKeyBase64), (c) => c.charCodeAt(0));
-    const key = await importAesGcmKey(rawKey);
-    const pipe = createEncryptedPipe(createWebSocketPipe(ws as unknown as WebSocketLike), key);
+    const pipe = await createEncryptedPipe(createWebSocketPipe(ws as unknown as WebSocketLike), rawKey);
     const conn = createConnection({
       transport: createFrameTransport(pipe),
       mode: "native",

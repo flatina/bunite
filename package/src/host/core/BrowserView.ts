@@ -5,13 +5,12 @@ import { buniteEventEmitter } from "../events/eventEmitter";
 import {
   createConnection,
   createFrameTransport,
-  createEncryptedPipe,
-  importAesGcmKey,
   type Connection,
   type BytesPipe,
   type SchemaShape,
   type ServerDescriptor,
 } from "../../rpc/index";
+import { createEncryptedPipe } from "../encryptedPipe";
 import { ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady } from "../native";
 import { attachBrowserViewRegistry, getRpcPort } from "./Socket";
 import { getAppRuntimeOrThrow } from "./App";
@@ -164,12 +163,11 @@ export class BrowserView<S extends SchemaShape = SchemaShape> {
       try { (this.connection as { transport?: { close?(): void } }).transport?.close?.(); } catch { /* swallow */ }
       this.connection = null;
     }
-    const key = await importAesGcmKey(this.secretKey);
+    const encPipe = await createEncryptedPipe(pipe, this.secretKey);
     if (myGen !== this.connectionGeneration) {
-      try { pipe.close(); } catch { /* swallow */ }
+      try { encPipe.close(); } catch { /* swallow */ }
       return;
     }
-    const encPipe = createEncryptedPipe(pipe, key);
     const runtime = getAppRuntimeOrThrow().createViewRuntime(this.id);
     this.connection = createConnection({
       transport: createFrameTransport(encPipe),
