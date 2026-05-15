@@ -18,7 +18,7 @@ extern "C" {
 BUNITE_EXPORT int32_t bunite_abi_version(void);
 BUNITE_EXPORT void bunite_set_log_level(int32_t level);
 BUNITE_EXPORT bool bunite_init(
-	const char* engine_dir,
+	const char* cef_dir,
 	bool hide_console,
 	bool popup_blocking,
 	const char* engine_config_json

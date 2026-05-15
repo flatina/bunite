@@ -198,13 +198,6 @@ export class BrowserView<S extends SchemaShape = SchemaShape> {
     return getRpcPort();
   }
 
-  setAnchor(mode: "none" | "fill" | "top" | "below-top", inset = 0) {
-    const modeInt = { none: 0, fill: 1, top: 2, "below-top": 3 }[mode];
-    if (this.nativeAttached) {
-      getNativeLibrary()?.symbols.bunite_view_set_anchor(this.id, modeInt, inset);
-    }
-  }
-
   executeJavaScript(script: string) {
     if (this.nativeAttached) {
       getNativeLibrary()?.symbols.bunite_view_execute_javascript(this.id, toCString(script));

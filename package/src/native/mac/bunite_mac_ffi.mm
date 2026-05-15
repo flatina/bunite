@@ -61,12 +61,12 @@ extern "C" BUNITE_EXPORT void bunite_set_log_level(int32_t level) {
 }
 
 extern "C" BUNITE_EXPORT bool bunite_init(
-  const char* engine_dir,         // ignored — WKWebView is a system framework
+  const char* cef_dir,         // ignored — WKWebView is a system framework
   bool hide_console,              // ignored — no console concept on macOS
   bool popup_blocking,
   const char* engine_config_json  // reserved
 ) {
-  (void)engine_dir;
+  (void)cef_dir;
   (void)hide_console;
   (void)engine_config_json;
 

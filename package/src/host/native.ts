@@ -6,7 +6,6 @@ import { resolveNativeArtifacts, type ResolvedNativeArtifacts } from "./paths";
 import { log } from "./log";
 
 export type NativeBootstrapOptions = {
-  allowStub?: boolean;
   hideConsole?: boolean;
   popupBlocking?: boolean;
   /**
@@ -19,8 +18,6 @@ export type NativeBootstrapOptions = {
 
 export type NativeRuntimeState = {
   initialized: boolean;
-  usingStub: boolean;
-  nativeLoaded: boolean;
   artifacts: ResolvedNativeArtifacts;
 };
 
@@ -32,7 +29,7 @@ type NativeSymbols = {
   bunite_engine_version: () => CString;
   bunite_set_log_level: (level: number) => void;
   bunite_init: (
-    engineDir: CStringPointer,
+    cefDir: CStringPointer,
     hideConsole: boolean,
     popupBlocking: boolean,
     engineConfigJson: CStringPointer
@@ -97,7 +94,6 @@ type NativeSymbols = {
   bunite_view_bring_to_front: (viewId: number) => void;
   bunite_view_set_bounds: (viewId: number, x: number, y: number, width: number, height: number) => void;
   bunite_view_set_bounds_async: (viewId: number, x: number, y: number, width: number, height: number) => void;
-  bunite_view_set_anchor: (viewId: number, mode: number, inset: number) => void;
   bunite_view_go_back: (viewId: number) => void;
   bunite_view_reload: (viewId: number) => void;
   bunite_view_execute_javascript: (viewId: number, script: CStringPointer) => void;
@@ -272,10 +268,6 @@ const nativeSymbolDefinitions = {
     args: [FFIType.u32, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64],
     returns: FFIType.void
   },
-  bunite_view_set_anchor: {
-    args: [FFIType.u32, FFIType.i32, FFIType.f64],
-    returns: FFIType.void
-  },
   bunite_view_go_back: {
     args: [FFIType.u32],
     returns: FFIType.void
@@ -365,12 +357,12 @@ export function toCString(value: string): CStringPointer {
 
 function applyEnvironment(artifacts: ResolvedNativeArtifacts) {
   // CEF needs engine dir on PATH (libcef.dll) and ICU_DATA pointing at resources. Null for mac/linux.
-  const engineBinaryDir = artifacts.engineDir && existsSync(join(artifacts.engineDir, "Release", "libcef.dll"))
-    ? join(artifacts.engineDir, "Release")
-    : artifacts.engineDir;
-  const engineResourceDir = artifacts.engineDir && existsSync(join(artifacts.engineDir, "Resources", "resources.pak"))
-    ? join(artifacts.engineDir, "Resources")
-    : artifacts.engineDir;
+  const engineBinaryDir = artifacts.cefDir && existsSync(join(artifacts.cefDir, "Release", "libcef.dll"))
+    ? join(artifacts.cefDir, "Release")
+    : artifacts.cefDir;
+  const engineResourceDir = artifacts.cefDir && existsSync(join(artifacts.cefDir, "Resources", "resources.pak"))
+    ? join(artifacts.cefDir, "Resources")
+    : artifacts.cefDir;
 
   if (engineResourceDir && !process.env.ICU_DATA) {
     process.env.ICU_DATA = engineResourceDir;
@@ -583,7 +575,6 @@ export async function initNativeRuntime(
     return state;
   }
 
-  const allowStub = options.allowStub ?? true;
   const artifacts = resolveNativeArtifacts();
   const hasNativeArtifacts = Boolean(
     artifacts.nativeLibPath && existsSync(artifacts.nativeLibPath)
@@ -591,50 +582,45 @@ export async function initNativeRuntime(
 
   applyEnvironment(artifacts);
 
-  if (!hasNativeArtifacts && !allowStub) {
+  if (!hasNativeArtifacts) {
     throw new Error(
-      "bunite native runtime packages are missing. Install platform packages or allow stub mode."
+      "bunite: native runtime not found. Install the platform package " +
+      `(bunite-native-${process.platform === "win32" ? "win" : process.platform === "darwin" ? "mac" : "linux"}-<arch>) ` +
+      "or set BUNITE_CEF_DIR to a CEF runtime directory."
     );
   }
 
-  nativeLibrary = hasNativeArtifacts ? tryLoadNativeLibrary(artifacts) : null;
-
-  if (nativeLibrary) {
-    const EXPECTED_ABI = 4;
-    const nativeAbi = nativeLibrary.symbols.bunite_abi_version();
-    if (nativeAbi !== EXPECTED_ABI) {
-      throw new Error(
-        `bunite native ABI mismatch: JS expects ${EXPECTED_ABI}, native reports ${nativeAbi}. ` +
-        `Rebuild native binaries with 'bun run build:native:win'.`
-      );
-    }
-    registerNativeCallbacks(nativeLibrary);
-    const engineConfigJson = options.engineFlags
-      ? JSON.stringify(options.engineFlags)
-      : "";
-    const initOk = nativeLibrary.symbols.bunite_init(
-      toCString(artifacts.engineDir ?? ""),
-      options.hideConsole ?? false,
-      options.popupBlocking ?? false,
-      toCString(engineConfigJson)
-    );
-
-    if (!initOk) {
-      nativeLibrary = null;
-      if (!allowStub) {
-        throw new Error("bunite native runtime failed to initialize.");
-      }
-    }
-  }
-
+  nativeLibrary = tryLoadNativeLibrary(artifacts);
   if (!nativeLibrary) {
-    log.warn("Native runtime packages were not found or could not be loaded. Initializing in stub mode.");
+    throw new Error(`bunite: failed to load native library at ${artifacts.nativeLibPath}.`);
+  }
+
+  const EXPECTED_ABI = 4;
+  const nativeAbi = nativeLibrary.symbols.bunite_abi_version();
+  if (nativeAbi !== EXPECTED_ABI) {
+    throw new Error(
+      `bunite native ABI mismatch: JS expects ${EXPECTED_ABI}, native reports ${nativeAbi}. ` +
+      `Rebuild native binaries with 'bun run build:native:win'.`
+    );
+  }
+  registerNativeCallbacks(nativeLibrary);
+  const engineConfigJson = options.engineFlags ? JSON.stringify(options.engineFlags) : "";
+  const initOk = nativeLibrary.symbols.bunite_init(
+    toCString(artifacts.cefDir ?? ""),
+    options.hideConsole ?? false,
+    options.popupBlocking ?? false,
+    toCString(engineConfigJson)
+  );
+  if (!initOk) {
+    throw new Error(
+      "bunite: native runtime failed to initialize " +
+      `(engine dir: ${artifacts.cefDir || "<unset>"}). ` +
+      "Verify CEF binaries are available, or set BUNITE_CEF_DIR."
+    );
   }
 
   state = {
     initialized: true,
-    usingStub: !nativeLibrary,
-    nativeLoaded: Boolean(nativeLibrary),
     artifacts
   };
   return state;

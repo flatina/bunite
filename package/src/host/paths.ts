@@ -12,12 +12,8 @@ export type ResolvedNativeArtifacts = {
   nativePackageName: string | null;
   enginePackageName: string | null;
   nativeLibPath: string | null;
-  /**
-   * Engine runtime directory. Engine-specific meaning:
-   * - CEF (Windows): CEF framework dir containing libcef.dll. Resolved via env, package, or vendors/cef.
-   * - WKWebView (macOS), WebKitGTK (Linux): null. Engine is the system framework.
-   */
-  engineDir: string | null;
+  /** CEF framework dir containing libcef.dll. Null on macOS/Linux (system framework). */
+  cefDir: string | null;
 };
 
 export function resolvePackageRoot(packageName: string): string | null {
@@ -47,12 +43,12 @@ function parseCefVersion(name: string): number[] | null {
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
-function resolveEngineDir(searchDirs: string[]): string | null {
+function resolveCefDir(searchDirs: string[]): string | null {
   // CEF-only (Win). mac/linux use system frameworks.
   if (PLATFORM_TAG !== "win") return null;
 
-  // 0. Explicit override (BUNITE_ENGINE_DIR; BUNITE_CEF_DIR as legacy fallback).
-  const forceDir = process.env.BUNITE_ENGINE_DIR ?? process.env.BUNITE_CEF_DIR;
+  // 0. Explicit override.
+  const forceDir = process.env.BUNITE_CEF_DIR;
   if (forceDir && hasCefRuntime(forceDir)) {
     return forceDir;
   }
@@ -123,7 +119,7 @@ export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
       nativePackageName: null,
       enginePackageName: null,
       nativeLibPath: exeNativeLib,
-      engineDir: resolveEngineDir([exeDir])
+      cefDir: resolveCefDir([exeDir])
     };
   }
 
@@ -147,9 +143,9 @@ export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
       nativePackageName,
       enginePackageName: packagedEngineDir && existsSync(packagedEngineDir) ? enginePackageName : null,
       nativeLibPath: packagedNativeLibPath,
-      engineDir: (packagedEngineDir && existsSync(packagedEngineDir))
+      cefDir: (packagedEngineDir && existsSync(packagedEngineDir))
         ? packagedEngineDir
-        : resolveEngineDir([nativePackageRoot, packageRoot].filter(Boolean) as string[])
+        : resolveCefDir([nativePackageRoot, packageRoot].filter(Boolean) as string[])
     };
   }
 
@@ -165,7 +161,7 @@ export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
         nativePackageName: null,
         enginePackageName: null,
         nativeLibPath: directLib,
-        engineDir: resolveEngineDir([localBuildRoot])
+        cefDir: resolveCefDir([localBuildRoot])
       };
     }
 
@@ -178,7 +174,7 @@ export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
         nativePackageName: null,
         enginePackageName: null,
         nativeLibPath: releaseLib,
-        engineDir: resolveEngineDir([localBuildRoot])
+        cefDir: resolveCefDir([localBuildRoot])
       };
     }
   }
@@ -189,6 +185,6 @@ export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
     nativePackageName: nativePackageRoot ? nativePackageName : null,
     enginePackageName: enginePackageRoot ? enginePackageName : null,
     nativeLibPath: null,
-    engineDir: null
+    cefDir: null
   };
 }

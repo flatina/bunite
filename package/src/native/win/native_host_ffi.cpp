@@ -80,7 +80,7 @@ extern "C" BUNITE_EXPORT void bunite_set_log_level(int32_t level) {
 }
 
 extern "C" BUNITE_EXPORT bool bunite_init(
-  const char* engine_dir,
+  const char* cef_dir,
   bool hide_console,
   bool popup_blocking,
   const char* engine_config_json
@@ -96,7 +96,7 @@ extern "C" BUNITE_EXPORT bool bunite_init(
     g_runtime.shutdown_finalize_posted.store(false);
     g_runtime.shutting_down.store(false);
     g_runtime.process_helper_path = resolveProcessHelperPath();
-    g_runtime.cef_dir = engine_dir ? engine_dir : "";
+    g_runtime.cef_dir = cef_dir ? cef_dir : "";
     g_runtime.popup_blocking = popup_blocking;
     g_runtime.chromium_flags = bunite_win::parseChromiumFlagsJson(
       engine_config_json ? engine_config_json : "");

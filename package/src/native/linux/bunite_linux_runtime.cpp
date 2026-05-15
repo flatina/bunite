@@ -34,9 +34,9 @@ extern "C" BUNITE_EXPORT const char* bunite_engine_version(void) {
 }
 
 extern "C" BUNITE_EXPORT bool bunite_init(
-  const char* engine_dir, bool hide_console, bool popup_blocking, const char* engine_config_json
+  const char* cef_dir, bool hide_console, bool popup_blocking, const char* engine_config_json
 ) {
-  (void)engine_dir; (void)hide_console; (void)engine_config_json;
+  (void)cef_dir; (void)hide_console; (void)engine_config_json;
   auto& rt = bunite_linux::g_runtime;
   if (rt.initialized) return true;
   rt.popup_blocking = popup_blocking;

@@ -1,7 +1,6 @@
 import { isAbsolute, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { getBaseDir } from "../paths";
-import { BuniteEvent } from "../events/event";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import {
   getNativeEngineName,
@@ -40,7 +39,6 @@ function normalizeAppResPath(path: string): string {
 }
 
 export class AppRuntime {
-  private stubKeepAliveTimer: ReturnType<typeof setInterval> | null = null;
   private exitOnLastWindowClosed = true;
   private quitting = false;
   private pumpActive = false;
@@ -90,14 +88,13 @@ export class AppRuntime {
       process.env.BUNITE_USER_DATA_DIR = join(appDataDir, name);
     }
 
-    const runtime = await initNativeRuntime({
-      allowStub: options.allowStub,
+    await initNativeRuntime({
       hideConsole: options.hideConsole,
       popupBlocking: options.popupBlocking,
       engineFlags: options.engineFlags
     });
 
-    if (options.logLevel && runtime.nativeLoaded) {
+    if (options.logLevel) {
       setNativeLogLevel(logLevelToInt(options.logLevel));
     }
 
@@ -107,7 +104,7 @@ export class AppRuntime {
       getNativeLibrary()?.symbols.bunite_register_appres_route(toCString(path));
     }
 
-    if (this.exitOnLastWindowClosed && runtime.nativeLoaded) {
+    if (this.exitOnLastWindowClosed) {
       buniteEventEmitter.on("all-windows-closed", () => {
         if (this.quitting) return;
         queueMicrotask(() => {
@@ -116,13 +113,6 @@ export class AppRuntime {
         });
       });
     }
-
-    buniteEventEmitter.emitEvent(
-      new BuniteEvent("ready", {
-        usingStub: runtime.usingStub,
-        artifacts: runtime.artifacts
-      })
-    );
   }
 
   on(name: string, handler: (payload: unknown) => void) {
@@ -136,19 +126,11 @@ export class AppRuntime {
   }
 
   run() {
-    const runtime = getNativeRuntimeState();
-    if (!runtime?.nativeLoaded) {
-      if (!this.stubKeepAliveTimer) {
-        log.warn("Running without a native event loop. Keeping the process alive in stub mode.");
-        this.stubKeepAliveTimer = setInterval(() => {}, 60_000);
-      }
-      return;
-    }
-
     const lib = getNativeLibrary();
     lib?.symbols.bunite_run_loop();
 
     if (process.platform === "darwin" || process.platform === "linux") {
+      // mac/linux: cooperative pump on Bun's main thread (NSApp/GTK first-thread constraint).
       this.pumpActive = true;
       const pump = () => {
         if (!this.pumpActive) return;
@@ -156,9 +138,9 @@ export class AppRuntime {
         setImmediate(pump);
       };
       pump();
-    } else if (!this.stubKeepAliveTimer) {
-      this.stubKeepAliveTimer = setInterval(() => {}, 60_000);
     }
+    // Windows: native UI thread is separate. Bun's loop stays alive via the RPC
+    // listening socket started by ensureRpcServer() in the constructor.
   }
 
   quit(code = 0) {
@@ -172,10 +154,6 @@ export class AppRuntime {
       return;
     }
     this.pumpActive = false;
-    if (this.stubKeepAliveTimer) {
-      clearInterval(this.stubKeepAliveTimer);
-      this.stubKeepAliveTimer = null;
-    }
     getNativeLibrary()?.symbols.bunite_quit();
     if (_instance === this) _instance = null;
     process.exitCode = code;
