@@ -19,5 +19,4 @@ export const logCap = defineCap({
 
 export const schema = defineSchema({
   roots: { calc: calcCap, log: logCap },
-  caps: [],
 });

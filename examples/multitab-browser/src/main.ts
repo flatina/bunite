@@ -24,7 +24,7 @@ function quickLinks(): QuickLink[] {
   ];
 }
 
-const apiImpl: ImplOf<typeof apiCap> = {
+const apiImpl = {
   getQuickLinks: () => quickLinks(),
   createTab: ({ url }) => {
     const id = `tab-${nextTabId++}`;
@@ -37,7 +37,7 @@ const apiImpl: ImplOf<typeof apiCap> = {
     const tab = tabs.get(id);
     if (tab) tab.url = url;
   },
-};
+} satisfies ImplOf<typeof apiCap>;
 
 const descriptor = schema.serve({ api: apiImpl });
 const webRpc = serveWeb(descriptor);

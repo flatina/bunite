@@ -9,12 +9,12 @@ const ipcState = {
   navBlockLeaked: false,
 };
 
-const apiImpl: ImplOf<typeof apiCap> = {
+const apiImpl = {
   ping: ({ value }) => {
     ipcState.rpcPingOk = value === "smoke";
     return { pong: `pong:${value}` };
   },
-};
+} satisfies ImplOf<typeof apiCap>;
 
 export const descriptor = schema.serve({ api: apiImpl });
 

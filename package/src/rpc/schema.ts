@@ -126,13 +126,13 @@ export function isCapDef(v: unknown): v is CapDef {
 
 export interface SchemaShape {
   roots: Record<string, CapDef<any, any>>;
-  caps: readonly CapDef<any, any>[];
+  caps?: readonly CapDef<any, any>[];
 }
 
 export interface Schema<S extends SchemaShape = SchemaShape> {
   readonly [SCHEMA_TAG]: true;
   readonly roots: S["roots"];
-  readonly caps: S["caps"];
+  readonly caps: readonly CapDef<any, any>[];
   topologyHash(): Promise<string>;
   serve(impls: ImplsOf<S>): ServerDescriptor<S>;
 }
@@ -150,7 +150,7 @@ export function defineSchema<S extends SchemaShape>(shape: S): Schema<S> {
   const schema: Schema<S> = {
     [SCHEMA_TAG]: true,
     roots: shape.roots,
-    caps: shape.caps,
+    caps: shape.caps ?? [],
     topologyHash: () => topologyHashImpl(schema),
     serve(impls) {
       return { schema, impls };

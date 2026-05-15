@@ -23,7 +23,7 @@ function broadcastLog(entry: LogEntry) {
 }
 
 function createDemoWindow(label: string, x: number) {
-  const calcImpl: ImplOf<typeof calcCap> = {
+  const calcImpl = {
     compute: ({ a, b, op }) => {
       const result = op === "add" ? a + b : a * b;
       const symbol = op === "add" ? "+" : "×";
@@ -35,14 +35,14 @@ function createDemoWindow(label: string, x: number) {
       });
       return result;
     },
-  };
+  } satisfies ImplOf<typeof calcCap>;
 
-  const logImpl: ImplOf<typeof logCap> = {
+  const logImpl = {
     entries: () => Stream.from<LogEntry>((emit, signal) => {
       logSubs.add(emit);
       signal.addEventListener("abort", () => logSubs.delete(emit));
     }),
-  };
+  } satisfies ImplOf<typeof logCap>;
 
   new BrowserWindow({
     title: `Multi-channel — ${label}`,

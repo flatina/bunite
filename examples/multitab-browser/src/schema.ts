@@ -10,4 +10,4 @@ export const apiCap = defineCap({
   navigateTo: call<{ id: string; url: string }, void>(),
 });
 
-export const schema = defineSchema({ roots: { api: apiCap }, caps: [] });
+export const schema = defineSchema({ roots: { api: apiCap } });
