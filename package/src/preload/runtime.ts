@@ -4,10 +4,10 @@ import {
   createWebSocketPipe,
   createEncryptedPipe,
   type Connection,
+  type CapDef,
   type Schema,
-  type SchemaShape,
+  type SchemaRoots,
   type ClientOf,
-  type ServerDescriptor,
   type WebSocketLike,
 } from "../rpc/index";
 
@@ -53,19 +53,17 @@ w.__buniteWebviewId = __buniteWebviewId;
 w.__buniteRpcSocketPort = __buniteRpcSocketPort;
 w.host ??= {};
 
-w.host.bootstrap = async <S extends SchemaShape, K extends keyof S["roots"] & string>(
-  schema: Schema<S>,
-  name: K
-): Promise<ClientOf<S["roots"][K]>> => (await ensureConnection()).bootstrap(schema, name);
-
-w.host.serve = async <S extends SchemaShape>(descriptor: ServerDescriptor<S>): Promise<void> => {
-  (await ensureConnection()).serve(descriptor);
+w.host.bootstrap = async (target: CapDef<any, any> | Schema<SchemaRoots>): Promise<unknown> => {
+  const conn = await ensureConnection();
+  return (conn.bootstrap as (t: unknown) => Promise<unknown>)(target);
 };
 
-w.host.runtime = async () => (await ensureConnection()).runtime();
+w.host.runtime = async () => (await ensureConnection()).runtime() as ClientOf<typeof import("../rpc/framework").RuntimeCap>;
 
 w.host.releaseRef = async (proxy: unknown): Promise<void> => {
   (await ensureConnection()).releaseRef(proxy);
 };
+
+w.host.getConnection = (): Promise<Connection> => ensureConnection();
 
 import "../webview/native";

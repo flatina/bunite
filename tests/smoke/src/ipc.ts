@@ -1,6 +1,6 @@
 import type { BrowserView } from "bunite-core";
-import type { ImplOf } from "bunite-core/rpc";
-import { apiCap, schema } from "./schema";
+import type { Connection, ImplOf } from "bunite-core/rpc";
+import { apiCap } from "./schema";
 
 const ipcState = {
   rpcPingOk: false,
@@ -16,7 +16,9 @@ const apiImpl = {
   },
 } satisfies ImplOf<typeof apiCap>;
 
-export const descriptor = schema.serve({ api: apiImpl });
+export const setupServer = (conn: Connection): void => {
+  conn.serve(apiCap, apiImpl);
+};
 
 export function attachNavigationChecks(view: BrowserView) {
   view.on("will-navigate", (event: unknown) => {

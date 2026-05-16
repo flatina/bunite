@@ -1,10 +1,11 @@
-const CALL_TAG = Symbol("CallDef");
-const STREAM_TAG = Symbol("StreamDef");
-const CAP_TAG = Symbol("CapDef");
-const CAP_REF_TAG = Symbol("CapRefToken");
-const CAP_ARRAY_TAG = Symbol("CapArrayToken");
-const CAP_RECORD_TAG = Symbol("CapRecordToken");
-const SCHEMA_TAG = Symbol("Schema");
+// Symbol.for() — shared identity across separately-built bundles (preload vs renderer).
+const CALL_TAG = Symbol.for("bunite.rpc.CallDef");
+const STREAM_TAG = Symbol.for("bunite.rpc.StreamDef");
+const CAP_TAG = Symbol.for("bunite.rpc.CapDef");
+const CAP_REF_TAG = Symbol.for("bunite.rpc.CapRefToken");
+const CAP_ARRAY_TAG = Symbol.for("bunite.rpc.CapArrayToken");
+const CAP_RECORD_TAG = Symbol.for("bunite.rpc.CapRecordToken");
+const SCHEMA_TAG = Symbol.for("bunite.rpc.Schema");
 declare const EXPORTED_CAP_BRAND: unique symbol;
 
 export type ReturnsKind = "type" | "cap" | "capArray" | "capRecord";
@@ -96,25 +97,35 @@ export function stream<P = void, Y = unknown>(opts?: { hint?: Record<string, unk
   return { [STREAM_TAG]: true, hint: opts?.hint };
 }
 
+// Disposal: method only. Sync Disposable — wire drop is fire-and-forget.
 export interface DisposalSpec<M extends MethodsRecord = MethodsRecord> {
   method: keyof M & string;
-  async?: boolean;
 }
 
 export type MethodsRecord = Record<string, MethodDef>;
 
 export interface CapDef<M extends MethodsRecord = MethodsRecord, D extends DisposalSpec<M> | undefined = undefined> {
   readonly [CAP_TAG]: true;
+  readonly name: string;
+  readonly version?: string;
   readonly methods: M;
   readonly disposal: D;
 }
 
+export interface DefineCapOpts<M extends MethodsRecord, D extends DisposalSpec<M> | undefined> {
+  version?: string | number;
+  disposal?: D;
+}
+
 export function defineCap<M extends MethodsRecord, D extends DisposalSpec<M> | undefined = undefined>(
+  name: string,
   methods: M,
-  opts?: { disposal?: D }
+  opts?: DefineCapOpts<M, D>
 ): CapDef<M, D> {
   return {
     [CAP_TAG]: true,
+    name,
+    version: opts?.version != null ? String(opts.version) : undefined,
     methods,
     disposal: (opts?.disposal as D) ?? (undefined as D),
   };
@@ -124,47 +135,20 @@ export function isCapDef(v: unknown): v is CapDef {
   return typeof v === "object" && v !== null && (v as any)[CAP_TAG] === true;
 }
 
-export interface SchemaShape {
-  roots: Record<string, CapDef<any, any>>;
-  caps?: readonly CapDef<any, any>[];
-}
+// Schema = grouping sugar (Record<rootName, CapDef>). TS atomicity for serveAll.
+export type SchemaRoots = Record<string, CapDef<any, any>>;
 
-export interface Schema<S extends SchemaShape = SchemaShape> {
+export interface Schema<R extends SchemaRoots = SchemaRoots> {
   readonly [SCHEMA_TAG]: true;
-  readonly roots: S["roots"];
-  readonly caps: readonly CapDef<any, any>[];
-  topologyHash(): Promise<string>;
-  serve(impls: ImplsOf<S>): ServerDescriptor<S>;
+  readonly roots: R;
 }
 
-export type ImplsOf<S extends SchemaShape> = {
-  [K in keyof S["roots"]]: ImplOf<S["roots"][K]>;
+export type ImplsOf<R extends SchemaRoots> = {
+  [K in keyof R]: ImplOf<R[K]>;
 };
 
-export interface ServerDescriptor<S extends SchemaShape = SchemaShape> {
-  readonly schema: Schema<S>;
-  readonly impls: ImplsOf<S>;
-}
-
-export function defineSchema<S extends SchemaShape>(shape: S): Schema<S> {
-  const schema: Schema<S> = {
-    [SCHEMA_TAG]: true,
-    roots: shape.roots,
-    caps: shape.caps ?? [],
-    topologyHash: () => topologyHashImpl(schema),
-    serve(impls) {
-      return { schema, impls };
-    },
-  };
-  return schema;
-}
-
-let topologyHashImpl: (s: Schema<any>) => Promise<string> = () => {
-  throw new Error("schema.topologyHash bound after hash.ts import");
-};
-
-export function _bindTopologyHash(fn: (s: Schema<any>) => Promise<string>) {
-  topologyHashImpl = fn;
+export function defineSchema<R extends SchemaRoots>(roots: R): Schema<R> {
+  return { [SCHEMA_TAG]: true, roots };
 }
 
 export function isSchema(v: unknown): v is Schema {
@@ -210,8 +194,7 @@ export type ClientReturn<R> =
   R extends CapRefToken<infer C> ? ClientOf<C> :
   R extends CapArrayToken<infer C> ?
     C extends CapDef<any, infer D>
-      ? [D] extends [{ async: true }] ? ClientOf<C>[] & AsyncDisposable
-      : [D] extends [DisposalSpec] ? ClientOf<C>[] & Disposable
+      ? [D] extends [DisposalSpec] ? ClientOf<C>[] & Disposable
       : ClientOf<C>[]
     : ClientOf<C>[] :
   R extends CapRecordToken<infer C> ? Record<string, ClientOf<C>> :
@@ -228,7 +211,7 @@ export type ClientOf<T> = T extends CapDef<infer M, infer D>
           ? [P] extends [void] ? () => Stream<Y>
           : (params: P) => Stream<Y>
           : never;
-    } & ([D] extends [{ async: true }] ? AsyncDisposable : [D] extends [DisposalSpec] ? Disposable : {})
+    } & ([D] extends [DisposalSpec] ? Disposable : {})
   : never;
 
 export type ImplOf<T> = T extends CapDef<infer M, any>

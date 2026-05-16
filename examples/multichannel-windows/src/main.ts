@@ -1,7 +1,7 @@
 import { AppRuntime, BrowserWindow } from "bunite-core";
 import { Stream, type ImplOf } from "bunite-core/rpc";
 import indexHtml from "./index.html" with { type: "text" };
-import { schema, calcCap, logCap, type LogEntry } from "./schema";
+import { calcCap, logCap, type LogEntry } from "./schema";
 
 const app = new AppRuntime();
 await app.ready;
@@ -48,7 +48,10 @@ function createDemoWindow(label: string, x: number) {
     title: `Multi-channel — ${label}`,
     html,
     frame: { x, y: 100, width: 420, height: 520 },
-    serve: schema.serve({ calc: calcImpl, log: logImpl }),
+    serve: (conn) => {
+      conn.serve(calcCap, calcImpl);
+      conn.serve(logCap, logImpl);
+    },
   });
 }
 

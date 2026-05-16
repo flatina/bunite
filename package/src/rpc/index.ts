@@ -25,10 +25,10 @@ export type {
   MethodDef,
   MethodsRecord,
   DisposalSpec,
+  DefineCapOpts,
   Schema,
-  SchemaShape,
+  SchemaRoots,
   ImplsOf,
-  ServerDescriptor,
   ReturnsKind,
   CallCtx,
   Attestation,
@@ -38,8 +38,6 @@ export type {
   ClientReturn,
 } from "./schema";
 
-export { topologyHash, canonicalize } from "./hash";
-
 export {
   CapRef,
   CAP_REF_EXT,
@@ -47,6 +45,8 @@ export {
   isFrame,
   DEFAULT_MAX_BYTES,
   PROTOCOL_VERSION,
+  FRAMEWORK_NAME_PREFIX,
+  BOOTSTRAP_METHOD,
 } from "./wire";
 
 export type {
@@ -58,6 +58,7 @@ export type {
   DropFrame,
   HelloFrame,
   GoAwayFrame,
+  CapRevokedFrame,
   StreamEvent,
   Target,
   CallMeta,
@@ -73,6 +74,9 @@ export type {
   IpcStatus,
   RetrySpec,
   FailedPreconditionReason,
+  ResourceExhaustedReason,
+  UnavailableReason,
+  AlreadyExistsReason,
 } from "./error";
 
 export {
@@ -84,6 +88,7 @@ export {
   FIRST_USER_CAP_ID,
   FIRST_USER_TYPE_ID,
   MAX_CAPS_PER_CONNECTION,
+  MAX_IN_FLIGHT_CALLS_PER_CONNECTION,
   createConnection,
 } from "./peer";
 
@@ -110,8 +115,12 @@ export type {
   Transport,
   Connection,
   ConnectionOptions,
+  ConnectionEvents,
   CapTableEntry,
   PendingCall,
+  Policy,
+  IfExists,
+  ServeHandle,
 } from "./peer";
 
 export {

@@ -1,24 +1,35 @@
 export type IpcCode =
-  | "ok"
-  | "cancelled"
-  | "unknown"
-  | "invalid_argument"
-  | "deadline_exceeded"
   | "not_found"
-  | "not_supported"
-  | "already_exists"
-  | "permission_denied"
-  | "unauthenticated"
-  | "resource_exhausted"
   | "failed_precondition"
+  | "already_exists"
+  | "invalid_argument"
+  | "cancelled"
+  | "deadline_exceeded"
+  | "resource_exhausted"
   | "unavailable"
-  | "protocol_error";
+  | "internal";
 
 export type FailedPreconditionReason =
-  | "cap_disposed"
-  | "cap_revoked"
-  | "owner_disconnect"
-  | "protocol_violation";
+  | "version_mismatch"
+  | "unauthorized"
+  | "unregistered_cap_return"
+  | "revoked";
+
+export type ResourceExhaustedReason =
+  | "max_frame_bytes"
+  | "max_concurrent_calls"
+  | "max_caps_per_connection"
+  | "stream_credit_window"
+  | "rate_limited";
+
+export type UnavailableReason =
+  | "peer_closing"
+  | "goaway"
+  | "plugin_unloading";
+
+export type AlreadyExistsReason =
+  | "name_collision"
+  | "reserved_namespace";
 
 export type RetrySpec =
   | { kind: "never" }
@@ -55,4 +66,3 @@ export class IpcError extends Error {
     };
   }
 }
-

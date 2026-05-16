@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { AppRuntime, BrowserWindow, serveWeb } from "bunite-core";
 import type { ImplOf } from "bunite-core/rpc";
-import { schema, apiCap, type QuickLink, type TabInfo } from "./schema";
+import { apiCap, type QuickLink, type TabInfo } from "./schema";
 
 process.env.BUNITE_REMOTE_DEBUGGING_PORT ??= "9222";
 
@@ -39,8 +39,7 @@ const apiImpl = {
   },
 } satisfies ImplOf<typeof apiCap>;
 
-const descriptor = schema.serve({ api: apiImpl });
-const webRpc = serveWeb(descriptor);
+const webRpc = serveWeb((conn) => { conn.serve(apiCap, apiImpl); });
 
 const server = Bun.serve({
   port: webPort || 0,
@@ -73,7 +72,7 @@ const win = new BrowserWindow({
   frame: { x: 80, y: 80, width: 1280, height: 900 },
   url: `${origin}/`,
   preloadOrigins: [origin],
-  serve: descriptor,
+  serve: (conn) => { conn.serve(apiCap, apiImpl); },
 });
 
 win.on("close", () => server.stop(true));

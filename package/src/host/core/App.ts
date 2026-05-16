@@ -162,7 +162,7 @@ export class AppRuntime {
 
   createViewRuntime(viewId: number): ImplOf<typeof RuntimeCap> {
     const notImpl = (name: string) => {
-      throw new IpcError({ code: "not_supported", message: `Runtime.${name}` });
+      throw new IpcError({ code: "not_found", message: `Runtime.${name}` });
     };
     const impl = {
       window: () => notImpl("window"),

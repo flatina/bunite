@@ -9,12 +9,12 @@ import type { ImplOf } from "../package/src/rpc/schema";
 function loopback(): [Transport, Transport] {
   let a: ((f: Frame) => void) | undefined;
   let b: ((f: Frame) => void) | undefined;
-  const enqueue = (h: ((f: Frame) => void) | undefined, f: Frame) => {
-    if (h) queueMicrotask(() => h(f));
+  const enqueue = (getH: () => ((f: Frame) => void) | undefined, f: Frame) => {
+    queueMicrotask(() => { const h = getH(); if (h) h(f); });
   };
   return [
-    { send: (f) => enqueue(b, f), setReceive: (h) => { a = h; }, close: () => {} },
-    { send: (f) => enqueue(a, f), setReceive: (h) => { b = h; }, close: () => {} },
+    { send: (f) => enqueue(() => b, f), setReceive: (h) => { a = h; }, close: () => {} },
+    { send: (f) => enqueue(() => a, f), setReceive: (h) => { b = h; }, close: () => {} },
   ];
 }
 
@@ -97,10 +97,10 @@ describe("runtime cap dispatch", () => {
     expect(await clip.readText()).toBe("clip");
   });
 
-  test("missing runtime impl yields not_supported", async () => {
+  test("missing runtime impl yields not_found", async () => {
     const [t1, t2] = loopback();
     createConnection({ transport: t2, mode: "native", origin: "test://server" });
     const runtime = createConnection({ transport: t1, mode: "native", origin: "test://client" }).runtime();
-    await expect(runtime.appName()).rejects.toMatchObject({ code: "not_supported" });
+    await expect(runtime.appName()).rejects.toMatchObject({ code: "not_found" });
   });
 });

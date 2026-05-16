@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import {
-  call, defineCap, defineSchema,
+  call, defineCap,
   createConnection, createFrameTransport,
   type ImplOf,
   type BytesPipe,
@@ -19,10 +19,9 @@ function pipePair(): [BytesPipe, BytesPipe] {
 
 describe("encrypted pipe", () => {
   test("AES-GCM round-trip preserves Frame order through msgpackr sequential codec", async () => {
-    const apiCap = defineCap({
+    const apiCap = defineCap("test.enc", {
       ping: call<{ n: number }, { pong: number }>(),
     });
-    const schema = defineSchema({ roots: { api: apiCap } });
 
     const rawKey = crypto.getRandomValues(new Uint8Array(32));
 
@@ -35,18 +34,16 @@ describe("encrypted pipe", () => {
       mode: "native",
       origin: "test://server",
     });
-    server.serve(schema.serve({
-      api: {
-        ping: ({ n }) => ({ pong: n * 2 }),
-      } as ImplOf<typeof apiCap>,
-    }));
+    server.serve(apiCap, {
+      ping: ({ n }) => ({ pong: n * 2 }),
+    } as ImplOf<typeof apiCap>);
 
     const client = createConnection({
       transport: createFrameTransport(eb),
       mode: "native",
       origin: "test://client",
     });
-    const api = await client.bootstrap(schema, "api");
+    const api = await client.bootstrap(apiCap);
 
     const results = await Promise.all([
       api.ping({ n: 1 }),

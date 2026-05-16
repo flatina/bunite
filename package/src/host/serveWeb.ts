@@ -1,9 +1,9 @@
 import type { Server, ServerWebSocket, WebSocketHandler } from "bun";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { BytesPipe } from "../rpc/transport";
+import type { Connection } from "../rpc/peer";
 import { createConnection, _setCallContextStorage } from "../rpc/peer";
 import { createFrameTransport } from "../rpc/transport";
-import type { SchemaShape, ServerDescriptor } from "../rpc/schema";
 import { DEFAULT_MAX_BYTES } from "../rpc/wire";
 
 _setCallContextStorage(new AsyncLocalStorage<{ callId: number }>());
@@ -50,31 +50,55 @@ export function createBunWebSocketServerHandler<TData extends object>(
 
 const DEFAULT_RPC_PATH = "/rpc";
 
+export interface WsData {
+  origin: string;
+}
+
 export interface WebRpcMount {
   fetch(req: Request, srv: Server<object>): Response | undefined;
   websocket: WebSocketHandler<object> & { maxPayloadLength: number };
 }
 
-export function serveWeb<S extends SchemaShape>(
-  descriptor: ServerDescriptor<S>,
-  opts: { path?: string } = {}
+export interface ServeWebOptions<TData extends WsData = WsData> {
+  path?: string;
+  /** Enrichment hook fired at upgrade — return extra fields (e.g. auth-derived userId, perms) that the setup callback receives. */
+  onUpgrade?: (req: Request) => Omit<TData, keyof WsData> | undefined;
+}
+
+/** Mount a WebSocket RPC endpoint on `Bun.serve`. `setup(conn, wsData)` runs once per client connection. */
+export function serveWeb<TData extends WsData = WsData>(
+  setup: (conn: Connection, wsData: TData) => void,
+  opts: ServeWebOptions<TData> = {}
 ): WebRpcMount {
   const path = opts.path ?? DEFAULT_RPC_PATH;
   return {
     fetch(req, srv) {
       if (new URL(req.url).pathname !== path) return undefined;
-      const upgraded = srv.upgrade(req, { data: {} });
+      const enriched = opts.onUpgrade?.(req) ?? ({} as Omit<TData, keyof WsData>);
+      const data = { origin: req.headers.get("origin") ?? "", ...enriched } as TData;
+      const upgraded = srv.upgrade(req, { data });
       return upgraded ? undefined : new Response("WebSocket upgrade failed", { status: 400 });
     },
     websocket: {
-      ...createBunWebSocketServerHandler<object>((_ws, pipe) => {
+      ...createBunWebSocketServerHandler<TData>((ws, pipe) => {
+        const wsData = ws.data;
+        const origin = wsData?.origin ?? "";
         const conn = createConnection({
           transport: createFrameTransport(pipe),
           mode: "web",
-          origin: "web-client",
+          origin: origin || "web-client",
+          attestation: {
+            origin,
+            topOrigin: origin,
+            partition: "default",
+            isAppRes: false,
+            isMainFrame: true,
+            userGesture: false,
+            level: "untrusted",
+          },
         });
-        conn.serve(descriptor);
-      }),
+        setup(conn, wsData);
+      }) as unknown as WebRpcMount["websocket"],
       maxPayloadLength: DEFAULT_MAX_BYTES,
     },
   };

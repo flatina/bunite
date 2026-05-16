@@ -1,20 +1,20 @@
 import { describe, test, expect } from "bun:test";
 import {
-  call, stream, cap, defineCap, defineSchema,
-  topologyHash, canonicalize, returnsKindOf,
+  call, stream, cap, defineCap,
+  returnsKindOf,
   createCodec, CapRef, isFrame, IpcError,
   CapTable, FIRST_USER_CAP_ID, MAX_CAPS_PER_CONNECTION,
   type ClientOf, type ImplOf,
 } from "../package/src/rpc/index";
 
-const PlotCap = defineCap({
+const PlotCap = defineCap("test.Plot", {
   setData: call<{ data: Float32Array }, void>(),
   render: call<void, { svg: string }>(),
   watch: stream<void, { tick: number }>(),
   dispose: call<void, void>(),
-}, { disposal: { method: "dispose", async: true } });
+}, { disposal: { method: "dispose" } });
 
-const counterCap = defineCap({
+const counterCap = defineCap("test.counter", {
   getCount: call<void, { count: number }>(),
   increment: call<{ delta?: number }, { count: number }>(),
   reset: call<void, { count: number }>({ idempotent: true }),
@@ -22,11 +22,6 @@ const counterCap = defineCap({
   createPlot: call<{ initial: Float32Array }, typeof PlotCap>({ returns: cap(PlotCap) }),
   listPlots: call<void, typeof PlotCap>({ returns: cap.array(PlotCap) }),
   namedPlots: call<void, typeof PlotCap>({ returns: cap.record(PlotCap) }),
-});
-
-const schema = defineSchema({
-  roots: { counter: counterCap },
-  caps: [PlotCap],
 });
 
 describe("schema primitives", () => {
@@ -37,40 +32,11 @@ describe("schema primitives", () => {
     expect(returnsKindOf(cap.record(PlotCap))).toBe("capRecord");
   });
 
-  test("canonicalize preserves declared caps order then derives roots", () => {
-    const c = canonicalize(schema);
-    expect(c.v).toBe(1);
-    expect(c.caps.length).toBe(2);
-    expect(c.caps[0].disposal).toEqual({ method: "dispose", async: true });
-    expect(c.caps[1].methods.map((m: { name: string }) => m.name)).toEqual([
-      "getCount", "increment", "reset", "watch", "createPlot", "listPlots", "namedPlots",
-    ]);
-    expect(c.roots).toEqual([{ name: "counter", capIndex: 1 }]);
-  });
-
-  test("topologyHash is deterministic", async () => {
-    const h1 = await topologyHash(schema);
-    const h2 = await topologyHash(schema);
-    expect(h1).toBe(h2);
-    expect(h1).toMatch(/^[0-9a-f]{64}$/);
-  });
-
-  test("topologyHash differs when method added", async () => {
-    const altCap = defineCap({
-      getCount: call<void, { count: number }>(),
-      increment: call<{ delta?: number }, { count: number }>(),
-    });
-    const altSchema = defineSchema({ roots: { counter: altCap }, caps: [] });
-    expect(await topologyHash(altSchema)).not.toBe(await topologyHash(schema));
-  });
-
-  test("topologyHash differs when method order changes", async () => {
-    const reordered = defineCap({
-      increment: call<{ delta?: number }, { count: number }>(),
-      getCount: call<void, { count: number }>(),
-    });
-    const altSchema = defineSchema({ roots: { counter: reordered }, caps: [] });
-    expect(await topologyHash(altSchema)).not.toBe(await topologyHash(schema));
+  test("defineCap carries name + optional version", () => {
+    expect(counterCap.name).toBe("test.counter");
+    expect(counterCap.version).toBeUndefined();
+    const v2 = defineCap("test.versioned", { x: call<void, void>() }, { version: 2 });
+    expect(v2.version).toBe("2");
   });
 });
 
@@ -98,8 +64,10 @@ describe("wire codec", () => {
     expect(Array.from(decoded)).toEqual([1.5, 2.5, 3.5]);
   });
 
-  test("isFrame validates op tag", () => {
-    expect(isFrame({ op: "call", id: 1, target: { kind: "cap", id: 0 }, method: 0, args: null })).toBe(true);
+  test("isFrame validates op tag and method-as-string", () => {
+    expect(isFrame({ op: "call", id: 1, target: { kind: "cap", id: 0 }, method: "ping", args: null })).toBe(true);
+    expect(isFrame({ op: "call", id: 1, target: { kind: "cap", id: 0 }, method: 7, args: null })).toBe(false);
+    expect(isFrame({ op: "cap_revoked", capIds: [1, 2] })).toBe(true);
     expect(isFrame({ op: "bogus" })).toBe(false);
     expect(isFrame(null)).toBe(false);
   });
@@ -109,13 +77,13 @@ describe("IpcError", () => {
   test("preserves code/details/retry", () => {
     const err = new IpcError({
       code: "failed_precondition",
-      message: "cap disposed",
-      details: { reason: "cap_disposed" },
+      message: "cap revoked",
+      details: { reason: "revoked" },
       retry: { kind: "after-resync" },
     });
     expect(err.code).toBe("failed_precondition");
-    expect(err.message).toBe("cap disposed");
-    expect(err.details).toEqual({ reason: "cap_disposed" });
+    expect(err.message).toBe("cap revoked");
+    expect(err.details).toEqual({ reason: "revoked" });
     expect(err.retry).toEqual({ kind: "after-resync" });
   });
 });

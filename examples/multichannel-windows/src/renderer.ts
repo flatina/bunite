@@ -1,5 +1,5 @@
 import { bootstrap } from "bunite-core/rpc/renderer";
-import { schema, type LogEntry } from "./schema";
+import { calcCap, logCap, type LogEntry } from "./schema";
 
 const aInput = document.getElementById("a") as HTMLInputElement;
 const bInput = document.getElementById("b") as HTMLInputElement;
@@ -10,8 +10,8 @@ const goBtn = document.getElementById("go")!;
 
 goBtn.setAttribute("disabled", "true");
 
-const calc = await bootstrap(schema, "calc");
-const log = await bootstrap(schema, "log");
+const calc = await bootstrap(calcCap);
+const log = await bootstrap(logCap);
 
 goBtn.removeAttribute("disabled");
 

@@ -1,5 +1,5 @@
 import { bootstrap } from "bunite-core/rpc/renderer";
-import { schema } from "../schema";
+import { apiCap } from "../schema";
 
 function setStatus(text: string) {
   const el = document.getElementById("status");
@@ -7,7 +7,7 @@ function setStatus(text: string) {
 }
 
 try {
-  const api = await bootstrap(schema, "api");
+  const api = await bootstrap(apiCap);
   const { pong } = await api.ping({ value: "smoke" });
   setStatus(`rpc ok: ${pong}`);
 

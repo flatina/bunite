@@ -1,4 +1,4 @@
-import { call, defineCap, defineSchema, stream } from "bunite-core/rpc";
+import { call, defineCap, stream } from "bunite-core/rpc";
 
 export type ComputeParams = { a: number; b: number; op: "add" | "multiply" };
 
@@ -9,14 +9,10 @@ export type LogEntry = {
   at: number;
 };
 
-export const calcCap = defineCap({
+export const calcCap = defineCap("multichannel.calc", {
   compute: call<ComputeParams, number>(),
 });
 
-export const logCap = defineCap({
+export const logCap = defineCap("multichannel.log", {
   entries: stream<void, LogEntry>(),
-});
-
-export const schema = defineSchema({
-  roots: { calc: calcCap, log: logCap },
 });

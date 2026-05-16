@@ -3,23 +3,22 @@ import {
   createFrameTransport,
   createWebSocketPipe,
   type Connection,
+  type CapDef,
   type Schema,
-  type SchemaShape,
+  type SchemaRoots,
   type ClientOf,
-  type ServerDescriptor,
   type WebSocketLike,
 } from "./index";
 
 declare global {
   interface Window {
     host?: {
-      bootstrap<S extends SchemaShape, K extends keyof S["roots"] & string>(
-        schema: Schema<S>,
-        name: K
-      ): Promise<ClientOf<S["roots"][K]>>;
-      serve<S extends SchemaShape>(descriptor: ServerDescriptor<S>): Promise<void>;
+      bootstrap<C extends CapDef<any, any>>(cap: C): Promise<ClientOf<C>>;
+      bootstrap<R extends SchemaRoots>(schema: Schema<R>): Promise<{ [K in keyof R]: ClientOf<R[K]> }>;
       runtime(): Promise<ClientOf<typeof import("./framework").RuntimeCap>>;
       releaseRef(proxy: unknown): Promise<void>;
+      /** Full Connection for renderer-as-server (serve / serveAll / unserve / replace / on). */
+      getConnection(): Promise<Connection>;
     };
   }
 }
@@ -60,23 +59,22 @@ function ensureWebConnection(path = "/rpc"): Promise<Connection> {
   return attempt;
 }
 
-export async function bootstrap<S extends SchemaShape, K extends keyof S["roots"] & string>(
-  schema: Schema<S>,
-  name: K
-): Promise<ClientOf<S["roots"][K]>> {
+export function bootstrap<C extends CapDef<any, any>>(cap: C): Promise<ClientOf<C>>;
+export function bootstrap<R extends SchemaRoots>(schema: Schema<R>): Promise<{ [K in keyof R]: ClientOf<R[K]> }>;
+export async function bootstrap(target: CapDef<any, any> | Schema<any>): Promise<unknown> {
   if (isNative()) {
     if (!window.host?.bootstrap) throw new Error("host preload not ready");
-    return window.host.bootstrap(schema, name);
+    return (window.host.bootstrap as (t: unknown) => Promise<unknown>)(target);
   }
   const conn = await ensureWebConnection();
-  return conn.bootstrap(schema, name);
+  return (conn.bootstrap as (t: unknown) => Promise<unknown>)(target);
 }
 
-export async function serve<S extends SchemaShape>(descriptor: ServerDescriptor<S>): Promise<void> {
+/** Returns the underlying Connection — for renderer-as-server (`conn.serve(cap, impl)`), observability hooks (`conn.on(...)`), etc. */
+export async function getConnection(): Promise<Connection> {
   if (isNative()) {
-    if (!window.host?.serve) throw new Error("host preload not ready");
-    return window.host.serve(descriptor);
+    if (!window.host?.getConnection) throw new Error("host preload not ready");
+    return window.host.getConnection();
   }
-  const conn = await ensureWebConnection();
-  conn.serve(descriptor);
+  return ensureWebConnection();
 }

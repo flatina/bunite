@@ -1,6 +1,7 @@
 import { call, defineCap, stream, cap } from "./schema";
+import type { CapDef } from "./schema";
 
-export const BrowserWindowCap = defineCap({
+export const BrowserWindowCap = defineCap("bunite.BrowserWindow", {
   focus: call<void, void>(),
   close: call<void, void>(),
   setBounds: call<{ x: number; y: number; w: number; h: number }, void>(),
@@ -9,7 +10,7 @@ export const BrowserWindowCap = defineCap({
   label: call<void, string>({ idempotent: true }),
 });
 
-export const WindowCap = defineCap({
+export const WindowCap = defineCap("bunite.Window", {
   create: call<WindowCreateOpts, typeof BrowserWindowCap>({ returns: cap(BrowserWindowCap) }),
   list: call<void, typeof BrowserWindowCap>({ returns: cap.array(BrowserWindowCap), idempotent: true }),
   focus: call<{ id?: number; label?: string }, void>(),
@@ -23,14 +24,14 @@ export interface WindowCreateOpts {
   label?: string;
 }
 
-export const FileRefCap = defineCap({
+export const FileRefCap = defineCap("bunite.FileRef", {
   text: call<void, string>({ idempotent: true }),
   bytes: call<void, Uint8Array>({ idempotent: true }),
   path: call<void, string>({ idempotent: true }),
   revoke: call<void, void>(),
-}, { disposal: { method: "revoke", async: true } });
+}, { disposal: { method: "revoke" } });
 
-export const DialogsCap = defineCap({
+export const DialogsCap = defineCap("bunite.Dialogs", {
   openFile: call<DialogOpenFileOpts, typeof FileRefCap>({ returns: cap.array(FileRefCap) }),
   saveFile: call<DialogSaveFileOpts, typeof FileRefCap>({ returns: cap(FileRefCap) }),
   showMessage: call<DialogMessageOpts, "primary" | "secondary" | "tertiary">(),
@@ -57,21 +58,21 @@ export interface DialogMessageOpts {
   tertiary?: string;
 }
 
-export const ClipboardCap = defineCap({
+export const ClipboardCap = defineCap("bunite.Clipboard", {
   readText: call<void, string>({ idempotent: true }),
   writeText: call<{ text: string }, void>(),
   readBytes: call<{ mime: string }, Uint8Array>({ idempotent: true }),
   writeBytes: call<{ mime: string; data: Uint8Array }, void>(),
 });
 
-export const ShellCap = defineCap({
+export const ShellCap = defineCap("bunite.Shell", {
   openExternal: call<{ url: string }, boolean>(),
   showItemInFolder: call<{ path: string }, void>(),
 });
 
 export type SurfaceMask = { x: number; y: number; w: number; h: number };
 
-export const SurfaceCap = defineCap({
+export const SurfaceCap = defineCap("bunite.Surface", {
   init: call<{
     src: string;
     x: number;
@@ -92,7 +93,7 @@ export const SurfaceCap = defineCap({
   didNavigate: stream<void, { surfaceId: number; url: string }>(),
 });
 
-export const RuntimeCap = defineCap({
+export const RuntimeCap = defineCap("bunite.Runtime", {
   window: call<void, typeof WindowCap>({ returns: cap(WindowCap), idempotent: true }),
   dialogs: call<void, typeof DialogsCap>({ returns: cap(DialogsCap), idempotent: true }),
   clipboard: call<void, typeof ClipboardCap>({ returns: cap(ClipboardCap), idempotent: true }),
@@ -112,9 +113,8 @@ export const FRAMEWORK_TYPE_IDS = {
   Clipboard: 5,
   Shell: 6,
   BrowserWindow: 7,
+  Surface: 8,
 } as const;
-
-import type { CapDef } from "./schema";
 
 const FRAMEWORK_CAP_TYPE_IDS = new Map<CapDef<any, any>, number>([
   [RuntimeCap, FRAMEWORK_TYPE_IDS.Runtime],
@@ -124,7 +124,7 @@ const FRAMEWORK_CAP_TYPE_IDS = new Map<CapDef<any, any>, number>([
   [ClipboardCap, FRAMEWORK_TYPE_IDS.Clipboard],
   [ShellCap, FRAMEWORK_TYPE_IDS.Shell],
   [BrowserWindowCap, FRAMEWORK_TYPE_IDS.BrowserWindow],
-  [SurfaceCap, 8],
+  [SurfaceCap, FRAMEWORK_TYPE_IDS.Surface],
 ]);
 
 export function frameworkTypeIdOf(cap: CapDef<any, any>): number | undefined {

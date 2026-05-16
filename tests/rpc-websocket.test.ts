@@ -1,19 +1,18 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import type { Server } from "bun";
 import {
-  call, stream, defineCap, defineSchema,
+  call, stream, defineCap,
   createConnection, createFrameTransport, createWebSocketPipe,
   type ImplOf, type Connection,
 } from "../package/src/rpc/index";
 import { createBunWebSocketServerHandler } from "../package/src/host/serveWeb";
 import { Stream } from "../package/src/rpc/stream";
 
-const counterCap = defineCap({
+const counterCap = defineCap("test.wscounter", {
   getCount: call<void, { count: number }>(),
   increment: call<{ delta?: number }, { count: number }>(),
   watch: stream<void, { count: number }>(),
 });
-const schema = defineSchema({ roots: { counter: counterCap }, caps: [] });
 
 function makeCounterImpl(): ImplOf<typeof counterCap> {
   let count = 0;
@@ -52,7 +51,7 @@ beforeAll(() => {
         mode: "native",
         origin: "ws://server",
       });
-      conn.serve(schema.serve({ counter: counterImpl }));
+      conn.serve(counterCap, counterImpl);
     }),
   });
   serverPort = server.port ?? 0;
@@ -80,9 +79,42 @@ function connect(): Promise<{ conn: Connection; ws: WebSocket }> {
 }
 
 describe("rpc over Bun.serve websocket", () => {
+  test("serveWeb passes upgrade-enriched data to setup callback", async () => {
+    interface AuthData { origin: string; userId: string }
+    const authedCap = defineCap("test.authed", { whoami: call<void, string>() });
+    const { serveWeb } = await import("../package/src/host/serveWeb");
+    const srv = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      ...serveWeb<AuthData>((conn, data) => {
+        conn.serve(authedCap, { whoami: () => data.userId });
+      }, {
+        onUpgrade: (req) => ({ userId: req.headers.get("x-user-id") ?? "anonymous" }),
+      }),
+    });
+    const port = srv.port ?? 0;
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/rpc`, {
+      headers: { "x-user-id": "alice" },
+    } as unknown as undefined);
+    ws.binaryType = "arraybuffer";
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve(), { once: true });
+      ws.addEventListener("error", () => reject(new Error("ws error")), { once: true });
+    });
+    const conn = createConnection({
+      transport: createFrameTransport(createWebSocketPipe(ws as never)),
+      mode: "native",
+      origin: "ws://client",
+    });
+    const api = await conn.bootstrap(authedCap);
+    expect(await api.whoami()).toBe("alice");
+    ws.close();
+    srv.stop(true);
+  });
+
   test("bootstrap + call round-trip", async () => {
     const { conn, ws } = await connect();
-    const counter = await conn.bootstrap(schema, "counter");
+    const counter = await conn.bootstrap(counterCap);
     const before = await counter.getCount();
     const after = await counter.increment({ delta: 3 });
     expect(after.count).toBe(before.count + 3);
@@ -91,7 +123,7 @@ describe("rpc over Bun.serve websocket", () => {
 
   test("stream delivers chunks then ends on break", async () => {
     const { conn, ws } = await connect();
-    const counter = await conn.bootstrap(schema, "counter");
+    const counter = await conn.bootstrap(counterCap);
 
     const seen: number[] = [];
     let first = true;

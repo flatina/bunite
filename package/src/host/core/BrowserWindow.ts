@@ -3,11 +3,11 @@ import { BuniteEvent } from "../events/event";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import { ensureNativeRuntime, getNativeLibrary, toCString } from "../native";
 import { BrowserView } from "./BrowserView";
-import type { SchemaShape, ServerDescriptor } from "../../rpc/index";
+import type { Connection } from "../../rpc/index";
 import { getNextWindowId } from "./windowIds";
 import { getBaseDir, resolveDefaultAppResRoot } from "../paths";
 
-export type WindowOptionsType<S extends SchemaShape = SchemaShape> = {
+export type WindowOptionsType = {
   title: string;
   frame: {
     x: number;
@@ -22,7 +22,8 @@ export type WindowOptionsType<S extends SchemaShape = SchemaShape> = {
   preload: string | null;
   appresRoot: string | null;
   preloadOrigins?: string[];
-  serve?: ServerDescriptor<S>;
+  /** Setup callback fired when the window's renderer connection attaches. */
+  serve?: (conn: Connection) => void;
   titleBarStyle: "hidden" | "hiddenInset" | "default";
   transparent: boolean;
   hidden?: boolean;
@@ -50,7 +51,7 @@ const defaultOptions: WindowOptionsType = {
   sandbox: false
 };
 
-const BrowserWindowMap: Record<number, BrowserWindow<any>> = {};
+const BrowserWindowMap: Record<number, BrowserWindow> = {};
 
 let lastFocusedWindowId: number | null = null;
 
@@ -58,7 +59,7 @@ export function getLastFocusedWindowId(): number | null {
   return lastFocusedWindowId;
 }
 
-export class BrowserWindow<S extends SchemaShape = SchemaShape> {
+export class BrowserWindow {
   id = getNextWindowId();
   private nativeAttached = false;
   title: string;
@@ -127,7 +128,7 @@ export class BrowserWindow<S extends SchemaShape = SchemaShape> {
     buniteEventEmitter.removeAllListeners(`close-requested-${this.id}`);
   };
 
-  constructor(options: Partial<WindowOptionsType<S>> = {}) {
+  constructor(options: Partial<WindowOptionsType> = {}) {
     ensureNativeRuntime();
 
     this.title = options.title ?? defaultOptions.title;
@@ -181,7 +182,7 @@ export class BrowserWindow<S extends SchemaShape = SchemaShape> {
     buniteEventEmitter.on(`resize-${this.id}`, this.handleNativeResize);
     buniteEventEmitter.on(`close-${this.id}`, this.handleNativeClose);
 
-    const webview = new BrowserView<S>({
+    const webview = new BrowserView({
       url: this.url,
       html: this.html,
       preload: this.preload,
@@ -202,10 +203,10 @@ export class BrowserWindow<S extends SchemaShape = SchemaShape> {
     this.webviewId = webview.id;
   }
 
-  get view(): BrowserView<S> {
+  get view(): BrowserView {
     const view = BrowserView.getById(this.webviewId);
     if (!view) throw new Error(`BrowserWindow ${this.id} has no attached view`);
-    return view as BrowserView<S>;
+    return view as BrowserView;
   }
 
   static getById(id: number) {
@@ -216,8 +217,8 @@ export class BrowserWindow<S extends SchemaShape = SchemaShape> {
     return Object.values(BrowserWindowMap);
   }
 
-  get webview(): BrowserView<S> | undefined {
-    return BrowserView.getById(this.webviewId) as BrowserView<S> | undefined;
+  get webview(): BrowserView | undefined {
+    return BrowserView.getById(this.webviewId) as BrowserView | undefined;
   }
 
   show() {

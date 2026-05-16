@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import {
-  call, defineCap, defineSchema,
+  call, defineCap,
   createConnection, createFrameTransport,
   type ImplOf,
   type BytesPipe,
@@ -17,11 +17,10 @@ function createInMemoryPipePair(): [BytesPipe, BytesPipe] {
 
 describe("frame transport over bytes pipe", () => {
   test("bootstrap + plain call survive msgpackr round-trip", async () => {
-    const apiCap = defineCap({
+    const apiCap = defineCap("test.api", {
       ping: call<void, { pong: number }>(),
       echo: call<{ msg: string }, { msg: string }>(),
     });
-    const schema = defineSchema({ roots: { api: apiCap }, caps: [] });
 
     const apiImpl: ImplOf<typeof apiCap> = {
       ping: () => ({ pong: 42 }),
@@ -34,34 +33,31 @@ describe("frame transport over bytes pipe", () => {
       mode: "native",
       origin: "test://server",
     });
-    server.serve(schema.serve({ api: apiImpl }));
+    server.serve(apiCap, apiImpl);
 
     const client = createConnection({
       transport: createFrameTransport(pb),
       mode: "native",
       origin: "test://client",
     });
-    const api = await client.bootstrap(schema, "api");
+    const api = await client.bootstrap(apiCap);
 
     expect(await api.ping()).toEqual({ pong: 42 });
     expect(await api.echo({ msg: "hi" })).toEqual({ msg: "hi!" });
   });
 
   test("typed arrays survive transport round-trip", async () => {
-    const apiCap = defineCap({
+    const apiCap = defineCap("test.f32", {
       doubleIt: call<{ data: Float32Array }, { result: Float32Array }>(),
     });
-    const schema = defineSchema({ roots: { api: apiCap }, caps: [] });
 
     const [pa, pb] = createInMemoryPipePair();
     const server = createConnection({ transport: createFrameTransport(pa), mode: "native", origin: "s" });
-    server.serve(schema.serve({
-      api: {
-        doubleIt: ({ data }) => ({ result: new Float32Array(data.map((x) => x * 2)) }),
-      },
-    }));
+    server.serve(apiCap, {
+      doubleIt: ({ data }) => ({ result: new Float32Array(data.map((x) => x * 2)) }),
+    });
     const client = createConnection({ transport: createFrameTransport(pb), mode: "native", origin: "c" });
-    const api = await client.bootstrap(schema, "api");
+    const api = await client.bootstrap(apiCap);
 
     const out = await api.doubleIt({ data: new Float32Array([1.5, 2.5, 3]) });
     expect(out.result).toBeInstanceOf(Float32Array);

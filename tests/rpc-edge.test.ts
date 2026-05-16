@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import {
-  call, stream, cap, defineCap, defineSchema,
+  call, stream, defineCap,
   createConnection,
   RuntimeCap,
   RUNTIME_CAP_ID,
@@ -12,12 +12,12 @@ import { Stream } from "../package/src/rpc/stream";
 function loopback(): [Transport, Transport] {
   let a: ((f: Frame) => void) | undefined;
   let b: ((f: Frame) => void) | undefined;
-  const enqueue = (h: ((f: Frame) => void) | undefined, f: Frame) => {
-    if (h) queueMicrotask(() => h(f));
+  const enqueue = (getH: () => ((f: Frame) => void) | undefined, f: Frame) => {
+    queueMicrotask(() => { const h = getH(); if (h) h(f); });
   };
   return [
-    { send: (f) => enqueue(b, f), setReceive: (h) => { a = h; }, close: () => {} },
-    { send: (f) => enqueue(a, f), setReceive: (h) => { b = h; }, close: () => {} },
+    { send: (f) => enqueue(() => b, f), setReceive: (h) => { a = h; }, close: () => {} },
+    { send: (f) => enqueue(() => a, f), setReceive: (h) => { b = h; }, close: () => {} },
   ];
 }
 
@@ -29,26 +29,23 @@ function pair(): { client: Connection; server: Connection } {
   };
 }
 
-const tickerCap = defineCap({
+const tickerCap = defineCap("test.ticker", {
   watch: stream<void, { n: number }>(),
 });
-const tickerSchema = defineSchema({ roots: { ticker: tickerCap }, caps: [] });
 
 describe("stream lifecycle", () => {
   test("for-await break cancels the remote stream", async () => {
     const { client, server } = pair();
     let cleanupCalled = false;
-    server.serve(tickerSchema.serve({
-      ticker: {
-        watch: () => Stream.from<{ n: number }>((emit, signal) => {
-          let i = 0;
-          const id = setInterval(() => emit({ n: ++i }), 1);
-          signal.addEventListener("abort", () => { cleanupCalled = true; clearInterval(id); });
-          return () => { clearInterval(id); };
-        }),
-      },
-    }));
-    const t = await client.bootstrap(tickerSchema, "ticker");
+    server.serve(tickerCap, {
+      watch: () => Stream.from<{ n: number }>((emit, signal) => {
+        let i = 0;
+        const id = setInterval(() => emit({ n: ++i }), 1);
+        signal.addEventListener("abort", () => { cleanupCalled = true; clearInterval(id); });
+        return () => { clearInterval(id); };
+      }),
+    });
+    const t = await client.bootstrap(tickerCap);
 
     const seen: number[] = [];
     for await (const tick of t.watch()) {
@@ -62,14 +59,12 @@ describe("stream lifecycle", () => {
 
   test("stream-throwing handler delivers error frame (not result hang)", async () => {
     const { client, server } = pair();
-    server.serve(tickerSchema.serve({
-      ticker: {
-        watch: () => Stream.from<{ n: number }>(() => {
-          throw new Error("boom");
-        }),
-      },
-    }));
-    const t = await client.bootstrap(tickerSchema, "ticker");
+    server.serve(tickerCap, {
+      watch: () => Stream.from<{ n: number }>(() => {
+        throw new Error("boom");
+      }),
+    });
+    const t = await client.bootstrap(tickerCap);
     const iter = t.watch();
     await expect((async () => {
       for await (const _ of iter) { /* */ }
@@ -77,26 +72,23 @@ describe("stream lifecycle", () => {
   });
 
   test("server-side iterator throw becomes stream error frame", async () => {
-    const errCap = defineCap({ flow: stream<void, number>() });
-    const errSchema = defineSchema({ roots: { src: errCap }, caps: [] });
+    const errCap = defineCap("test.flow", { flow: stream<void, number>() });
     const { client, server } = pair();
-    server.serve(errSchema.serve({
-      src: {
-        flow: () => {
-          async function* gen() {
-            yield 1;
-            yield 2;
-            throw new Error("late boom");
-          }
-          const g = gen();
-          return {
-            [Symbol.asyncIterator]: () => g,
-            cancel: () => {},
-          } as any;
-        },
+    server.serve(errCap, {
+      flow: () => {
+        async function* gen() {
+          yield 1;
+          yield 2;
+          throw new Error("late boom");
+        }
+        const g = gen();
+        return {
+          [Symbol.asyncIterator]: () => g,
+          cancel: () => {},
+        } as any;
       },
-    }));
-    const t = await client.bootstrap(errSchema, "src");
+    });
+    const t = await client.bootstrap(errCap);
     const seen: number[] = [];
     let caught: unknown = null;
     try {
@@ -104,26 +96,19 @@ describe("stream lifecycle", () => {
     } catch (e) { caught = e; }
     expect(seen).toEqual([1, 2]);
     expect(caught).toBeDefined();
-    expect((caught as { code?: string }).code).toBe("unknown");
+    expect((caught as { code?: string }).code).toBe("internal");
   });
 });
 
 describe("bootstrap idempotency", () => {
-  test("repeated bootstrap returns the same server cap-id (refcount up)", async () => {
-    const apiCap = defineCap({ ping: call<void, { ok: boolean }>() });
-    const schema = defineSchema({ roots: { api: apiCap }, caps: [] });
+  test("repeated bootstrap reuses the same server cap-id", async () => {
+    const apiCap = defineCap("test.api2", { ping: call<void, { ok: boolean }>() });
     const { client, server } = pair();
-    let setupCount = 0;
-    server.serve(schema.serve({
-      api: {
-        ping: () => { setupCount++; return { ok: true }; },
-      },
-    }));
-    const a = await client.bootstrap(schema, "api");
-    const b = await client.bootstrap(schema, "api");
+    server.serve(apiCap, { ping: () => ({ ok: true }) });
+    const a = await client.bootstrap(apiCap);
+    const b = await client.bootstrap(apiCap);
     expect(await a.ping()).toEqual({ ok: true });
     expect(await b.ping()).toEqual({ ok: true });
-    expect(setupCount).toBe(2);
   });
 });
 
@@ -149,22 +134,19 @@ describe("malformed frame", () => {
     const conn = createConnection({ transport, mode: "native", origin: "c" });
     let closed = false;
     conn.onClose(() => { closed = true; });
-    receive!({ op: "result", id: 99999, ok: false, error: { code: "unknown" } });
+    receive!({ op: "result", id: 99999, ok: false, error: { code: "internal" } });
     expect(closed).toBe(false);
   });
 });
 
 describe("parentCallId wire mechanism", () => {
   test("manual meta.parentCallId reaches server handleCancel propagation map", async () => {
-    const apiCap = defineCap({
+    const apiCap = defineCap("test.parent", {
       noop: call<void, void>(),
     });
-    const schema = defineSchema({ roots: { api: apiCap }, caps: [] });
     const { client, server } = pair();
-    server.serve(schema.serve({
-      api: { noop: () => {} },
-    }));
-    const api = await client.bootstrap(schema, "api");
+    server.serve(apiCap, { noop: () => {} });
+    const api = await client.bootstrap(apiCap);
     expect(await api.noop()).toBeUndefined();
   });
 });

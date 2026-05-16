@@ -7,8 +7,6 @@ import {
   createFrameTransport,
   type Connection,
   type BytesPipe,
-  type SchemaShape,
-  type ServerDescriptor,
 } from "../../rpc/index";
 import { createEncryptedPipe } from "../encryptedPipe";
 import { ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady } from "../native";
@@ -18,10 +16,10 @@ import { randomBytes } from "node:crypto";
 import { resolveDefaultAppResRoot } from "../paths";
 import { removeSurfacesForHostView } from "./SurfaceRegistry";
 
-const BrowserViewMap: Record<number, BrowserView<any>> = {};
+const BrowserViewMap: Record<number, BrowserView> = {};
 let nextWebviewId = 1;
 
-export type BrowserViewOptions<S extends SchemaShape = SchemaShape> = {
+export type BrowserViewOptions = {
   url: string | null;
   html: string | null;
   preload: string | null;
@@ -34,7 +32,8 @@ export type BrowserViewOptions<S extends SchemaShape = SchemaShape> = {
     width: number;
     height: number;
   };
-  serve?: ServerDescriptor<S>;
+  /** Setup callback fired when a renderer connection attaches. Use `conn.serve(cap, impl)` or `conn.serveAll(schema, impls)`. */
+  serve?: (conn: Connection) => void;
   windowId: number;
   autoResize: boolean;
   navigationRules: string[] | null;
@@ -55,7 +54,7 @@ const defaultOptions: BrowserViewOptions = {
   sandbox: false
 };
 
-export class BrowserView<S extends SchemaShape = SchemaShape> {
+export class BrowserView {
   id = nextWebviewId++;
   private nativeAttached = false;
   private _readyPromise: Promise<void>;
@@ -67,7 +66,7 @@ export class BrowserView<S extends SchemaShape = SchemaShape> {
   preloadOrigins?: string[];
   partition: string | null;
   frame: BrowserViewOptions["frame"];
-  readonly serveDescriptor?: ServerDescriptor<S>;
+  readonly serveSetup?: (conn: Connection) => void;
   private connection: Connection | null = null;
   private connectionGeneration = 0;
   autoResize: boolean;
@@ -75,7 +74,7 @@ export class BrowserView<S extends SchemaShape = SchemaShape> {
   sandbox: boolean;
   secretKey: Uint8Array;
 
-  constructor(options: Partial<BrowserViewOptions<S>>) {
+  constructor(options: Partial<BrowserViewOptions>) {
     ensureNativeRuntime();
 
     this.windowId = options.windowId ?? defaultOptions.windowId;
@@ -86,7 +85,7 @@ export class BrowserView<S extends SchemaShape = SchemaShape> {
     this.preloadOrigins = options.preloadOrigins ?? defaultOptions.preloadOrigins;
     this.partition = options.partition ?? defaultOptions.partition;
     this.frame = options.frame ?? defaultOptions.frame;
-    this.serveDescriptor = options.serve;
+    this.serveSetup = options.serve;
     this.autoResize = options.autoResize ?? defaultOptions.autoResize;
     this.navigationRules = options.navigationRules ?? defaultOptions.navigationRules;
     this.sandbox = options.sandbox ?? defaultOptions.sandbox;
@@ -174,10 +173,17 @@ export class BrowserView<S extends SchemaShape = SchemaShape> {
       mode: "native",
       origin: "appres://app.internal",
       runtime,
+      attestation: {
+        origin: "appres://app.internal",
+        topOrigin: "appres://app.internal",
+        partition: this.partition ?? "default",
+        isAppRes: true,
+        isMainFrame: true,
+        userGesture: false,
+        level: "app-internal",
+      },
     });
-    if (this.serveDescriptor) {
-      this.connection.serve(this.serveDescriptor);
-    }
+    this.serveSetup?.(this.connection);
   }
 
   detachNewConnection(): void {

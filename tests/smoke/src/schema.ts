@@ -1,7 +1,5 @@
-import { call, defineCap, defineSchema } from "bunite-core/rpc";
+import { call, defineCap } from "bunite-core/rpc";
 
-export const apiCap = defineCap({
+export const apiCap = defineCap("smoke.api", {
   ping: call<{ value: string }, { pong: string }>(),
 });
-
-export const schema = defineSchema({ roots: { api: apiCap } });

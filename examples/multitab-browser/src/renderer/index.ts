@@ -1,6 +1,6 @@
 import "./styles.css";
 import { bootstrap } from "bunite-core/rpc/renderer";
-import { schema, type TabInfo } from "../schema";
+import { apiCap, type TabInfo } from "../schema";
 
 type Tab = { id: string; webview: HTMLElement; url: string; title: string };
 
@@ -12,7 +12,7 @@ const content = document.getElementById("content")!;
 const tabs = new Map<string, Tab>();
 let activeId: string | null = null;
 
-const api = await bootstrap(schema, "api");
+const api = await bootstrap(apiCap);
 
 newTabBtn.addEventListener("click", () => createTab());
 document.querySelector('[data-action="back"]')!.addEventListener("click", () => activeWebview()?.goBack());

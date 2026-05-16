@@ -16,7 +16,6 @@ export interface CallMeta {
   parentCallId?: u53;
   deadlineMs?: u32;
   context?: Record<string, string>;
-  topologyHash?: string;
 }
 
 export type StreamEvent =
@@ -39,7 +38,7 @@ export type Frame =
       op: "call";
       id: u53;
       target: Target;
-      method: u32;
+      method: string;
       args: unknown;
       meta?: CallMeta;
     }
@@ -47,7 +46,8 @@ export type Frame =
   | { op: "result"; id: u53; ok: false; error: IpcStatus }
   | { op: "cancel"; id: u53; reason?: string }
   | ({ op: "stream"; id: u53 } & StreamEvent)
-  | { op: "drop"; caps: { id: u32; delta: u32 }[] };
+  | { op: "drop"; caps: { id: u32; delta: u32 }[] }
+  | { op: "cap_revoked"; capIds: u32[] };
 
 export type CallFrame = Extract<Frame, { op: "call" }>;
 export type ResultFrame = Extract<Frame, { op: "result" }>;
@@ -56,6 +56,7 @@ export type CancelFrame = Extract<Frame, { op: "cancel" }>;
 export type DropFrame = Extract<Frame, { op: "drop" }>;
 export type HelloFrame = Extract<Frame, { op: "hello" }>;
 export type GoAwayFrame = Extract<Frame, { op: "goaway" }>;
+export type CapRevokedFrame = Extract<Frame, { op: "cap_revoked" }>;
 
 const OPS = new Set<Frame["op"]>([
   "hello",
@@ -65,6 +66,7 @@ const OPS = new Set<Frame["op"]>([
   "cancel",
   "stream",
   "drop",
+  "cap_revoked",
 ]);
 
 export function isFrame(value: unknown): value is Frame {
@@ -79,7 +81,7 @@ export function isFrame(value: unknown): value is Frame {
     case "goaway":
       return f.reason === undefined || typeof f.reason === "string";
     case "call":
-      return typeof f.id === "number" && typeof f.method === "number"
+      return typeof f.id === "number" && typeof f.method === "string"
         && typeof f.target === "object" && f.target !== null
         && (f.target as { kind?: unknown }).kind === "cap"
         && typeof (f.target as { id?: unknown }).id === "number";
@@ -92,6 +94,12 @@ export function isFrame(value: unknown): value is Frame {
         && (f.ev === "next" || f.ev === "credit" || f.ev === "end" || f.ev === "error");
     case "drop":
       return Array.isArray(f.caps);
+    case "cap_revoked":
+      if (!Array.isArray(f.capIds)) return false;
+      for (const id of f.capIds) {
+        if (typeof id !== "number" || !Number.isInteger(id) || id < 0 || id > 0xFFFFFFFF) return false;
+      }
+      return true;
   }
 }
 
@@ -148,3 +156,9 @@ function readVarUint(buf: Buffer | Uint8Array): number {
 
 export const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 export const PROTOCOL_VERSION = 1;
+
+/** Reserved cap-name prefix for framework caps. User caps starting with this prefix are rejected. */
+export const FRAMEWORK_NAME_PREFIX = "bunite.";
+
+/** Synthetic method on cap-id 0 — dispatches to the bootstrap registry. */
+export const BOOTSTRAP_METHOD = "bootstrap";

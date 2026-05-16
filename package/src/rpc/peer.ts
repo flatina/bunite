@@ -1,10 +1,10 @@
 import {
   type CapDef,
   type Schema,
-  type SchemaShape,
+  type SchemaRoots,
   type ClientOf,
   type ImplOf,
-  type ServerDescriptor,
+  type ImplsOf,
   type CallCtx,
   type Attestation,
   type ExportedCap,
@@ -12,14 +12,13 @@ import {
   type AnyCapToken,
   type Stream as StreamType,
   type DisposalSpec,
-  call,
-  cap,
-  defineCap,
   isCallDef,
   isStreamDef,
   isCapRef,
   isCapArray,
   isCapRecord,
+  isCapDef,
+  isSchema,
 } from "./schema";
 import { RuntimeCap, frameworkTypeIdOf } from "./framework";
 import {
@@ -30,12 +29,22 @@ import {
   type CancelFrame,
   type DropFrame,
   type HelloFrame,
+  type CapRevokedFrame,
   type CallMeta,
   CapRef,
   DEFAULT_MAX_BYTES,
   PROTOCOL_VERSION,
+  FRAMEWORK_NAME_PREFIX,
+  BOOTSTRAP_METHOD,
 } from "./wire";
-import { IpcError, type IpcStatus, type IpcCode } from "./error";
+import {
+  IpcError,
+  type IpcStatus,
+  type IpcCode,
+  type FailedPreconditionReason,
+  type ResourceExhaustedReason,
+  type AlreadyExistsReason,
+} from "./error";
 
 export const USER_ROOTS_CAP_ID = 0;
 export const RUNTIME_CAP_ID = 1;
@@ -46,6 +55,7 @@ export const FIRST_USER_CAP_ID = 2;
 export const FIRST_USER_TYPE_ID = 128;
 
 export const MAX_CAPS_PER_CONNECTION = 1024;
+export const MAX_IN_FLIGHT_CALLS_PER_CONNECTION = 1024;
 
 const DEFAULT_DEADLINE_GRACE_MS = 500;
 const DEFAULT_STREAM_INITIAL_CREDIT = 32;
@@ -101,7 +111,11 @@ export class CapTable {
 
   allocate(entry: Omit<CapTableEntry, "capId">): CapTableEntry {
     if (this.entries.size >= this.capLimit) {
-      throw new IpcError({ code: "resource_exhausted", message: `cap-table limit ${this.capLimit}` });
+      throw new IpcError({
+        code: "resource_exhausted",
+        message: `cap-table limit ${this.capLimit}`,
+        details: { reason: "max_caps_per_connection" as ResourceExhaustedReason },
+      });
     }
     let capId = this.nextCapId++;
     while (this.entries.has(capId)) capId = this.nextCapId++;
@@ -121,6 +135,11 @@ export class CapTable {
       return true;
     }
     return false;
+  }
+
+  delete(capId: number): boolean {
+    if (capId < FIRST_USER_CAP_ID) return false;
+    return this.entries.delete(capId);
   }
 
   clear(): void {
@@ -143,14 +162,32 @@ export interface Transport {
   close(): void;
 }
 
+export type Policy = (name: string, attestation: Attestation) => boolean | Promise<boolean>;
+
+export type IfExists = "throw" | "replace" | "skip";
+
+export interface ServeHandle extends Disposable {
+  readonly names: readonly string[];
+}
+
+export interface ConnectionEvents {
+  bootstrap: { name: string; version?: string; attestation: Attestation; result: "ok" | "denied" | "not_found" | "version_mismatch" | "invalid_argument" | "resource_exhausted" | "internal"; capId?: number };
+  call: { capId: number; capName?: string; method: string; callId: number; durationMs?: number; result: "ok" | "cancelled" | IpcCode };
+  stream: { capId: number; capName?: string; method: string; callId: number; event: "start" | "end" | "cancel" | "error"; count?: number };
+  revoke: { capIds: number[]; reason: "unserve" | "replace" };
+  error: { phase: string; error: Error };
+}
+
 export interface Connection {
-  bootstrap<S extends SchemaShape, K extends keyof S["roots"] & string>(
-    schema: Schema<S>,
-    name: K
-  ): Promise<ClientOf<S["roots"][K]>>;
-  serve<S extends SchemaShape>(descriptor: ServerDescriptor<S>): void;
+  bootstrap<C extends CapDef<any, any>>(cap: C): Promise<ClientOf<C>>;
+  bootstrap<R extends SchemaRoots>(schema: Schema<R>): Promise<{ [K in keyof R]: ClientOf<R[K]> }>;
+  serve<C extends CapDef<any, any>>(cap: C, impl: ImplOf<C>, opts?: { ifExists?: IfExists }): ServeHandle;
+  serveAll<R extends SchemaRoots>(schema: Schema<R>, impls: ImplsOf<R>, opts?: { ifExists?: IfExists }): ServeHandle;
+  unserve(target: CapDef<any, any> | ServeHandle): void;
+  replace<C extends CapDef<any, any>>(cap: C, impl: ImplOf<C>): void;
   runtime(): ClientOf<typeof RuntimeCap>;
   releaseRef(proxy: unknown): void;
+  on<K extends keyof ConnectionEvents>(event: K, handler: (e: ConnectionEvents[K]) => void): () => void;
   onClose(handler: () => void): () => void;
   readonly closed: boolean;
 }
@@ -162,9 +199,11 @@ export interface ConnectionOptions {
   features?: string[];
   maxBytes?: number;
   capLimit?: number;
+  maxInFlightCalls?: number;
   peerId?: string;
   attestation?: Attestation;
   runtime?: ImplOf<typeof RuntimeCap>;
+  policy?: Policy;
 }
 
 export interface PendingCall {
@@ -173,18 +212,25 @@ export interface PendingCall {
   abort: AbortController;
   decodeReturn?: ReturnDecoder;
   timer?: ReturnType<typeof setTimeout>;
+  startedAt?: number;
+  capId?: number;
+  capName?: string;
+  method?: string;
+  kind?: "call" | "stream";
 }
 
 type ReturnDecoder = (raw: unknown) => unknown;
 
+// Default is conservative: "untrusted" until the host explicitly hands a real attestation
+// (engine-mined for native, derived from req origin for web). Policy hooks should treat absence as deny-able.
 const DEFAULT_ATTESTATION: Attestation = {
-  origin: "bunite://internal",
-  topOrigin: "bunite://internal",
+  origin: "",
+  topOrigin: "",
   partition: "default",
-  isAppRes: true,
-  isMainFrame: true,
+  isAppRes: false,
+  isMainFrame: false,
   userGesture: false,
-  level: "app-internal",
+  level: "untrusted",
 };
 
 const EXPORTED_CAP_BRAND = Symbol("bunite.rpc.ExportedCap");
@@ -209,12 +255,24 @@ interface ServerStreamCtx {
   cancelled: boolean;
   credit: number;
   creditWaker: (() => void) | null;
+  capId: number;
+  capName?: string;
+  method: string;
+  callId: number;
+  count: number;
 }
 
 interface ClientStreamCtx {
+  capId: number;
   push(chunk: unknown): void;
   end(): void;
   fail(error: IpcError): void;
+}
+
+interface RegistryEntry {
+  cap: CapDef<any, any>;
+  impl: unknown;
+  version?: string;
 }
 
 class ConnectionImpl implements Connection {
@@ -224,10 +282,15 @@ class ConnectionImpl implements Connection {
   private readonly clientStreams = new Map<number, ClientStreamCtx>();
   private readonly serverStreams = new Map<number, ServerStreamCtx>();
   private readonly serverCallChildren = new Map<number, { parentId: number }>();
-  private readonly serverActiveCalls = new Map<number, AbortController>();
+  private readonly serverActiveCalls = new Map<number, { ctrl: AbortController; capId: number; capName: string; method: string; startedAt: number }>();
+  /** Server-side: name → registry entry. */
+  private readonly registry = new Map<string, RegistryEntry>();
+  /** Server-side: name → instance cap-id (cached bootstrap result). */
   private readonly rootInstances = new Map<string, number>();
-  private userRootsSchema: Schema<any> | null = null;
+  /** Client-side: cap-ids that the server revoked via cap_revoked. */
+  private readonly revokedCapIds = new Set<number>();
   private readonly closeHandlers = new Set<() => void>();
+  private readonly observers: { [K in keyof ConnectionEvents]?: Set<(e: ConnectionEvents[K]) => void> } = {};
   private nextCallId = 1;
   private remoteHello: HelloFrame | null = null;
   private readonly remoteReady: Promise<HelloFrame>;
@@ -235,11 +298,13 @@ class ConnectionImpl implements Connection {
   private rejectRemoteReady!: (e: Error) => void;
   private closed_ = false;
   private readonly maxBytes: number;
+  private readonly maxInFlightCalls: number;
   private readonly mode: "native" | "web";
   private readonly origin: string;
   private readonly features: string[];
   private readonly attestation: Attestation;
   private readonly peerId: string;
+  private readonly policy: Policy | undefined;
 
   constructor(opts: ConnectionOptions) {
     this.transport = opts.transport;
@@ -247,16 +312,20 @@ class ConnectionImpl implements Connection {
     this.origin = opts.origin;
     this.features = opts.features ?? [];
     this.maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
+    this.maxInFlightCalls = opts.maxInFlightCalls ?? MAX_IN_FLIGHT_CALLS_PER_CONNECTION;
     this.attestation = opts.attestation ?? DEFAULT_ATTESTATION;
     this.peerId = opts.peerId ?? "peer";
+    this.policy = opts.policy;
     this.capTable = new CapTable(opts.capLimit ?? MAX_CAPS_PER_CONNECTION);
 
+    // cap-id 0 = bootstrap dispatcher (no cap def — special-cased in handleCall)
     this.capTable.install(USER_ROOTS_CAP_ID, {
       typeId: USER_ROOTS_TYPE_ID,
       cap: null,
       impl: null,
       refCount: 1,
     });
+    // cap-id 1 = Runtime instance (framework-stable, pre-installed)
     this.capTable.install(RUNTIME_CAP_ID, {
       typeId: RUNTIME_TYPE_ID,
       cap: RuntimeCap,
@@ -290,47 +359,145 @@ class ConnectionImpl implements Connection {
     return () => this.closeHandlers.delete(handler);
   }
 
-  serve<S extends SchemaShape>(descriptor: ServerDescriptor<S>): void {
-    const entry = this.capTable.get(USER_ROOTS_CAP_ID);
-    if (!entry) throw new Error("UserRoots slot missing");
-    this.rootInstances.clear();
-    this.userRootsSchema = descriptor.schema;
-    const built = this.buildUserRootsCap(descriptor.schema, descriptor.impls as Record<string, unknown>);
-    entry.cap = built.def;
-    entry.impl = built.impl;
+  on<K extends keyof ConnectionEvents>(event: K, handler: (e: ConnectionEvents[K]) => void): () => void {
+    let set = this.observers[event] as Set<(e: ConnectionEvents[K]) => void> | undefined;
+    if (!set) {
+      set = new Set();
+      (this.observers as Record<string, Set<unknown>>)[event] = set as unknown as Set<unknown>;
+    }
+    set.add(handler);
+    return () => { set!.delete(handler); };
   }
 
-  private buildUserRootsCap(
-    schema: Schema<any>,
-    impls: Record<string, unknown>
-  ): { def: CapDef<any, any>; impl: Record<string, (params: unknown, ctx: CallCtx) => unknown> } {
-    const methods: Record<string, MethodDef> = {};
-    const impl: Record<string, (params: unknown, ctx: CallCtx) => unknown> = {};
-    for (const name of Object.keys(schema.roots)) {
-      const rootCap = schema.roots[name] as CapDef<any, any>;
-      methods[name] = call({ returns: cap(rootCap as never), idempotent: true });
-      impl[name] = (_params, ctx) => {
-        const cachedId = this.rootInstances.get(name);
-        if (cachedId !== undefined) {
-          const cached = this.capTable.get(cachedId);
-          if (cached) {
-            cached.refCount += 1;
-            return {
-              [EXPORTED_CAP_BRAND]: true,
-              cap: rootCap,
-              capId: cachedId,
-              typeId: cached.typeId,
-            } as unknown as ExportedCap<typeof rootCap>;
-          }
-          this.rootInstances.delete(name);
-        }
-        const exported = ctx.exportCap(rootCap, impls[name] as never);
-        this.rootInstances.set(name, exported.capId);
-        return exported;
-      };
+  private emitObs<K extends keyof ConnectionEvents>(event: K, data: ConnectionEvents[K]): void {
+    const set = this.observers[event] as Set<(e: ConnectionEvents[K]) => void> | undefined;
+    if (!set || set.size === 0) return;
+    for (const h of set) {
+      try { h(data); } catch { /* swallow */ }
     }
-    return { def: defineCap(methods), impl };
   }
+
+  // ---- serve / unserve / replace ----
+
+  serve<C extends CapDef<any, any>>(cap: C, impl: ImplOf<C>, opts?: { ifExists?: IfExists }): ServeHandle {
+    this.assertNotFrameworkName(cap.name);
+    const ifExists = opts?.ifExists ?? "throw";
+    const existing = this.registry.get(cap.name);
+    if (existing) {
+      switch (ifExists) {
+        case "throw":
+          throw new IpcError({
+            code: "already_exists",
+            message: `cap "${cap.name}" already served`,
+            details: { reason: "name_collision" as AlreadyExistsReason },
+          });
+        case "skip":
+          // Empty handle: skipping means we are not the owner — unserve must not revoke someone else's registration.
+          return this.makeHandle([]);
+        case "replace":
+          this.replace(cap, impl);
+          return this.makeHandle([cap.name]);
+      }
+    }
+    this.registry.set(cap.name, { cap, impl, version: cap.version });
+    return this.makeHandle([cap.name]);
+  }
+
+  private makeHandle(names: string[]): ServeHandle {
+    const handle: ServeHandle = {
+      names,
+      [Symbol.dispose]: () => this.unserve(handle),
+    };
+    return handle;
+  }
+
+  serveAll<R extends SchemaRoots>(schema: Schema<R>, impls: ImplsOf<R>, opts?: { ifExists?: IfExists }): ServeHandle {
+    const ifExists = opts?.ifExists ?? "throw";
+    // Pre-validate everything that can fail across all modes before mutating any state (atomicity).
+    for (const k of Object.keys(schema.roots)) {
+      const c = schema.roots[k];
+      this.assertNotFrameworkName(c.name);
+      const existing = this.registry.get(c.name);
+      if (existing) {
+        if (ifExists === "throw") {
+          throw new IpcError({
+            code: "already_exists",
+            message: `cap "${c.name}" already served`,
+            details: { reason: "name_collision" as AlreadyExistsReason },
+          });
+        }
+        if (ifExists === "replace" && existing.version !== c.version) {
+          throw new IpcError({
+            code: "failed_precondition",
+            message: `version mismatch on replace for "${c.name}" (current "${existing.version}", new "${c.version}")`,
+            details: { reason: "version_mismatch" as FailedPreconditionReason },
+          });
+        }
+      }
+    }
+    // Mutations below cannot fail (pre-validation already cleared collision/version/prefix paths).
+    const names: string[] = [];
+    for (const k of Object.keys(schema.roots)) {
+      const c = schema.roots[k];
+      const i = (impls as Record<string, unknown>)[k];
+      const h = this.serve(c, i as ImplOf<typeof c>, { ifExists });
+      // serve(...) returns empty names[] only for skipped entries — exclude from the aggregate handle.
+      if (h.names.length > 0) names.push(c.name);
+    }
+    return this.makeHandle(names);
+  }
+
+  unserve(target: CapDef<any, any> | ServeHandle): void {
+    const names = isCapDef(target) ? [target.name] : Array.from((target as ServeHandle).names);
+    const revoked: number[] = [];
+    for (const name of names) {
+      if (!this.registry.delete(name)) continue;
+      const instId = this.rootInstances.get(name);
+      if (instId !== undefined) {
+        const entry = this.capTable.get(instId);
+        if (entry) this.invokeServerDisposal(entry);
+        this.rootInstances.delete(name);
+        this.capTable.delete(instId);
+        revoked.push(instId);
+      }
+    }
+    if (revoked.length > 0) {
+      this.transport.send({ op: "cap_revoked", capIds: revoked });
+      this.emitObs("revoke", { capIds: revoked, reason: "unserve" });
+    }
+  }
+
+  replace<C extends CapDef<any, any>>(cap: C, impl: ImplOf<C>): void {
+    const entry = this.registry.get(cap.name);
+    if (!entry) throw new IpcError({ code: "not_found", message: `cap "${cap.name}" not served` });
+    if (entry.version !== cap.version) {
+      throw new IpcError({
+        code: "failed_precondition",
+        message: `version mismatch (current "${entry.version}", new "${cap.version}")`,
+        details: { reason: "version_mismatch" as FailedPreconditionReason },
+      });
+    }
+    entry.impl = impl;
+    entry.cap = cap;
+    const instId = this.rootInstances.get(cap.name);
+    if (instId !== undefined) {
+      const e = this.capTable.get(instId);
+      if (e) { e.impl = impl; e.cap = cap; }
+    }
+    this.emitObs("revoke", { capIds: instId !== undefined ? [instId] : [], reason: "replace" });
+  }
+
+  private assertNotFrameworkName(name: string): void {
+    if (name.startsWith(FRAMEWORK_NAME_PREFIX)) {
+      throw new IpcError({
+        code: "already_exists",
+        message: `cap name "${name}" uses reserved prefix "${FRAMEWORK_NAME_PREFIX}"`,
+        details: { reason: "reserved_namespace" as AlreadyExistsReason },
+      });
+    }
+  }
+
+  // ---- runtime / bootstrap ----
 
   private runtimeProxy: ClientOf<typeof RuntimeCap> | null = null;
 
@@ -341,24 +508,48 @@ class ConnectionImpl implements Connection {
     return this.runtimeProxy;
   }
 
-  async bootstrap<S extends SchemaShape, K extends keyof S["roots"] & string>(
-    schema: Schema<S>,
-    name: K
-  ): Promise<ClientOf<S["roots"][K]>> {
-    await this.remoteReady;
-    const rootNames = Object.keys(schema.roots);
-    const idx = rootNames.indexOf(name);
-    if (idx < 0) {
-      throw new IpcError({ code: "invalid_argument", message: `root "${name}" not in schema` });
-    }
-    const rootCap = schema.roots[name] as CapDef<any, any>;
-    const hash = await schema.topologyHash();
-    const raw = await this.sendCallTyped(USER_ROOTS_CAP_ID, idx, undefined, undefined, { topologyHash: hash });
-    if (!(raw instanceof CapRef)) {
-      throw new IpcError({ code: "protocol_error", message: "bootstrap did not return a CapRef" });
-    }
-    return this.makeCapProxy(rootCap, raw.capId) as ClientOf<S["roots"][K]>;
+  bootstrap<C extends CapDef<any, any>>(cap: C): Promise<ClientOf<C>>;
+  bootstrap<R extends SchemaRoots>(schema: Schema<R>): Promise<{ [K in keyof R]: ClientOf<R[K]> }>;
+  async bootstrap(target: CapDef<any, any> | Schema<any>): Promise<unknown> {
+    if (isCapDef(target)) return this._bootstrapCap(target);
+    if (isSchema(target)) return this._bootstrapSchema(target);
+    throw new IpcError({ code: "invalid_argument", message: "bootstrap target must be CapDef or Schema" });
   }
+
+  private async _bootstrapCap<C extends CapDef<any, any>>(cap: C): Promise<ClientOf<C>> {
+    await this.remoteReady;
+    const args: { name: string; version?: string } = { name: cap.name };
+    if (cap.version != null) args.version = cap.version;
+    const raw = await this.sendCallTyped(USER_ROOTS_CAP_ID, BOOTSTRAP_METHOD, args, undefined);
+    if (!(raw instanceof CapRef)) {
+      throw new IpcError({ code: "invalid_argument", message: "bootstrap did not return a CapRef" });
+    }
+    return this.makeCapProxy(cap, raw.capId) as ClientOf<C>;
+  }
+
+  private async _bootstrapSchema<R extends SchemaRoots>(
+    schema: Schema<R>
+  ): Promise<{ [K in keyof R]: ClientOf<R[K]> }> {
+    const keys = Object.keys(schema.roots) as (keyof R & string)[];
+    const settled = await Promise.allSettled(keys.map((k) => this._bootstrapCap(schema.roots[k])));
+    const rejected = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
+    if (rejected) {
+      // Release server refCount on the roots that succeeded — otherwise their cap-table entries linger until connection close.
+      for (const r of settled) {
+        if (r.status === "fulfilled") {
+          try { this.releaseRef(r.value); } catch { /* swallow */ }
+        }
+      }
+      throw rejected.reason;
+    }
+    const out = {} as { [K in keyof R]: ClientOf<R[K]> };
+    for (let i = 0; i < keys.length; i++) {
+      (out as Record<string, unknown>)[keys[i]] = (settled[i] as PromiseFulfilledResult<unknown>).value;
+    }
+    return out;
+  }
+
+  // ---- frame dispatch ----
 
   private handleFrame(frame: Frame): void {
     if (this.closed_) return;
@@ -381,6 +572,9 @@ class ConnectionImpl implements Connection {
       case "drop":
         this.handleDrop(frame);
         return;
+      case "cap_revoked":
+        this.handleCapRevoked(frame);
+        return;
       case "goaway":
         this.handleGoaway(frame);
         return;
@@ -393,11 +587,11 @@ class ConnectionImpl implements Connection {
   private handleUnknownFrame(frame: unknown): void {
     const id = (frame as { id?: unknown })?.id;
     if (typeof id === "number") {
-      this.transport.send({ op: "result", id, ok: false, error: { code: "protocol_error", message: "unknown opcode" } });
+      this.transport.send({ op: "result", id, ok: false, error: { code: "invalid_argument", message: "unknown opcode" } });
       return;
     }
-    this.transport.send({ op: "goaway", reason: "protocol_error", error: { code: "protocol_error", message: "unknown opcode" } });
-    this.shutdown("protocol_error");
+    this.transport.send({ op: "goaway", reason: "invalid_argument", error: { code: "invalid_argument", message: "unknown opcode" } });
+    this.shutdown("invalid_argument");
   }
 
   private handleHello(frame: HelloFrame): void {
@@ -412,44 +606,158 @@ class ConnectionImpl implements Connection {
     this.shutdown(frame.reason ?? "remote goaway");
   }
 
-  private async handleCall(frame: CallFrame): Promise<void> {
-    const entry = this.capTable.get(frame.target.id);
-    if (!entry) return this.sendError(frame.id, "not_found", `cap-id ${frame.target.id} not found`);
-
-    if (entry.capId === USER_ROOTS_CAP_ID) {
-      if (!this.userRootsSchema) return this.sendError(frame.id, "not_supported", "no server attached");
-      const clientHash = frame.meta?.topologyHash;
-      if (clientHash) {
-        const ourHash = await this.userRootsSchema.topologyHash();
-        if (clientHash !== ourHash) {
-          return this.sendError(
-            frame.id,
-            "failed_precondition",
-            `topologyHash mismatch (client ${clientHash.slice(0, 8)} vs server ${ourHash.slice(0, 8)})`
-          );
+  private handleCapRevoked(frame: CapRevokedFrame): void {
+    for (const capId of frame.capIds) {
+      this.revokedCapIds.add(capId);
+      const err = new IpcError({
+        code: "failed_precondition",
+        message: "cap revoked",
+        details: { reason: "revoked" as FailedPreconditionReason },
+      });
+      // Fail pending calls targeting this cap.
+      for (const [id, p] of this.pending) {
+        if (p.capId === capId) {
+          this.pending.delete(id);
+          if (p.timer) clearTimeout(p.timer);
+          p.reject(err);
+        }
+      }
+      // Fail active client streams targeting this cap — "revoked wins" symmetric with calls.
+      for (const [id, s] of this.clientStreams) {
+        if (s.capId === capId) {
+          this.clientStreams.delete(id);
+          s.fail(err);
         }
       }
     }
+  }
+
+  private async handleCall(frame: CallFrame): Promise<void> {
+    if (frame.target.id === USER_ROOTS_CAP_ID && frame.method === BOOTSTRAP_METHOD) {
+      await this.handleBootstrap(frame);
+      return;
+    }
+
+    const entry = this.capTable.get(frame.target.id);
+    if (!entry) {
+      this.emitObs("call", { capId: frame.target.id, method: frame.method, callId: frame.id, result: "not_found" });
+      return this.sendError(frame.id, "not_found", `cap-id ${frame.target.id} not found`);
+    }
 
     const cap = entry.cap;
-    if (!cap || !entry.impl) return this.sendError(frame.id, "not_supported", "cap has no impl");
-
-    const methodNames = Object.keys(cap.methods);
-    if (frame.method >= methodNames.length) {
-      return this.sendError(frame.id, "not_supported", `method index ${frame.method} out of range`);
+    if (!cap || !entry.impl) {
+      this.emitObs("call", { capId: frame.target.id, method: frame.method, callId: frame.id, result: "not_found" });
+      return this.sendError(frame.id, "not_found", "cap has no impl");
     }
-    const methodName = methodNames[frame.method];
-    const methodDef = cap.methods[methodName] as MethodDef;
-    const impl = (entry.impl as Record<string, unknown>)[methodName];
+
+    const methodDef = cap.methods[frame.method] as MethodDef | undefined;
+    if (!methodDef) {
+      this.emitObs("call", { capId: frame.target.id, capName: cap.name, method: frame.method, callId: frame.id, result: "not_found" });
+      return this.sendError(frame.id, "not_found", `method "${frame.method}" on cap "${cap.name}"`);
+    }
+    const impl = (entry.impl as Record<string, unknown>)[frame.method];
     if (typeof impl !== "function") {
-      return this.sendError(frame.id, "not_supported", `method "${methodName}" has no handler`);
+      this.emitObs("call", { capId: frame.target.id, capName: cap.name, method: frame.method, callId: frame.id, result: "not_found" });
+      return this.sendError(frame.id, "not_found", `method "${frame.method}" has no handler`);
     }
 
-    await this.invokeServerMethod(frame, methodDef, impl as (params: unknown, ctx: CallCtx) => unknown);
+    // Bound inbound work — symmetric with sendCallTyped's outbound check.
+    if (this.serverActiveCalls.size + this.serverStreams.size >= this.maxInFlightCalls) {
+      this.emitObs("call", { capId: frame.target.id, capName: cap.name, method: frame.method, callId: frame.id, result: "resource_exhausted" });
+      return this.sendError(
+        frame.id,
+        "resource_exhausted",
+        `in-flight calls limit ${this.maxInFlightCalls}`,
+        { reason: "max_concurrent_calls" as ResourceExhaustedReason },
+      );
+    }
+
+    await this.invokeServerMethod(frame, cap, methodDef, impl as (params: unknown, ctx: CallCtx) => unknown);
+  }
+
+  private async handleBootstrap(frame: CallFrame): Promise<void> {
+    const args = (frame.args ?? {}) as { name?: unknown; version?: unknown };
+    const name = args.name;
+    if (typeof name !== "string") {
+      this.emitObs("bootstrap", { name: String(name), attestation: this.attestation, result: "invalid_argument" });
+      return this.sendError(frame.id, "invalid_argument", "bootstrap requires {name: string}");
+    }
+    const clientVersion = args.version != null ? String(args.version) : undefined;
+
+    // Framework caps (cap-id 1 Runtime is pre-installed and accessed via .runtime(),
+    // not via bootstrap). For user-facing bootstrap, only the registry is consulted.
+    const entry = this.registry.get(name);
+    if (!entry) {
+      this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result: "not_found" });
+      return this.sendError(frame.id, "not_found", `cap "${name}" not served`);
+    }
+
+    const serverVersion = entry.version;
+    if (serverVersion != null && clientVersion != null && serverVersion !== clientVersion) {
+      this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result: "version_mismatch" });
+      return this.sendError(
+        frame.id,
+        "failed_precondition",
+        `version mismatch (server "${serverVersion}", client "${clientVersion}")`,
+        { reason: "version_mismatch" as FailedPreconditionReason }
+      );
+    }
+
+    if (this.policy) {
+      try {
+        const allowed = await this.policy(name, this.attestation);
+        if (!allowed) {
+          this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result: "denied" });
+          return this.sendError(
+            frame.id,
+            "failed_precondition",
+            "policy denied",
+            { reason: "unauthorized" as FailedPreconditionReason }
+          );
+        }
+      } catch (err) {
+        this.emitObs("error", { phase: "policy", error: err instanceof Error ? err : new Error(String(err)) });
+        this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result: "internal" });
+        return this.sendError(frame.id, "internal", "policy threw");
+      }
+    }
+
+    let capId = this.rootInstances.get(name);
+    if (capId !== undefined) {
+      const cached = this.capTable.get(capId);
+      if (cached) {
+        cached.refCount += 1;
+      } else {
+        this.rootInstances.delete(name);
+        capId = undefined;
+      }
+    }
+    if (capId === undefined) {
+      try {
+        const allocated = this.capTable.allocate({
+          typeId: frameworkTypeIdOf(entry.cap) ?? FIRST_USER_TYPE_ID,
+          cap: entry.cap,
+          impl: entry.impl,
+          refCount: 1,
+        });
+        capId = allocated.capId;
+        this.rootInstances.set(name, capId);
+      } catch (err) {
+        if (err instanceof IpcError) {
+          const result = err.code === "resource_exhausted" ? "resource_exhausted" : "internal";
+          this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result });
+          return this.sendError(frame.id, err.code, err.message, err.details as Record<string, unknown> | undefined);
+        }
+        throw err;
+      }
+    }
+    this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result: "ok", capId });
+    this.transport.send({ op: "result", id: frame.id, ok: true, value: new CapRef(capId) });
   }
 
   private async invokeServerMethod(
     frame: CallFrame,
+    cap: CapDef<any, any>,
     methodDef: MethodDef,
     impl: (params: unknown, ctx: CallCtx) => unknown
   ): Promise<void> {
@@ -464,16 +772,24 @@ class ConnectionImpl implements Connection {
           ? () => als.run({ callId: frame.id }, runStream)
           : runStream;
         const stream = scoped();
-        this.runServerStream(frame.id, stream, ctx, hintBudget);
+        this.runServerStream(frame.id, stream, ctx, hintBudget, cap, frame.method, frame.target.id);
       } catch (err) {
+        this.emitObs("stream", { capId: frame.target.id, capName: cap.name, method: frame.method, callId: frame.id, event: "error" });
         this.transport.send({ op: "stream", id: frame.id, ev: "error", error: toStatus(err) });
       }
       return;
     }
 
     if (isCallDef(methodDef)) {
+      const startedAt = performance.now();
       const deadlineTimer = methodDef.idempotent ? undefined : this.armServerDeadline(frame, ctx);
-      this.serverActiveCalls.set(frame.id, (ctx as unknown as { _ctrl: AbortController })._ctrl);
+      this.serverActiveCalls.set(frame.id, {
+        ctrl: (ctx as unknown as { _ctrl: AbortController })._ctrl,
+        capId: frame.target.id,
+        capName: cap.name,
+        method: frame.method,
+        startedAt,
+      });
       const encoder = makeReturnEncoder(methodDef.returns);
       const runImpl = () => Promise.resolve(impl(frame.args, ctx));
       const als = callContextStorage;
@@ -486,15 +802,18 @@ class ConnectionImpl implements Connection {
         if (!this.serverActiveCalls.delete(frame.id)) return;
         const encoded = encoder(result);
         this.transport.send({ op: "result", id: frame.id, ok: true, value: encoded });
+        this.emitObs("call", { capId: frame.target.id, capName: cap.name, method: frame.method, callId: frame.id, durationMs: performance.now() - startedAt, result: "ok" });
       } catch (err) {
         if (deadlineTimer) clearTimeout(deadlineTimer);
         if (!this.serverActiveCalls.delete(frame.id)) return;
-        this.sendErrorFromException(frame.id, err);
+        const status = toStatus(err);
+        this.sendErrorFromStatus(frame.id, status);
+        this.emitObs("call", { capId: frame.target.id, capName: cap.name, method: frame.method, callId: frame.id, durationMs: performance.now() - startedAt, result: status.code });
       }
       return;
     }
 
-    this.sendError(frame.id, "not_supported", "unknown method kind");
+    this.sendError(frame.id, "not_found", "unknown method kind");
   }
 
   private armServerDeadline(frame: CallFrame, ctx: CallCtx): ReturnType<typeof setTimeout> | undefined {
@@ -536,7 +855,15 @@ class ConnectionImpl implements Connection {
     } as unknown as ExportedCap<C>;
   }
 
-  private runServerStream(callId: number, stream: StreamType<unknown>, ctx: CallCtx, initialCredit: number): void {
+  private runServerStream(
+    callId: number,
+    stream: StreamType<unknown>,
+    ctx: CallCtx,
+    initialCredit: number,
+    cap: CapDef<any, any>,
+    method: string,
+    capId: number,
+  ): void {
     const iter = (stream as AsyncIterable<unknown>)[Symbol.asyncIterator]();
     const abort = (ctx as unknown as { _ctrl: AbortController })._ctrl;
     const slot: ServerStreamCtx = {
@@ -545,8 +872,14 @@ class ConnectionImpl implements Connection {
       cancelled: false,
       credit: initialCredit,
       creditWaker: null,
+      capId,
+      capName: cap.name,
+      method,
+      callId,
+      count: 0,
     };
     this.serverStreams.set(callId, slot);
+    this.emitObs("stream", { capId, capName: cap.name, method, callId, event: "start" });
 
     const waitForCredit = (): Promise<void> => {
       if (slot.credit > 0 || slot.cancelled) return Promise.resolve();
@@ -563,13 +896,18 @@ class ConnectionImpl implements Connection {
           if (done) break;
           if (slot.cancelled) break;
           slot.credit -= 1;
+          slot.count += 1;
           this.transport.send({ op: "stream", id: callId, ev: "next", value });
         }
       } catch (err) {
         errored = true;
         this.transport.send({ op: "stream", id: callId, ev: "error", error: toStatus(err) });
+        this.emitObs("stream", { capId, capName: cap.name, method, callId, event: "error", count: slot.count });
       } finally {
-        if (!errored) this.transport.send({ op: "stream", id: callId, ev: "end" });
+        if (!errored) {
+          this.transport.send({ op: "stream", id: callId, ev: "end" });
+          this.emitObs("stream", { capId, capName: cap.name, method, callId, event: slot.cancelled ? "cancel" : "end", count: slot.count });
+        }
         this.serverStreams.delete(callId);
       }
     };
@@ -594,7 +932,7 @@ class ConnectionImpl implements Connection {
     if (stream) {
       this.clientStreams.delete(frame.id);
       const err = frame.ok
-        ? new IpcError({ code: "protocol_error", message: "stream method returned result frame" })
+        ? new IpcError({ code: "invalid_argument", message: "stream method returned result frame" })
         : new IpcError(frame.error);
       stream.fail(err);
     }
@@ -611,12 +949,20 @@ class ConnectionImpl implements Connection {
     const active = this.serverActiveCalls.get(frame.id);
     if (active) {
       this.serverActiveCalls.delete(frame.id);
-      active.abort();
+      active.ctrl.abort();
       this.transport.send({
         op: "result",
         id: frame.id,
         ok: false,
         error: { code: "cancelled", message: frame.reason },
+      });
+      this.emitObs("call", {
+        capId: active.capId,
+        capName: active.capName,
+        method: active.method,
+        callId: frame.id,
+        durationMs: performance.now() - active.startedAt,
+        result: "cancelled",
       });
     }
     for (const [childId, child] of this.serverCallChildren) {
@@ -680,34 +1026,52 @@ class ConnectionImpl implements Connection {
     }
   }
 
-  private sendError(callId: number, code: IpcCode, message?: string): void {
-    this.transport.send({ op: "result", id: callId, ok: false, error: { code, message } });
+  private sendError(callId: number, code: IpcCode, message?: string, details?: unknown): void {
+    const error: IpcStatus = { code, message };
+    if (details !== undefined) error.details = details;
+    this.transport.send({ op: "result", id: callId, ok: false, error });
   }
 
-  private sendErrorFromException(callId: number, err: unknown): void {
-    this.transport.send({ op: "result", id: callId, ok: false, error: toStatus(err) });
+  private sendErrorFromStatus(callId: number, status: IpcStatus): void {
+    this.transport.send({ op: "result", id: callId, ok: false, error: status });
   }
 
   private nextId(): number {
     return this.nextCallId++;
   }
 
-  sendCallRaw(capId: number, methodIdx: number, args: unknown, meta?: CallMeta): Promise<unknown> {
-    return this.sendCallTyped(capId, methodIdx, args, undefined, meta);
-  }
-
   sendCallTyped(
     capId: number,
-    methodIdx: number,
+    method: string,
     args: unknown,
     decodeReturn: ReturnDecoder | undefined,
-    meta?: CallMeta
+    meta?: CallMeta,
+    capName?: string,
   ): Promise<unknown> {
     if (this.closed_) return Promise.reject(new IpcError({ code: "unavailable", message: "connection closed" }));
+    if (this.revokedCapIds.has(capId)) {
+      return Promise.reject(new IpcError({
+        code: "failed_precondition",
+        message: "cap revoked",
+        details: { reason: "revoked" as FailedPreconditionReason },
+      }));
+    }
+    if (this.pending.size >= this.maxInFlightCalls) {
+      return Promise.reject(new IpcError({
+        code: "resource_exhausted",
+        message: `in-flight calls limit ${this.maxInFlightCalls}`,
+        details: { reason: "max_concurrent_calls" as ResourceExhaustedReason },
+      }));
+    }
     const id = this.nextId();
     return new Promise((resolve, reject) => {
       const abort = new AbortController();
-      const pending: PendingCall = { resolve, reject, abort, decodeReturn };
+      const pending: PendingCall = {
+        resolve, reject, abort, decodeReturn,
+        startedAt: performance.now(),
+        capId, method, capName,
+        kind: "call",
+      };
       if (meta?.deadlineMs) {
         pending.timer = setTimeout(() => {
           if (this.pending.delete(id)) {
@@ -725,14 +1089,29 @@ class ConnectionImpl implements Connection {
       if (finalMeta?.parentCallId !== undefined) {
         this.serverCallChildren.set(id, { parentId: finalMeta.parentCallId });
       }
-      this.transport.send({ op: "call", id, target: { kind: "cap", id: capId }, method: methodIdx, args, meta: finalMeta });
+      this.transport.send({ op: "call", id, target: { kind: "cap", id: capId }, method, args, meta: finalMeta });
     });
   }
 
-  openClientStream<T>(capId: number, methodIdx: number, args: unknown, meta?: CallMeta): StreamType<T> {
+  openClientStream<T>(
+    capId: number,
+    method: string,
+    args: unknown,
+    meta?: CallMeta,
+    capName?: string,
+  ): StreamType<T> {
     if (this.closed_) {
-      const empty = makeClientStream<T>(0, () => {}, () => {});
+      const empty = makeClientStream<T>(capId, 0, () => {}, () => {});
       empty.fail(new IpcError({ code: "unavailable", message: "connection closed" }));
+      return empty.stream;
+    }
+    if (this.revokedCapIds.has(capId)) {
+      const empty = makeClientStream<T>(capId, 0, () => {}, () => {});
+      empty.fail(new IpcError({
+        code: "failed_precondition",
+        message: "cap revoked",
+        details: { reason: "revoked" as FailedPreconditionReason },
+      }));
       return empty.stream;
     }
     const id = this.nextId();
@@ -745,14 +1124,14 @@ class ConnectionImpl implements Connection {
       if (this.closed_ || !this.clientStreams.has(id)) return;
       this.transport.send({ op: "stream", id, ev: "credit", credit: { messages } });
     };
-    const ctx = makeClientStream<T>(id, cancel, sendCredit);
+    const ctx = makeClientStream<T>(capId, id, cancel, sendCredit);
     this.clientStreams.set(id, ctx);
-    this.transport.send({ op: "call", id, target: { kind: "cap", id: capId }, method: methodIdx, args, meta });
+    this.transport.send({ op: "call", id, target: { kind: "cap", id: capId }, method, args, meta });
+    void capName;
     return ctx.stream;
   }
 
   makeCapProxy<C extends CapDef<any, any>>(capDef: C, capId: number): ClientOf<C> {
-    const methodNames = Object.keys(capDef.methods);
     const proxy: Record<string | symbol, unknown> = {};
     const meta = { capId, dropped: false };
     proxy[CAP_PROXY_META] = meta;
@@ -762,32 +1141,31 @@ class ConnectionImpl implements Connection {
       this.sendDrop(capId);
     };
 
-    for (let i = 0; i < methodNames.length; i++) {
-      const name = methodNames[i];
+    for (const name of Object.keys(capDef.methods)) {
       const def = capDef.methods[name] as MethodDef;
       if (isStreamDef(def)) {
-        proxy[name] = (params?: unknown) => this.openClientStream(capId, i, params);
+        proxy[name] = (params?: unknown) => this.openClientStream(capId, name, params, undefined, capDef.name);
       } else if (isCallDef(def)) {
         const decoder = makeReturnDecoder(def.returns, (cd, cid) => this.makeCapProxy(cd, cid));
-        proxy[name] = (params?: unknown) => this.sendCallTyped(capId, i, params, decoder);
+        proxy[name] = (params?: unknown) => this.sendCallTyped(capId, name, params, decoder, undefined, capDef.name);
       }
     }
 
     const disposal = capDef.disposal as DisposalSpec | undefined;
     if (disposal) {
-      const invokeMethod = (): unknown => {
-        const fn = proxy[disposal.method] as (() => unknown) | undefined;
-        return fn?.();
-      };
-      proxy[Symbol.asyncDispose] = async () => {
-        const r = invokeMethod();
-        await Promise.resolve(r);
-        drop();
-      };
+      const conn = this;
       proxy[Symbol.dispose] = () => {
-        const r = invokeMethod();
+        try {
+          const r = (proxy[disposal.method] as (() => unknown) | undefined)?.();
+          if (r && typeof (r as Promise<unknown>).then === "function") {
+            (r as Promise<unknown>).catch((err) =>
+              conn.emitObs("error", { phase: "dispose", error: err instanceof Error ? err : new Error(String(err)) })
+            );
+          }
+        } catch (err) {
+          conn.emitObs("error", { phase: "dispose", error: err instanceof Error ? err : new Error(String(err)) });
+        }
         drop();
-        void r;
       };
     }
 
@@ -824,8 +1202,8 @@ class ConnectionImpl implements Connection {
       void slot.iter?.return?.();
     }
     this.serverStreams.clear();
-    for (const ctrl of this.serverActiveCalls.values()) {
-      ctrl.abort();
+    for (const a of this.serverActiveCalls.values()) {
+      a.ctrl.abort();
     }
     this.serverActiveCalls.clear();
     for (const entry of this.capTable.values()) {
@@ -858,10 +1236,18 @@ function makeReturnEncoder(returns: AnyCapToken | undefined): (v: unknown) => un
   if (!returns) return (v) => v;
   const expectExportedCap = (v: unknown, expectedCap: CapDef<any, any>): CapRef => {
     if (!isExportedCap(v)) {
-      throw new IpcError({ code: "protocol_error", message: "expected ctx.exportCap return for cap method" });
+      throw new IpcError({
+        code: "failed_precondition",
+        message: "expected ctx.exportCap return for cap method",
+        details: { reason: "unregistered_cap_return" as FailedPreconditionReason },
+      });
     }
     if (v.cap !== expectedCap) {
-      throw new IpcError({ code: "protocol_error", message: "exported cap type mismatch with method returns" });
+      throw new IpcError({
+        code: "failed_precondition",
+        message: "exported cap type mismatch with method returns",
+        details: { reason: "unregistered_cap_return" as FailedPreconditionReason },
+      });
     }
     return new CapRef(v.capId);
   };
@@ -869,7 +1255,7 @@ function makeReturnEncoder(returns: AnyCapToken | undefined): (v: unknown) => un
   if (isCapArray(returns)) {
     return (v) => {
       if (!Array.isArray(v)) {
-        throw new IpcError({ code: "protocol_error", message: "expected ExportedCap[] for cap.array method" });
+        throw new IpcError({ code: "invalid_argument", message: "expected ExportedCap[] for cap.array method" });
       }
       return v.map((item) => expectExportedCap(item, returns.cap));
     };
@@ -877,7 +1263,7 @@ function makeReturnEncoder(returns: AnyCapToken | undefined): (v: unknown) => un
   if (isCapRecord(returns)) {
     return (v) => {
       if (!v || typeof v !== "object") {
-        throw new IpcError({ code: "protocol_error", message: "expected Record<string, ExportedCap> for cap.record method" });
+        throw new IpcError({ code: "invalid_argument", message: "expected Record<string, ExportedCap> for cap.record method" });
       }
       const out: Record<string, CapRef> = {};
       for (const k of Object.keys(v as object)) {
@@ -897,7 +1283,7 @@ function makeReturnDecoder(
   if (isCapRef(returns)) {
     const inner = returns.cap;
     return (raw) => {
-      if (!(raw instanceof CapRef)) throw new IpcError({ code: "protocol_error", message: "expected CapRef" });
+      if (!(raw instanceof CapRef)) throw new IpcError({ code: "invalid_argument", message: "expected CapRef" });
       return spawn(inner, raw.capId);
     };
   }
@@ -905,9 +1291,9 @@ function makeReturnDecoder(
     const inner = returns.cap;
     const disposal = inner.disposal as DisposalSpec | undefined;
     return (raw) => {
-      if (!Array.isArray(raw)) throw new IpcError({ code: "protocol_error", message: "expected array" });
+      if (!Array.isArray(raw)) throw new IpcError({ code: "invalid_argument", message: "expected array" });
       const proxies = raw.map((item) => {
-        if (!(item instanceof CapRef)) throw new IpcError({ code: "protocol_error", message: "expected CapRef in array" });
+        if (!(item instanceof CapRef)) throw new IpcError({ code: "invalid_argument", message: "expected CapRef in array" });
         return spawn(inner, item.capId);
       });
       attachArrayDisposal(proxies, disposal);
@@ -917,11 +1303,11 @@ function makeReturnDecoder(
   if (isCapRecord(returns)) {
     const inner = returns.cap;
     return (raw) => {
-      if (!raw || typeof raw !== "object") throw new IpcError({ code: "protocol_error", message: "expected record" });
+      if (!raw || typeof raw !== "object") throw new IpcError({ code: "invalid_argument", message: "expected record" });
       const out: Record<string, unknown> = {};
       for (const k of Object.keys(raw as object)) {
         const item = (raw as Record<string, unknown>)[k];
-        if (!(item instanceof CapRef)) throw new IpcError({ code: "protocol_error", message: "expected CapRef in record" });
+        if (!(item instanceof CapRef)) throw new IpcError({ code: "invalid_argument", message: "expected CapRef in record" });
         out[k] = spawn(inner, item.capId);
       }
       return out;
@@ -932,27 +1318,22 @@ function makeReturnDecoder(
 
 function attachArrayDisposal(arr: unknown[], disposal: DisposalSpec | undefined): void {
   if (!disposal) return;
-  const sym = disposal.async ? Symbol.asyncDispose : Symbol.dispose;
-  (arr as any)[sym] = disposal.async
-    ? () => Promise.all(arr.map((proxy) => {
-        const fn = (proxy as Record<symbol, unknown>)[Symbol.asyncDispose] as (() => Promise<void>) | undefined;
-        return fn ? fn.call(proxy) : undefined;
-      })).then(() => undefined)
-    : () => {
-        for (const proxy of arr) {
-          const fn = (proxy as Record<symbol, unknown>)[Symbol.dispose] as (() => void) | undefined;
-          fn?.call(proxy);
-        }
-      };
+  (arr as any)[Symbol.dispose] = () => {
+    for (const proxy of arr) {
+      const fn = (proxy as Record<symbol, unknown>)[Symbol.dispose] as (() => void) | undefined;
+      fn?.call(proxy);
+    }
+  };
 }
 
 function toStatus(err: unknown): IpcStatus {
   if (err instanceof IpcError) return err.toStatus();
-  if (err instanceof Error) return { code: "unknown", message: err.message };
-  return { code: "unknown", message: String(err) };
+  if (err instanceof Error) return { code: "internal", message: err.message };
+  return { code: "internal", message: String(err) };
 }
 
 interface ClientStreamHandle<T> {
+  capId: number;
   stream: StreamType<T>;
   push(chunk: unknown): void;
   end(): void;
@@ -960,6 +1341,7 @@ interface ClientStreamHandle<T> {
 }
 
 function makeClientStream<T>(
+  capId: number,
   streamId: number,
   cancel: () => void,
   sendCredit: (messages: number) => void
@@ -1033,6 +1415,7 @@ function makeClientStream<T>(
   void streamId;
 
   return {
+    capId,
     stream,
     push(chunk) {
       if (cancelled || ended || failure) return;
