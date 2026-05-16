@@ -262,25 +262,30 @@ describe("end-to-end dispatch", () => {
     expect((caught as { code?: string; details?: { reason?: string } } | null)?.details?.reason).toBe("revoked");
   });
 
-  test("revokedCapIds is LRU-bounded — old revoked cap-ids fall out of the set", async () => {
-    // Inject a cap_revoked frame carrying 4097 cap-ids; the oldest must be evicted by LRU.
-    // Behavioral check: calling on the victim cap-id no longer short-circuits with `revoked`;
-    // the call goes through and the server replies `not_found`.
+  test("revokedCapIds is bounded — at-cap retains victim, over-cap evicts oldest", async () => {
     const [t1, t2] = loopback();
     const client = createConnection({ transport: t1, mode: "native", origin: "test://lru-c" });
     createConnection({ transport: t2, mode: "native", origin: "test://lru-s" });
-    const victimCapId = 999_999;
-    // First frame revokes the victim alone.
-    (t2.send as (f: Frame) => void)({ op: "cap_revoked", capIds: [victimCapId] });
-    await new Promise((r) => setTimeout(r, 5));
-    // Then flood with >REVOKED_CACHE_SIZE (4096) entries — pushes victim out.
-    const flood = Array.from({ length: 4096 }, (_, i) => 100_000 + i);
-    (t2.send as (f: Frame) => void)({ op: "cap_revoked", capIds: flood });
+    const internalSend = (capId: number) =>
+      (client as unknown as { sendCallTyped: (capId: number, m: string, a: unknown, d: unknown) => Promise<unknown> })
+        .sendCallTyped(capId, "ping", undefined, undefined);
+    const send = (capIds: number[]) => (t2.send as (f: Frame) => void)({ op: "cap_revoked", capIds });
+
+    const victim = 999_999;
+    // Boundary case: size = REVOKED_CACHE_SIZE (= 4096) → no eviction; victim still revoked.
+    send([victim]);
+    send(Array.from({ length: 4095 }, (_, i) => 100_000 + i));   // total 4096
     await new Promise((r) => setTimeout(r, 30));
-    // Victim should be evicted — call now reaches server, which has no cap entry → not_found.
-    const internal = client as unknown as { sendCallTyped: (capId: number, m: string, a: unknown, d: unknown) => Promise<unknown> };
-    await expect(internal.sendCallTyped(victimCapId, "ping", undefined, undefined))
-      .rejects.toMatchObject({ code: "not_found" });
+    await expect(internalSend(victim)).rejects.toMatchObject({
+      code: "failed_precondition",
+      details: { reason: "revoked" },
+    });
+
+    // Over-cap: one more entry → size 4097 triggers eviction; victim (oldest) drops out.
+    // Now the call reaches the server (no cap-table entry there) → not_found.
+    send([200_000]);
+    await new Promise((r) => setTimeout(r, 30));
+    await expect(internalSend(victim)).rejects.toMatchObject({ code: "not_found" });
   });
 
   test("ServeHandle is Disposable — `using` auto-unservers at scope exit", async () => {
@@ -324,15 +329,22 @@ describe("end-to-end dispatch", () => {
     });
   });
 
-  test("policy returning non-boolean is surfaced as internal (not silently denied)", async () => {
-    const c = defineCap("test.policyNonBool", { ping: call<void, void>() });
+  test.each([
+    ["undefined (falsy)", () => undefined],
+    ["null (falsy)", () => null],
+    ['"yes" (truthy string)', () => "yes"],
+    ["1 (truthy number)", () => 1],
+    ["new Boolean(false) (truthy object)", () => new Boolean(false)],
+    ["Promise<truthy> resolves to non-boolean", () => Promise.resolve(1)],
+  ])("policy returning %s is surfaced as internal (not silently denied/allowed)", async (_label, ret) => {
+    const c = defineCap(`test.policyNonBool.${_label.replace(/\W/g, "_")}`, { ping: call<void, void>() });
     const [t1, t2] = loopback();
     const client = createConnection({ transport: t1, mode: "native", origin: "test://c" });
     const server = createConnection({
       transport: t2,
       mode: "native",
       origin: "test://s",
-      policy: (() => undefined) as unknown as (n: string, a: Attestation) => boolean,
+      policy: ret as unknown as (n: string, a: Attestation) => boolean,
     });
     server.serve(c, { ping: () => {} });
     const errors: { phase: string; error: Error }[] = [];
