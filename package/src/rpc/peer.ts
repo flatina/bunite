@@ -56,6 +56,8 @@ export const FIRST_USER_TYPE_ID = 128;
 
 export const MAX_CAPS_PER_CONNECTION = 1024;
 export const MAX_IN_FLIGHT_CALLS_PER_CONNECTION = 1024;
+/** Client-side LRU cap for revoked cap-ids — prevents unbounded growth on long-lived connections with frequent plugin churn (e.g. downstream). */
+const REVOKED_CACHE_SIZE = MAX_CAPS_PER_CONNECTION * 4;
 
 const DEFAULT_DEADLINE_GRACE_MS = 500;
 const DEFAULT_STREAM_INITIAL_CREDIT = 32;
@@ -377,6 +379,16 @@ class ConnectionImpl implements Connection {
     }
   }
 
+  private markRevoked(capId: number): void {
+    // Set preserves insertion order — drop oldest when at cap.
+    this.revokedCapIds.add(capId);
+    while (this.revokedCapIds.size > REVOKED_CACHE_SIZE) {
+      const oldest = this.revokedCapIds.values().next().value;
+      if (oldest === undefined) break;
+      this.revokedCapIds.delete(oldest);
+    }
+  }
+
   // ---- serve / unserve / replace ----
 
   serve<C extends CapDef<any, any>>(cap: C, impl: ImplOf<C>, opts?: { ifExists?: IfExists }): ServeHandle {
@@ -608,7 +620,7 @@ class ConnectionImpl implements Connection {
 
   private handleCapRevoked(frame: CapRevokedFrame): void {
     for (const capId of frame.capIds) {
-      this.revokedCapIds.add(capId);
+      this.markRevoked(capId);
       const err = new IpcError({
         code: "failed_precondition",
         message: "cap revoked",
@@ -704,21 +716,28 @@ class ConnectionImpl implements Connection {
     }
 
     if (this.policy) {
+      let allowed: boolean | Promise<boolean>;
       try {
-        const allowed = await this.policy(name, this.attestation);
-        if (!allowed) {
-          this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result: "denied" });
-          return this.sendError(
-            frame.id,
-            "failed_precondition",
-            "policy denied",
-            { reason: "unauthorized" as FailedPreconditionReason }
-          );
-        }
+        allowed = await this.policy(name, this.attestation);
       } catch (err) {
         this.emitObs("error", { phase: "policy", error: err instanceof Error ? err : new Error(String(err)) });
         this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result: "internal" });
         return this.sendError(frame.id, "internal", "policy threw");
+      }
+      if (typeof allowed !== "boolean") {
+        // Non-boolean return = programming bug; surface explicitly (not silent deny).
+        this.emitObs("error", { phase: "policy", error: new Error(`policy must return boolean (got ${typeof allowed})`) });
+        this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result: "internal" });
+        return this.sendError(frame.id, "internal", "policy returned non-boolean");
+      }
+      if (!allowed) {
+        this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result: "denied" });
+        return this.sendError(
+          frame.id,
+          "failed_precondition",
+          "policy denied",
+          { reason: "unauthorized" as FailedPreconditionReason }
+        );
       }
     }
 

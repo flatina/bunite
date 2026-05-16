@@ -3,7 +3,7 @@ import {
   call, stream, cap, defineCap, defineSchema,
   createConnection,
   type ImplOf,
-  type Connection, type Transport, type Frame,
+  type Connection, type Transport, type Frame, type Attestation,
   IpcError,
 } from "../package/src/rpc/index";
 import { Stream } from "../package/src/rpc/stream";
@@ -262,6 +262,27 @@ describe("end-to-end dispatch", () => {
     expect((caught as { code?: string; details?: { reason?: string } } | null)?.details?.reason).toBe("revoked");
   });
 
+  test("revokedCapIds is LRU-bounded — old revoked cap-ids fall out of the set", async () => {
+    // Inject a cap_revoked frame carrying 4097 cap-ids; the oldest must be evicted by LRU.
+    // Behavioral check: calling on the victim cap-id no longer short-circuits with `revoked`;
+    // the call goes through and the server replies `not_found`.
+    const [t1, t2] = loopback();
+    const client = createConnection({ transport: t1, mode: "native", origin: "test://lru-c" });
+    createConnection({ transport: t2, mode: "native", origin: "test://lru-s" });
+    const victimCapId = 999_999;
+    // First frame revokes the victim alone.
+    (t2.send as (f: Frame) => void)({ op: "cap_revoked", capIds: [victimCapId] });
+    await new Promise((r) => setTimeout(r, 5));
+    // Then flood with >REVOKED_CACHE_SIZE (4096) entries — pushes victim out.
+    const flood = Array.from({ length: 4096 }, (_, i) => 100_000 + i);
+    (t2.send as (f: Frame) => void)({ op: "cap_revoked", capIds: flood });
+    await new Promise((r) => setTimeout(r, 30));
+    // Victim should be evicted — call now reaches server, which has no cap entry → not_found.
+    const internal = client as unknown as { sendCallTyped: (capId: number, m: string, a: unknown, d: unknown) => Promise<unknown> };
+    await expect(internal.sendCallTyped(victimCapId, "ping", undefined, undefined))
+      .rejects.toMatchObject({ code: "not_found" });
+  });
+
   test("ServeHandle is Disposable — `using` auto-unservers at scope exit", async () => {
     const c = defineCap("test.using", { ping: call<void, { ok: true }>() });
     const { client, server } = pair();
@@ -301,6 +322,26 @@ describe("end-to-end dispatch", () => {
       code: "failed_precondition",
       details: { reason: "revoked" },
     });
+  });
+
+  test("policy returning non-boolean is surfaced as internal (not silently denied)", async () => {
+    const c = defineCap("test.policyNonBool", { ping: call<void, void>() });
+    const [t1, t2] = loopback();
+    const client = createConnection({ transport: t1, mode: "native", origin: "test://c" });
+    const server = createConnection({
+      transport: t2,
+      mode: "native",
+      origin: "test://s",
+      policy: (() => undefined) as unknown as (n: string, a: Attestation) => boolean,
+    });
+    server.serve(c, { ping: () => {} });
+    const errors: { phase: string; error: Error }[] = [];
+    const bootstraps: { result: string }[] = [];
+    server.on("error", (e) => errors.push(e));
+    server.on("bootstrap", (e) => bootstraps.push({ result: e.result }));
+    await expect(client.bootstrap(c)).rejects.toMatchObject({ code: "internal" });
+    expect(errors.some((e) => e.phase === "policy")).toBe(true);
+    expect(bootstraps.some((b) => b.result === "internal")).toBe(true);
   });
 
   test("policy denies bootstrap", async () => {
