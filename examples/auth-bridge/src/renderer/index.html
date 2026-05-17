@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>auth-bridge</title>
+  <style>
+    body { font: 14px/1.5 system-ui; max-width: 480px; margin: 32px auto; padding: 0 16px; background: #111827; color: #e5e7eb; }
+    h1 { font-size: 16px; margin-bottom: 16px; }
+    form, .row { display: flex; gap: 8px; margin-bottom: 12px; }
+    input { flex: 1; padding: 8px 12px; border: 1px solid #374151; background: #1f2937; color: #e5e7eb; border-radius: 4px; }
+    button { padding: 8px 16px; background: #2563eb; color: white; border: 0; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #1d4ed8; }
+    button.alt { background: #374151; }
+    button.alt:hover { background: #4b5563; }
+    .info { color: #9ca3af; font-size: 12px; margin-bottom: 16px; }
+    .panel { padding: 16px; background: #1f2937; border-radius: 6px; margin-top: 16px; }
+    .count { font-size: 32px; font-weight: 600; color: #fbbf24; text-align: center; margin: 12px 0; }
+    .err { color: #ef4444; font-size: 12px; min-height: 1.5em; }
+  </style>
+</head>
+<body>
+  <h1>auth-bridge</h1>
+  <p class="info">Choose a trust path. Web mode uses a demo token (<code>t-alice</code> or <code>t-bob</code>). Native mode auto-authenticates via bunite attestation. Resume mode reuses a previously-issued token.</p>
+
+  <form id="web-form">
+    <input id="web-token" placeholder="web token (try t-alice)" required />
+    <button type="submit">createWebSession</button>
+  </form>
+
+  <div class="row">
+    <button id="native-btn" class="alt">createDesktopSession</button>
+    <button id="resume-btn" class="alt">resumeSession (re-uses last token)</button>
+  </div>
+
+  <p class="err" id="err"></p>
+
+  <div class="panel" id="panel" hidden>
+    <div>signed in as <b id="whoami"></b> <small>(via <span id="source"></span>)</small></div>
+    <div class="count" id="count">0</div>
+    <button id="bump">bump</button>
+    <button id="signout" class="alt">sign out</button>
+  </div>
+
+  <script type="module">/*BUNDLE*/</script>
+</body>
+</html>

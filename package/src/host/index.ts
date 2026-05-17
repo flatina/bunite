@@ -8,7 +8,7 @@ import { acquireSingleInstanceLock, type SingleInstanceLock } from "./core/singl
 import { log, type LogLevel } from "./log";
 
 export { serveWeb } from "./serveWeb";
-export type { WebRpcMount } from "./serveWeb";
+export type { WebRpcMount, WsData, ServeWebOptions } from "./serveWeb";
 
 export {
   acquireSingleInstanceLock,

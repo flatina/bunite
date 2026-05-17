@@ -1,0 +1,17 @@
+{
+  "name": "auth-bridge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:web": "bun src/web.ts",
+    "dev:native": "bun src/native.ts",
+    "typecheck": "bun x tsc -p tsconfig.json --noEmit && bun x tsc -p src/renderer/tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "bunite-core": "workspace:*",
+    "bunite-native-win-x64": "workspace:*"
+  },
+  "devDependencies": {
+    "bunite-dev": "workspace:*"
+  }
+}

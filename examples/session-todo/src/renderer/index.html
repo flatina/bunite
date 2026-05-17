@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Session Todo</title>
+  <style>/*STYLES*/</style>
+</head>
+<body>
+  <header>
+    <h1>Session Todo</h1>
+    <div class="user" hidden id="user-bar">
+      <span id="whoami"></span>
+      <a href="/logout">sign out</a>
+    </div>
+  </header>
+
+  <section id="login" hidden>
+    <h2>Sign in</h2>
+    <p>Anyone, no password — this is a demo. Sessions are keyed on the username; reuse it across tabs.</p>
+    <form method="POST" action="/login">
+      <input name="user" placeholder="pick a name" autofocus required />
+      <button type="submit">enter</button>
+    </form>
+  </section>
+
+  <section id="app" hidden>
+    <div class="add-row">
+      <input id="title" placeholder="what needs doing?" />
+      <button id="add">add</button>
+    </div>
+    <div id="list"></div>
+  </section>
+
+  <script type="module">/*BUNDLE*/</script>
+</body>
+</html>

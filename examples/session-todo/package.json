@@ -1,0 +1,12 @@
+{
+  "name": "session-todo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun src/main.ts",
+    "typecheck": "bun x tsc -p tsconfig.json --noEmit && bun x tsc -p src/renderer/tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "bunite-core": "workspace:*"
+  }
+}
