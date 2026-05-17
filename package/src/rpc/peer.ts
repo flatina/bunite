@@ -191,6 +191,8 @@ export interface Connection {
   releaseRef(proxy: unknown): void;
   on<K extends keyof ConnectionEvents>(event: K, handler: (e: ConnectionEvents[K]) => void): () => void;
   onClose(handler: () => void): () => void;
+  /** Tear down the connection — rejects pending, fires onClose, closes transport. Reliable signal for application lifecycle. */
+  shutdown(reason?: string): void;
   readonly closed: boolean;
 }
 
@@ -851,7 +853,6 @@ class ConnectionImpl implements Connection {
       attestation: this.attestation,
       signal: ctrl.signal,
       deadline: frame.meta?.deadlineMs,
-      context: frame.meta?.context,
       _ctrl: ctrl,
       exportCap: (capDef, impl) => this.exportCap(capDef, impl),
     };
@@ -1203,7 +1204,7 @@ class ConnectionImpl implements Connection {
     try { this.sendDrop(capId); } catch { /* swallow */ }
   }
 
-  shutdown(reason: string): void {
+  shutdown(reason: string = "shutdown"): void {
     if (this.closed_) return;
     this.closed_ = true;
     for (const pending of this.pending.values()) {

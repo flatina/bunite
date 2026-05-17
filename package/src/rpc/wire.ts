@@ -15,7 +15,6 @@ export type Target = { kind: "cap"; id: u32 };
 export interface CallMeta {
   parentCallId?: u53;
   deadlineMs?: u32;
-  context?: Record<string, string>;
 }
 
 export type StreamEvent =

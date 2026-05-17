@@ -168,7 +168,6 @@ export interface CallCtx {
   attestation: Attestation;
   signal: AbortSignal;
   deadline?: number;
-  context?: Record<string, string>;
   exportCap<C extends CapDef<any, any>>(capDef: C, impl: ImplOf<C>): ExportedCap<C>;
 }
 
