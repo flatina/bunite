@@ -2,16 +2,20 @@ import { CString, dlopen, FFIType, JSCallback, ptr, type Pointer } from "bun:ffi
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { buniteEventEmitter } from "./events/eventEmitter";
-import { resolveNativeArtifacts, type ResolvedNativeArtifacts } from "./paths";
+import { resolveNativeArtifacts, type ResolvedNativeArtifacts, type WindowsEngine } from "./paths";
+import { resolvePackageRoot } from "./paths";
 import { log } from "./log";
 
 export type NativeBootstrapOptions = {
   hideConsole?: boolean;
   popupBlocking?: boolean;
+  /** Windows-only engine selection. Default "webview2"; "cef" requires bunite-cef-win-x64. */
+  engine?: WindowsEngine;
   /**
    * Engine-specific opaque config. Each adapter parses its own keys.
    * - CEF (Windows): Chromium command-line flags as `Record<flag, value | true>`.
-   * - WKWebView, WebKitGTK: defined per adapter; refer to the adapter's bootstrap docs.
+   * - WebView2 (Windows): `{ userDataFolder?, additionalBrowserArguments?, language? }`.
+   * - WKWebView, WebKitGTK: defined per adapter.
    */
   engineFlags?: Record<string, string | boolean>;
 };
@@ -356,7 +360,8 @@ export function toCString(value: string): CStringPointer {
 }
 
 function applyEnvironment(artifacts: ResolvedNativeArtifacts) {
-  // CEF needs engine dir on PATH (libcef.dll) and ICU_DATA pointing at resources. Null for mac/linux.
+  // CEF needs engine dir on PATH (libcef.dll) and ICU_DATA pointing at resources.
+  // WebView2 needs the directory containing WebView2Loader.dll on PATH.
   const engineBinaryDir = artifacts.cefDir && existsSync(join(artifacts.cefDir, "Release", "libcef.dll"))
     ? join(artifacts.cefDir, "Release")
     : artifacts.cefDir;
@@ -367,10 +372,18 @@ function applyEnvironment(artifacts: ResolvedNativeArtifacts) {
   if (engineResourceDir && !process.env.ICU_DATA) {
     process.env.ICU_DATA = engineResourceDir;
   }
-  if (engineBinaryDir) {
+
+  const pathDirs: string[] = [];
+  if (engineBinaryDir) pathDirs.push(engineBinaryDir);
+  if (artifacts.engine === "webview2" && artifacts.nativeLibPath) {
+    const dir = join(artifacts.nativeLibPath, "..");
+    if (existsSync(join(dir, "WebView2Loader.dll"))) pathDirs.push(dir);
+  }
+  if (pathDirs.length > 0) {
     const pathEntries = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
-    if (!pathEntries.includes(engineBinaryDir)) {
-      process.env.PATH = [engineBinaryDir, ...pathEntries].join(delimiter);
+    const newDirs = pathDirs.filter((d) => !pathEntries.includes(d));
+    if (newDirs.length > 0) {
+      process.env.PATH = [...newDirs, ...pathEntries].join(delimiter);
     }
   }
 }
@@ -575,18 +588,33 @@ export async function initNativeRuntime(
     return state;
   }
 
-  const artifacts = resolveNativeArtifacts();
+  const artifacts = resolveNativeArtifacts(options.engine);
   const hasNativeArtifacts = Boolean(
     artifacts.nativeLibPath && existsSync(artifacts.nativeLibPath)
   );
 
   applyEnvironment(artifacts);
 
+  // Migration nudge: pre-existing CEF deps + unset engine ⇒ default flipped to WebView2.
+  if (
+    process.platform === "win32" &&
+    options.engine === undefined &&
+    resolvePackageRoot("bunite-cef-win-x64") != null
+  ) {
+    log.warn(
+      "[bunite] Detected bunite-cef-win-x64. Windows default engine is now \"webview2\" — " +
+      "this app is currently running on WebView2. " +
+      "To stay on CEF: pass engine: \"cef\" to AppRuntime. " +
+      "To accept the new default: drop bunite-cef-win-x64 from dependencies."
+    );
+  }
+
   if (!hasNativeArtifacts) {
+    const engineSuffix = artifacts.engine === "cef" ? " (engine=cef requires bunite-cef-win-x64)" : "";
     throw new Error(
       "bunite: native runtime not found. Install the platform package " +
-      `(bunite-native-${process.platform === "win32" ? "win" : process.platform === "darwin" ? "mac" : "linux"}-<arch>) ` +
-      "or set BUNITE_CEF_DIR to a CEF runtime directory."
+      `(bunite-native-${process.platform === "win32" ? "win" : process.platform === "darwin" ? "mac" : "linux"}-<arch>)` +
+      engineSuffix + "."
     );
   }
 

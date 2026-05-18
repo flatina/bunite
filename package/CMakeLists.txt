@@ -164,6 +164,71 @@ if(WIN32)
   set_target_properties(process_helper PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${BUNITE_OUTPUT_DIR}"
   )
+
+  # ---- WebView2 adapter (BuniteNativeWebView2) --------------------------
+  # Skeleton (Stage 1); behavior filled in by Stage 2-8. Built only when the
+  # WebView2 SDK is present (run `bun run setup:webview2` first).
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vendors/webview2/include/WebView2.h")
+    set(WEBVIEW2_SDK "${CMAKE_CURRENT_SOURCE_DIR}/vendors/webview2")
+
+    add_library(BuniteNativeWebView2 SHARED
+      src/native/win-webview2/bunite_webview2_ffi.cpp
+      src/native/win-webview2/webview2_runtime.cpp
+      src/native/win-webview2/webview2_appres.cpp
+      src/native/win-webview2/webview2_utils.cpp
+    )
+    target_include_directories(BuniteNativeWebView2 PRIVATE
+      src/native/shared
+      "${WEBVIEW2_SDK}/include"
+    )
+    target_compile_definitions(BuniteNativeWebView2 PRIVATE
+      NOMINMAX
+      WIN32_LEAN_AND_MEAN
+      _CRT_SECURE_NO_WARNINGS
+      UNICODE
+      _UNICODE
+    )
+    target_link_libraries(BuniteNativeWebView2 PRIVATE
+      "${WEBVIEW2_SDK}/lib-x64/WebView2LoaderStatic.lib"
+      user32.lib
+      advapi32.lib
+      shell32.lib
+      ole32.lib
+      version.lib
+    )
+    set_target_properties(BuniteNativeWebView2 PROPERTIES
+      OUTPUT_NAME "libBuniteNativeWebView2"
+      RUNTIME_OUTPUT_DIRECTORY_RELEASE "${BUNITE_OUTPUT_DIR}"
+      LIBRARY_OUTPUT_DIRECTORY_RELEASE "${BUNITE_OUTPUT_DIR}"
+      ARCHIVE_OUTPUT_DIRECTORY_RELEASE "${BUNITE_OUTPUT_DIR}"
+    )
+
+    # Stage 0 spike — kept compilable as a side artifact for repeat measurement.
+    add_executable(webview2_spike
+      src/native/win-webview2/spike/main.cpp
+    )
+    target_include_directories(webview2_spike PRIVATE
+      "${WEBVIEW2_SDK}/include"
+    )
+    target_compile_definitions(webview2_spike PRIVATE
+      NOMINMAX
+      WIN32_LEAN_AND_MEAN
+      _CRT_SECURE_NO_WARNINGS
+      UNICODE
+      _UNICODE
+    )
+    target_link_libraries(webview2_spike PRIVATE
+      "${WEBVIEW2_SDK}/lib-x64/WebView2LoaderStatic.lib"
+      user32.lib
+      advapi32.lib
+      shell32.lib
+      ole32.lib
+      version.lib
+    )
+    set_target_properties(webview2_spike PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY_RELEASE "${BUNITE_OUTPUT_DIR}"
+    )
+  endif()
 elseif(APPLE)
   enable_language(OBJCXX)
 

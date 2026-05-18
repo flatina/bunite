@@ -6,6 +6,8 @@
   "cpu": ["x64"],
   "files": [
     "libBuniteNative.dll",
-    "process_helper.exe"
+    "process_helper.exe",
+    "libBuniteNativeWebView2.dll",
+    "WebView2Loader.dll"
   ]
 }

@@ -6,6 +6,8 @@ import { CEF_VERSION } from "./cefVersion";
 
 const require = createRequire(import.meta.url);
 
+export type WindowsEngine = "webview2" | "cef";
+
 export type ResolvedNativeArtifacts = {
   packageRoot: string;
   source: "optional-package" | "local-build" | "missing";
@@ -14,7 +16,16 @@ export type ResolvedNativeArtifacts = {
   nativeLibPath: string | null;
   /** CEF framework dir containing libcef.dll. Null on macOS/Linux (system framework). */
   cefDir: string | null;
+  /** Selected Windows engine. Undefined on mac/linux. */
+  engine?: WindowsEngine;
 };
+
+function nativeLibBasename(engine: WindowsEngine | undefined): string {
+  if (PLATFORM_TAG === "win" && engine === "webview2") {
+    return `libBuniteNativeWebView2${NATIVE_LIB_EXT}`;
+  }
+  return `libBuniteNative${NATIVE_LIB_EXT}`;
+}
 
 export function resolvePackageRoot(packageName: string): string | null {
   try {
@@ -106,12 +117,14 @@ export function resolveDefaultAppResRoot(): string | null {
   return existsSync(candidate) ? candidate : null;
 }
 
-export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
+export function resolveNativeArtifacts(engine?: WindowsEngine): ResolvedNativeArtifacts {
   const exeDir = getBaseDir();
+  const resolvedEngine: WindowsEngine | undefined =
+    PLATFORM_TAG === "win" ? (engine ?? "webview2") : undefined;
+  const libName = nativeLibBasename(resolvedEngine);
 
-  // 1. Entry-script-dir / executable-relative — covers both `bun dist/main.js`
-  //    and a compiled standalone binary, where artifacts ship alongside the entry.
-  const exeNativeLib = join(exeDir, `libBuniteNative${NATIVE_LIB_EXT}`);
+  // 1. Entry-script-dir / executable-relative.
+  const exeNativeLib = join(exeDir, libName);
   if (existsSync(exeNativeLib)) {
     return {
       packageRoot: exeDir,
@@ -119,21 +132,22 @@ export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
       nativePackageName: null,
       enginePackageName: null,
       nativeLibPath: exeNativeLib,
-      cefDir: resolveCefDir([exeDir])
+      cefDir: resolvedEngine === "cef" ? resolveCefDir([exeDir]) : null,
+      engine: resolvedEngine
     };
   }
 
   const packageRoot = resolveBunitePackageRoot();
 
-  // 2. Optional npm packages (bunite-native-*, bunite-cef-* on Windows only)
+  // 2. Optional npm packages.
   const nativePackageName = `bunite-native-${PLATFORM_TAG}-${ARCH}`;
-  const enginePackageName = PLATFORM_TAG === "win" ? `bunite-cef-${PLATFORM_TAG}-${ARCH}` : null;
+  const enginePackageName = PLATFORM_TAG === "win" && resolvedEngine === "cef"
+    ? `bunite-cef-${PLATFORM_TAG}-${ARCH}`
+    : null;
   const nativePackageRoot = resolvePackageRoot(nativePackageName);
   const enginePackageRoot = enginePackageName ? resolvePackageRoot(enginePackageName) : null;
 
-  const packagedNativeLibPath = nativePackageRoot
-    ? join(nativePackageRoot, `libBuniteNative${NATIVE_LIB_EXT}`)
-    : null;
+  const packagedNativeLibPath = nativePackageRoot ? join(nativePackageRoot, libName) : null;
   const packagedEngineDir = enginePackageRoot ?? null;
 
   if (packagedNativeLibPath && existsSync(packagedNativeLibPath)) {
@@ -143,16 +157,19 @@ export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
       nativePackageName,
       enginePackageName: packagedEngineDir && existsSync(packagedEngineDir) ? enginePackageName : null,
       nativeLibPath: packagedNativeLibPath,
-      cefDir: (packagedEngineDir && existsSync(packagedEngineDir))
-        ? packagedEngineDir
-        : resolveCefDir([nativePackageRoot, packageRoot].filter(Boolean) as string[])
+      cefDir: resolvedEngine === "cef"
+        ? ((packagedEngineDir && existsSync(packagedEngineDir))
+            ? packagedEngineDir
+            : resolveCefDir([nativePackageRoot, packageRoot].filter(Boolean) as string[]))
+        : null,
+      engine: resolvedEngine
     };
   }
 
-  // 3. Local build (development)
+  // 3. Local build (development).
   if (packageRoot) {
     const localBuildRoot = join(packageRoot, "native-build", `${PLATFORM_TAG}-${ARCH}`);
-    const directLib = join(localBuildRoot, `libBuniteNative${NATIVE_LIB_EXT}`);
+    const directLib = join(localBuildRoot, libName);
 
     if (existsSync(directLib)) {
       return {
@@ -161,12 +178,12 @@ export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
         nativePackageName: null,
         enginePackageName: null,
         nativeLibPath: directLib,
-        cefDir: resolveCefDir([localBuildRoot])
+        cefDir: resolvedEngine === "cef" ? resolveCefDir([localBuildRoot]) : null,
+        engine: resolvedEngine
       };
     }
 
-    const releaseLib = join(localBuildRoot, "Release", `libBuniteNative${NATIVE_LIB_EXT}`);
-
+    const releaseLib = join(localBuildRoot, "Release", libName);
     if (existsSync(releaseLib)) {
       return {
         packageRoot,
@@ -174,7 +191,8 @@ export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
         nativePackageName: null,
         enginePackageName: null,
         nativeLibPath: releaseLib,
-        cefDir: resolveCefDir([localBuildRoot])
+        cefDir: resolvedEngine === "cef" ? resolveCefDir([localBuildRoot]) : null,
+        engine: resolvedEngine
       };
     }
   }
@@ -185,6 +203,7 @@ export function resolveNativeArtifacts(): ResolvedNativeArtifacts {
     nativePackageName: nativePackageRoot ? nativePackageName : null,
     enginePackageName: enginePackageRoot ? enginePackageName : null,
     nativeLibPath: null,
-    cefDir: null
+    cefDir: null,
+    engine: resolvedEngine
   };
 }

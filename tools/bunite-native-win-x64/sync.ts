@@ -7,7 +7,11 @@ import { join } from "node:path";
 const pkgDir = import.meta.dirname;
 const nativeBuild = join(pkgDir, "..", "..", "package", "native-build", "win-x64");
 
-const files = ["libBuniteNative.dll", "process_helper.exe"];
+const files = [
+  "libBuniteNative.dll",
+  "process_helper.exe",
+  "libBuniteNativeWebView2.dll",
+];
 
 for (const f of files) {
   const src = join(nativeBuild, f);
@@ -18,4 +22,12 @@ for (const f of files) {
   cpSync(src, join(pkgDir, f));
   console.log(`  ${f}`);
 }
+
+// WebView2Loader.dll is vendored alongside the SDK; copy from there if available.
+const loaderSrc = join(pkgDir, "..", "..", "package", "vendors", "webview2", "WebView2Loader.dll");
+if (existsSync(loaderSrc)) {
+  cpSync(loaderSrc, join(pkgDir, "WebView2Loader.dll"));
+  console.log("  WebView2Loader.dll");
+}
+
 console.log("done");

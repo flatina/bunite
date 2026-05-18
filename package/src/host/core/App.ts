@@ -88,9 +88,15 @@ export class AppRuntime {
       process.env.BUNITE_USER_DATA_DIR = join(appDataDir, name);
     }
 
+    const envEngine = process.env.BUNITE_ENGINE;
+    const engineFromEnv = envEngine === "cef" || envEngine === "webview2"
+      ? envEngine
+      : undefined;
+
     await initNativeRuntime({
       hideConsole: options.hideConsole,
       popupBlocking: options.popupBlocking,
+      engine: options.engine ?? engineFromEnv,
       engineFlags: options.engineFlags
     });
 
@@ -126,11 +132,21 @@ export class AppRuntime {
   }
 
   run() {
+    if (!getNativeRuntimeState()) {
+      throw new Error("AppRuntime.run() called before await app.ready completed");
+    }
     const lib = getNativeLibrary();
+    // CEF: bunite_run_loop blocks here. WebView2 / mac / linux: returns immediately
+    // (cooperative pump kicks in below).
     lib?.symbols.bunite_run_loop();
 
-    if (process.platform === "darwin" || process.platform === "linux") {
-      // mac/linux: cooperative pump on Bun's main thread (NSApp/GTK first-thread constraint).
+    const engine = getNativeEngineName();
+    const cooperative =
+      process.platform === "darwin" ||
+      process.platform === "linux" ||
+      (process.platform === "win32" && engine !== "cef");
+
+    if (cooperative) {
       this.pumpActive = true;
       const pump = () => {
         if (!this.pumpActive) return;
@@ -139,8 +155,6 @@ export class AppRuntime {
       };
       pump();
     }
-    // Windows: native UI thread is separate. Bun's loop stays alive via the RPC
-    // listening socket started by ensureRpcServer() in the constructor.
   }
 
   quit(code = 0) {

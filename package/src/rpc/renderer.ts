@@ -10,6 +10,15 @@ import {
   type WebSocketLike,
 } from "./index";
 
+/** Host-provided web globals — set by the page that owns the main Connection so
+ * extension bundles (each carrying its own bunite-core copy) share one ws conn
+ * instead of opening their own. Desktop has the same property via the CEF
+ * preload-injected `window.host.*`; this is the web equivalent. */
+export interface BuniteWebGlobal {
+  /** Shared Connection. ensureWebConnection() prefers this over opening a new ws. */
+  webConnection?: Connection;
+}
+
 declare global {
   interface Window {
     host?: {
@@ -20,6 +29,7 @@ declare global {
       /** Full Connection for renderer-as-server (serve / serveAll / unserve / replace / on). */
       getConnection(): Promise<Connection>;
     };
+    __bunite?: BuniteWebGlobal;
   }
 }
 
@@ -35,6 +45,16 @@ function isNative(): boolean {
 
 function ensureWebConnection(path = "/rpc"): Promise<Connection> {
   if (_webConn) return Promise.resolve(_webConn);
+  // Host-provided shared Connection — cross-bundle reachability for renderer
+  // ecosystems (e.g. extension hosts) that bundle bunite-core 0-externals per
+  // plugin. Page-author trust applies; bunite policy/attestation still gates.
+  if (typeof window !== "undefined") {
+    const shared = window.__bunite?.webConnection;
+    if (shared && !shared.closed) {
+      _webConn = shared;
+      return Promise.resolve(shared);
+    }
+  }
   if (_webConnPromise) return _webConnPromise;
   const attempt = (async () => {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
