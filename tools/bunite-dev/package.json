@@ -1,11 +1,12 @@
 {
   "name": "bunite-dev",
   "description": "Build tooling for bunite apps",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "type": "module",
   "bin": {
     "bunite-build": "scripts/build.ts",
-    "bunite-setup-cef": "scripts/setup-cef.ts"
+    "bunite-setup-cef": "scripts/setup-cef.ts",
+    "bunite-setup-webview2-sdk": "scripts/setup-webview2-sdk.ts"
   },
   "files": [
     "scripts"
