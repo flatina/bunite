@@ -6,9 +6,6 @@ import {
 } from "./SurfaceRegistry";
 import { SurfaceCap, type ImplOf, IpcError } from "../../rpc/index";
 import { Stream } from "../../rpc/stream";
-import { encodeModifiers, resolveKey } from "./inputDispatch";
-
-const BUTTON_CODE: Record<"left" | "middle" | "right", 0 | 1 | 2> = { left: 0, middle: 1, right: 2 };
 
 function applyHostOffset(hostView: BrowserView, x: number, y: number) {
   return { x: x + hostView.frame.x, y: y + hostView.frame.y };
@@ -154,10 +151,10 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       return record.view.evaluate(script);
     },
 
-    click: ({ surfaceId, x, y, button = "left", clickCount = 1, modifiers }) => {
+    click: ({ surfaceId, ...args }) => {
       const record = ownedSurface(surfaceId);
       if (!record) return;
-      record.view.click(x, y, BUTTON_CODE[button], clickCount, encodeModifiers(modifiers));
+      record.view.click(args);
     },
 
     type: ({ surfaceId, text }) => {
@@ -169,14 +166,13 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
     press: ({ surfaceId, key, modifiers }) => {
       const record = ownedSurface(surfaceId);
       if (!record) return;
-      const r = resolveKey(key);
-      record.view.press(r.windowsVkCode, r.macKeyCode, r.key, r.code, r.character, encodeModifiers(modifiers));
+      record.view.press(key, modifiers);
     },
 
-    scroll: ({ surfaceId, dx, dy, x = 0, y = 0, modifiers }) => {
+    scroll: ({ surfaceId, ...args }) => {
       const record = ownedSurface(surfaceId);
       if (!record) return;
-      record.view.scroll(dx, dy, x, y, encodeModifiers(modifiers));
+      record.view.scroll(args);
     },
 
     screenshot: async ({ surfaceId, format = "png", quality = 90 }) => {

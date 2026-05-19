@@ -8,7 +8,8 @@ import {
   type Connection,
   type BytesPipe,
 } from "../../rpc/index";
-import type { EvaluateResult, SurfaceCapabilities, ScreenshotResult } from "../../rpc/framework";
+import type { EvaluateResult, SurfaceCapabilities, ScreenshotResult, Modifier } from "../../rpc/framework";
+import { encodeModifiers, resolveKey } from "./inputDispatch";
 import { createEncryptedPipe } from "../encryptedPipe";
 import {
   ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady,
@@ -351,9 +352,20 @@ export class BrowserView {
     return decodeCapabilityBits(bits);
   }
 
-  click(x: number, y: number, button: 0 | 1 | 2, clickCount: number, modifiers: number) {
+  // High-level automation API — same shape as `SurfaceCap` RPC + element
+  // `send*` methods. Modifier translation + key resolution happen inside;
+  // callers never touch the FFI int contract.
+  click(args: {
+    x: number; y: number;
+    button?: "left" | "middle" | "right";
+    clickCount?: number;
+    modifiers?: Modifier[];
+  }) {
     if (!this.nativeAttached) return;
-    getNativeLibrary()?.symbols.bunite_view_click(this.id, x, y, button, clickCount, modifiers);
+    const button = args.button === "right" ? 2 : args.button === "middle" ? 1 : 0;
+    getNativeLibrary()?.symbols.bunite_view_click(
+      this.id, args.x, args.y, button, args.clickCount ?? 1, encodeModifiers(args.modifiers)
+    );
   }
 
   type(text: string) {
@@ -361,18 +373,24 @@ export class BrowserView {
     getNativeLibrary()?.symbols.bunite_view_type(this.id, toCString(text));
   }
 
-  press(windowsVkCode: number, macKeyCode: number, key: string, code: string, character: string, modifiers: number) {
+  press(key: string, modifiers?: Modifier[]) {
     if (!this.nativeAttached) return;
+    const r = resolveKey(key);
     getNativeLibrary()?.symbols.bunite_view_press(
-      this.id, windowsVkCode, macKeyCode,
-      toCString(key), toCString(code), toCString(character),
-      modifiers
+      this.id, r.windowsVkCode, r.macKeyCode,
+      toCString(r.key), toCString(r.code), toCString(r.character),
+      encodeModifiers(modifiers)
     );
   }
 
-  scroll(dx: number, dy: number, x: number, y: number, modifiers: number) {
+  scroll(args: {
+    dx: number; dy: number; x?: number; y?: number;
+    modifiers?: Modifier[];
+  }) {
     if (!this.nativeAttached) return;
-    getNativeLibrary()?.symbols.bunite_view_scroll(this.id, dx, dy, x, y, modifiers);
+    getNativeLibrary()?.symbols.bunite_view_scroll(
+      this.id, args.dx, args.dy, args.x ?? 0, args.y ?? 0, encodeModifiers(args.modifiers)
+    );
   }
 
   screenshot(format: "png" | "jpeg", quality: number): Promise<ScreenshotResult> {
