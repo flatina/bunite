@@ -232,15 +232,26 @@ COREWEBVIEW2_PERMISSION_STATE buniteStateToWebView2(uint32_t state) {
   }
 }
 
+bool shouldAlwaysAllowNavigationUrl(const std::string& url) {
+  return url == "about:blank" ||
+         url.rfind("appres://app.internal/internal/", 0) == 0;
+}
+
+// Same semantics as CEF / mac / linux: `^` prefix = block, last-match-wins,
+// default-allow. The shared shouldAlwaysAllowNavigationUrl whitelist guards
+// about:blank + appres internal routes from being denied by user rules.
 bool shouldAllowNavigation(const ViewHost* view, const std::string& url) {
-  if (!view || view->navigation_rules.empty()) return true;
-  for (const auto& rule : view->navigation_rules) {
-    if (rule.empty()) continue;
-    bool allow = (rule[0] != '!');
-    const std::string& pat = allow ? rule : rule.substr(1);
-    if (globMatchCaseInsensitive(pat, url)) return allow;
+  if (!view || shouldAlwaysAllowNavigationUrl(url) || view->navigation_rules.empty()) {
+    return true;
   }
-  return true;
+  bool allowed = true;
+  for (const auto& raw : view->navigation_rules) {
+    const bool block = !raw.empty() && raw.front() == '^';
+    const std::string pattern = block ? raw.substr(1) : raw;
+    if (pattern.empty()) continue;
+    if (globMatchCaseInsensitive(pattern, url)) allowed = !block;
+  }
+  return allowed;
 }
 
 }  // namespace bunite_webview2

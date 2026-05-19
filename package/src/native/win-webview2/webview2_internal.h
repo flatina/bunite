@@ -205,6 +205,7 @@ std::wstring exeDir();
 uint32_t permissionKindToBuniteBit(COREWEBVIEW2_PERMISSION_KIND kind);
 COREWEBVIEW2_PERMISSION_STATE buniteStateToWebView2(uint32_t state);
 
+bool shouldAlwaysAllowNavigationUrl(const std::string& url);
 bool shouldAllowNavigation(const ViewHost* view, const std::string& url);
 
 }  // namespace bunite_webview2

@@ -769,7 +769,8 @@ static void attachControllerCallbacks(ViewHost* view) {
   // Token reuse OK — controller->Close() releases all add_* handlers.
   EventRegistrationToken tok;
 
-  // NavigationStarting — enforce navigation rules, emit "will-navigate" event.
+  // NavigationStarting — emit "will-navigate" (parity with CEF/mac/linux,
+  // which fire regardless of allow), then cancel if nav rules say block.
   view->webview->add_NavigationStarting(
       Callback<ICoreWebView2NavigationStartingEventHandler>(
           [lifetime, view_id](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
@@ -780,11 +781,8 @@ static void attachControllerCallbacks(ViewHost* view) {
             args->get_Uri(&uri_raw);
             std::string url = wideToUtf8(uri_raw);
             if (uri_raw) CoTaskMemFree(uri_raw);
-            if (!shouldAllowNavigation(v, url)) {
-              args->put_Cancel(TRUE);
-              return S_OK;
-            }
             emitWebviewEvent(v->id, "will-navigate", url);
+            if (!shouldAllowNavigation(v, url)) args->put_Cancel(TRUE);
             return S_OK;
           }).Get(),
       &tok);
