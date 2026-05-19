@@ -273,13 +273,71 @@ extern "C" BUNITE_EXPORT void bunite_view_execute_javascript(uint32_t view_id, c
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_evaluate(uint32_t view_id, uint32_t request_id, const char* /*script*/) {
-  // Stage A: macOS evaluate not yet implemented. Report not_supported so the
-  // JS side's whenReady() resolves with a structured envelope.
-  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
-                        ",\"ok\":false,\"code\":\"not_supported\","
-                        "\"message\":\"macOS evaluate not implemented (Stage A: Windows only)\"}";
-  bunite_mac::emitWebviewEvent(view_id, "evaluate-result", payload);
+extern "C" BUNITE_EXPORT void bunite_view_evaluate(uint32_t view_id, uint32_t request_id, const char* script) {
+  // Wrapper matches WebView2/CEF: try/catch returns JSON envelope string.
+  // WKWebView's `evaluateJavaScript:` delivers the string directly (no outer
+  // re-stringify), so the inner envelope is the completion result.
+  if (!script) {
+    std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                          ",\"ok\":false,\"code\":\"runtime_error\","
+                          "\"message\":\"null script\"}";
+    bunite_mac::emitWebviewEvent(view_id, "evaluate-result", payload);
+    return;
+  }
+  std::string wrapped =
+      "(function(){try{return JSON.stringify({__bunite_ok:true,value:("
+      + std::string(script) +
+      ")})}catch(e){return JSON.stringify({__bunite_ok:false,"
+      "message:(e&&e.message)?e.message:String(e),"
+      "name:(e&&e.name)||\"\"})}})()";
+  NSString* nsScript = [NSString stringWithUTF8String:wrapped.c_str()];
+  runOnUiThreadSync([=]() {
+    auto* v = bunite_mac::findView(view_id);
+    if (!v || !v->webview) {
+      std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                            ",\"ok\":false,\"code\":\"not_supported\","
+                            "\"message\":\"view not ready\"}";
+      bunite_mac::emitWebviewEvent(view_id, "evaluate-result", payload);
+      return;
+    }
+    [v->webview evaluateJavaScript:nsScript completionHandler:^(id result, NSError* error) {
+      std::string payload = "{\"requestId\":" + std::to_string(request_id);
+      if (error) {
+        std::string msg = error.localizedDescription.UTF8String ?: "evaluate failed";
+        payload += ",\"ok\":false,\"code\":\"runtime_error\","
+                   "\"message\":\"" + bunite_mac::escapeJsonString(msg) + "\"}";
+      } else if (![result isKindOfClass:[NSString class]]) {
+        payload += ",\"ok\":false,\"code\":\"runtime_error\","
+                   "\"message\":\"wrapper returned non-string\"}";
+      } else {
+        std::string inner = ((NSString*)result).UTF8String ?: "";
+        if (inner.find("\"__bunite_ok\":true") != std::string::npos) {
+          static const std::string prefix = "{\"__bunite_ok\":true,\"value\":";
+          std::string value_json = "null";
+          if (inner.compare(0, prefix.size(), prefix) == 0 &&
+              inner.size() > prefix.size() + 1) {
+            value_json = inner.substr(prefix.size(), inner.size() - prefix.size() - 1);
+          }
+          payload += ",\"ok\":true,\"value\":\"" + bunite_mac::escapeJsonString(value_json) + "\"}";
+        } else {
+          std::string msg = "script threw";
+          size_t key = inner.find("\"message\":\"");
+          if (key != std::string::npos) {
+            size_t start = key + std::strlen("\"message\":\"");
+            size_t end = start;
+            while (end < inner.size()) {
+              if (inner[end] == '"' && (end == start || inner[end - 1] != '\\')) break;
+              ++end;
+            }
+            if (end > start) msg = inner.substr(start, end - start);
+          }
+          payload += ",\"ok\":false,\"code\":\"runtime_error\","
+                     "\"message\":\"" + bunite_mac::escapeJsonString(msg) + "\"}";
+        }
+      }
+      bunite_mac::emitWebviewEvent(view_id, "evaluate-result", payload);
+    }];
+  });
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char* url) {

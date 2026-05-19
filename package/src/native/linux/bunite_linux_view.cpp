@@ -40,6 +40,14 @@ GtkWidget* on_create(WebKitWebView* wv, WebKitNavigationAction* action, gpointer
   return nullptr;  // cancel; JS opens via load_url if desired
 }
 
+void on_title_changed(GObject* source, GParamSpec* /*pspec*/, gpointer user_data) {
+  const uint32_t view_id = GPOINTER_TO_UINT(user_data);
+  WebKitWebView* wv = WEBKIT_WEB_VIEW(source);
+  const char* title = webkit_web_view_get_title(wv);
+  std::string payload = "{\"title\":\"" + escapeJsonString(title ? title : "") + "\"}";
+  emitWebviewEvent(view_id, "title-changed", payload);
+}
+
 // WebKitGTK fires nav-action for sub-frames with no main-frame discriminator — iframes hit nav rules.
 gboolean on_decide_policy(WebKitWebView* wv, WebKitPolicyDecision* decision,
                           WebKitPolicyDecisionType type, gpointer user_data) {
@@ -124,6 +132,7 @@ bool createView(uint32_t view_id, uint32_t window_id,
   g_signal_connect(wv, "load-changed", G_CALLBACK(on_load_changed), GUINT_TO_POINTER(view_id));
   g_signal_connect(wv, "decide-policy", G_CALLBACK(on_decide_policy), GUINT_TO_POINTER(view_id));
   g_signal_connect(wv, "create", G_CALLBACK(on_create), GUINT_TO_POINTER(view_id));
+  g_signal_connect(wv, "notify::title", G_CALLBACK(on_title_changed), GUINT_TO_POINTER(view_id));
 
   GtkWidget* container = GTK_WIDGET(wv);
   if (auto_resize) {

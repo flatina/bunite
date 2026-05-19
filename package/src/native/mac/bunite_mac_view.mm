@@ -59,6 +59,34 @@ decidePolicyForNavigationAction:(WKNavigationAction*)action
 
 @end
 
+@interface BuniteTitleObserver : NSObject
++ (instancetype)shared;
+@end
+
+@implementation BuniteTitleObserver
++ (instancetype)shared {
+  static BuniteTitleObserver* o = nil;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{ o = [[BuniteTitleObserver alloc] init]; });
+  return o;
+}
+- (void)observeValueForKeyPath:(NSString*)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary<NSKeyValueChangeKey, id>*)change
+                       context:(void*)context
+{
+  (void)change; (void)context;
+  if (![keyPath isEqualToString:@"title"]) return;
+  WKWebView* wv = (WKWebView*)object;
+  uint32_t view_id = bunite_mac::viewIdForWebView(wv);
+  if (!view_id) return;
+  NSString* title = wv.title ?: @"";
+  std::string payload = "{\"title\":\"" +
+    bunite_mac::escapeJsonString(title.UTF8String ?: "") + "\"}";
+  bunite_mac::emitWebviewEvent(view_id, "title-changed", payload);
+}
+@end
+
 @interface BuniteUIDelegate : NSObject <WKUIDelegate>
 @end
 
@@ -196,6 +224,7 @@ bool createView(uint32_t view_id, uint32_t window_id,
   static __strong BuniteUIDelegate* uiDelegate = [[BuniteUIDelegate alloc] init];
   wv.navigationDelegate = navDelegate;
   wv.UIDelegate = uiDelegate;
+  [wv addObserver:[BuniteTitleObserver shared] forKeyPath:@"title" options:NSKeyValueObservingOptionNew context:NULL];
 
   [container addSubview:wv];
   [window_state->window.contentView addSubview:container];
@@ -272,7 +301,11 @@ void removeView(uint32_t view_id) {
     for (BunitePendingPermission* p in to_deny) p.handler(WKPermissionDecisionDeny);
   }
 
-  if (wv) [webviewIdTable() removeObjectForKey:wv];
+  if (wv) {
+    @try { [wv removeObserver:[BuniteTitleObserver shared] forKeyPath:@"title"]; }
+    @catch (NSException*) { /* never registered (race) */ }
+    [webviewIdTable() removeObjectForKey:wv];
+  }
   if (container) [container removeFromSuperview];
 }
 

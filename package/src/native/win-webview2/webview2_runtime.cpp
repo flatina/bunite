@@ -766,6 +766,7 @@ static void attachControllerCallbacks(ViewHost* view) {
   if (!view->webview) return;
   auto lifetime = g_runtime.lifetime;
   uint32_t view_id = view->id;
+  // Token reuse OK — controller->Close() releases all add_* handlers.
   EventRegistrationToken tok;
 
   // NavigationStarting — enforce navigation rules, emit "will-navigate" event.

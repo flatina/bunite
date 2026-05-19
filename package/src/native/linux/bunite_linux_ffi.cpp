@@ -133,12 +133,93 @@ extern "C" BUNITE_EXPORT void bunite_view_execute_javascript(uint32_t view_id, c
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_evaluate(uint32_t view_id, uint32_t request_id, const char* /*script*/) {
-  // Stage A: Linux evaluate not yet implemented.
-  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
-                        ",\"ok\":false,\"code\":\"not_supported\","
-                        "\"message\":\"Linux evaluate not implemented (Stage A: Windows only)\"}";
-  bunite_linux::emitWebviewEvent(view_id, "evaluate-result", payload);
+namespace {
+
+struct EvaluateCtx {
+  uint32_t view_id;
+  uint32_t request_id;
+};
+
+void on_evaluate_done(GObject* source, GAsyncResult* res, gpointer user_data) {
+  auto* ctx = static_cast<EvaluateCtx*>(user_data);
+  WebKitWebView* wv = WEBKIT_WEB_VIEW(source);
+  GError* err = nullptr;
+  JSCValue* value = webkit_web_view_evaluate_javascript_finish(wv, res, &err);
+
+  std::string payload = "{\"requestId\":" + std::to_string(ctx->request_id);
+  if (err || !value) {
+    std::string msg = err ? err->message : "evaluate failed";
+    if (err) g_error_free(err);
+    payload += ",\"ok\":false,\"code\":\"runtime_error\","
+               "\"message\":\"" + bunite_linux::escapeJsonString(msg) + "\"}";
+  } else if (!jsc_value_is_string(value)) {
+    payload += ",\"ok\":false,\"code\":\"runtime_error\","
+               "\"message\":\"wrapper returned non-string\"}";
+  } else {
+    char* raw = jsc_value_to_string(value);
+    std::string inner = raw ? raw : "";
+    if (raw) g_free(raw);
+    if (inner.find("\"__bunite_ok\":true") != std::string::npos) {
+      static const std::string prefix = "{\"__bunite_ok\":true,\"value\":";
+      std::string value_json = "null";
+      if (inner.compare(0, prefix.size(), prefix) == 0 &&
+          inner.size() > prefix.size() + 1) {
+        value_json = inner.substr(prefix.size(), inner.size() - prefix.size() - 1);
+      }
+      payload += ",\"ok\":true,\"value\":\"" + bunite_linux::escapeJsonString(value_json) + "\"}";
+    } else {
+      std::string msg = "script threw";
+      size_t key = inner.find("\"message\":\"");
+      if (key != std::string::npos) {
+        size_t start = key + std::strlen("\"message\":\"");
+        size_t end = start;
+        while (end < inner.size()) {
+          if (inner[end] == '"' && (end == start || inner[end - 1] != '\\')) break;
+          ++end;
+        }
+        if (end > start) msg = inner.substr(start, end - start);
+      }
+      payload += ",\"ok\":false,\"code\":\"runtime_error\","
+                 "\"message\":\"" + bunite_linux::escapeJsonString(msg) + "\"}";
+    }
+  }
+  if (value) g_object_unref(value);
+  bunite_linux::emitWebviewEvent(ctx->view_id, "evaluate-result", payload);
+  delete ctx;
+}
+
+}  // namespace
+
+extern "C" BUNITE_EXPORT void bunite_view_evaluate(uint32_t view_id, uint32_t request_id, const char* script) {
+  // Wrapper matches WebView2/CEF: try/catch returns JSON envelope string.
+  // jsc_value_to_string delivers the wrapper's return value directly.
+  if (!script) {
+    std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                          ",\"ok\":false,\"code\":\"runtime_error\","
+                          "\"message\":\"null script\"}";
+    bunite_linux::emitWebviewEvent(view_id, "evaluate-result", payload);
+    return;
+  }
+  std::string wrapped =
+      "(function(){try{return JSON.stringify({__bunite_ok:true,value:("
+      + std::string(script) +
+      ")})}catch(e){return JSON.stringify({__bunite_ok:false,"
+      "message:(e&&e.message)?e.message:String(e),"
+      "name:(e&&e.name)||\"\"})}})()";
+  runOnUiThreadSync([=]() {
+    auto* v = bunite_linux::findView(view_id);
+    if (!v || !v->webview) {
+      std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                            ",\"ok\":false,\"code\":\"not_supported\","
+                            "\"message\":\"view not ready\"}";
+      bunite_linux::emitWebviewEvent(view_id, "evaluate-result", payload);
+      return;
+    }
+    auto* ctx = new EvaluateCtx{view_id, request_id};
+    webkit_web_view_evaluate_javascript(
+        v->webview, wrapped.c_str(), -1, nullptr, nullptr, nullptr,
+        on_evaluate_done, ctx);
+  });
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char* url) {

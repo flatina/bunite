@@ -68,7 +68,9 @@ setEvaluateResultHandler((viewId, raw: NativeEvaluateResult) => {
 });
 
 function computeCapabilities(engine: string | null): SurfaceCapabilities {
-  const supports = engine === "webview2" || engine === "cef";
+  const supports =
+    engine === "webview2" || engine === "cef" ||
+    engine === "wkwebview" || engine === "webkitgtk";
   return {
     evaluate: supports,
     crossOriginEval: false,
