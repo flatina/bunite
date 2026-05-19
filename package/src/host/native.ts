@@ -101,6 +101,7 @@ type NativeSymbols = {
   bunite_view_go_back: (viewId: number) => void;
   bunite_view_reload: (viewId: number) => void;
   bunite_view_execute_javascript: (viewId: number, script: CStringPointer) => void;
+  bunite_view_evaluate: (viewId: number, requestId: number, script: CStringPointer) => void;
   bunite_view_load_url: (viewId: number, url: CStringPointer) => void;
   bunite_view_load_html: (viewId: number, html: CStringPointer) => void;
   bunite_view_remove: (viewId: number) => void;
@@ -284,6 +285,10 @@ const nativeSymbolDefinitions = {
     args: [FFIType.u32, FFIType.cstring],
     returns: FFIType.void
   },
+  bunite_view_evaluate: {
+    args: [FFIType.u32, FFIType.u32, FFIType.cstring],
+    returns: FFIType.void
+  },
   bunite_view_load_url: {
     args: [FFIType.u32, FFIType.cstring],
     returns: FFIType.void
@@ -331,6 +336,18 @@ let routeRequestHandler: ((requestId: number, path: string) => void) | null = nu
 
 export function setRouteRequestHandler(handler: (requestId: number, path: string) => void) {
   routeRequestHandler = handler;
+}
+
+export type NativeEvaluateResult = {
+  requestId: number;
+  ok: boolean;
+  value?: string;        // raw JSON string when ok
+  code?: string;
+  message?: string;
+};
+let evaluateResultHandler: ((viewId: number, result: NativeEvaluateResult) => void) | null = null;
+export function setEvaluateResultHandler(handler: (viewId: number, result: NativeEvaluateResult) => void) {
+  evaluateResultHandler = handler;
 }
 
 // Per-view deferred resolvers for "view-ready" (OnAfterCreated).
@@ -472,6 +489,22 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
               viewReadyResolvers.delete(viewId);
               resolver();
             }
+            break;
+          }
+          case "evaluate-result": {
+            const parsed = maybeParsePayload(payload) as {
+              requestId: number; ok: boolean;
+              value?: string; code?: string; message?: string;
+            };
+            evaluateResultHandler?.(viewId, parsed);
+            break;
+          }
+          case "title-changed": {
+            const parsed = maybeParsePayload(payload) as { title: string };
+            buniteEventEmitter.emitEvent(
+              buniteEventEmitter.events.webview.titleChanged({ detail: parsed.title }),
+              viewId
+            );
             break;
           }
         }
@@ -623,7 +656,7 @@ export async function initNativeRuntime(
     throw new Error(`bunite: failed to load native library at ${artifacts.nativeLibPath}.`);
   }
 
-  const EXPECTED_ABI = 4;
+  const EXPECTED_ABI = 5;
   const nativeAbi = nativeLibrary.symbols.bunite_abi_version();
   if (nativeAbi !== EXPECTED_ABI) {
     throw new Error(

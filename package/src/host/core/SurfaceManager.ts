@@ -27,6 +27,15 @@ export function emitDidNavigate(hostViewId: number, surfaceId: number, url: stri
   for (const emit of subs) emit({ surfaceId, url });
 }
 
+type TitleChangedEmit = (event: { surfaceId: number; title: string }) => void;
+const titleChangedSubs = new Map<number, Set<TitleChangedEmit>>();
+
+export function emitTitleChanged(hostViewId: number, surfaceId: number, title: string) {
+  const subs = titleChangedSubs.get(hostViewId);
+  if (!subs) return;
+  for (const emit of subs) emit({ surfaceId, title });
+}
+
 export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceCap> {
   function ownedSurface(surfaceId: number) {
     const record = getOwnedSurface(surfaceId, { viewId: hostViewId });
@@ -136,6 +145,24 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       record?.view.reload();
     },
 
+    evaluate: async ({ surfaceId, script }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return { ok: false, code: "not_supported", message: "surface not found" };
+      return record.view.evaluate(script);
+    },
+
+    capabilities: ({ surfaceId }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) {
+        return {
+          evaluate: false, crossOriginEval: false, titleChanged: false,
+          nativeInputTrusted: false, click: false, type: false, press: false,
+          scroll: false, screenshot: false,
+        };
+      }
+      return record.view.capabilities();
+    },
+
     didNavigate: () => Stream.from<{ surfaceId: number; url: string }>((emit, signal) => {
       let subs = didNavigateSubs.get(hostViewId);
       if (!subs) {
@@ -148,6 +175,21 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
         if (!set) return;
         set.delete(emit);
         if (set.size === 0) didNavigateSubs.delete(hostViewId);
+      });
+    }),
+
+    titleChanged: () => Stream.from<{ surfaceId: number; title: string }>((emit, signal) => {
+      let subs = titleChangedSubs.get(hostViewId);
+      if (!subs) {
+        subs = new Set();
+        titleChangedSubs.set(hostViewId, subs);
+      }
+      subs.add(emit);
+      signal.addEventListener("abort", () => {
+        const set = titleChangedSubs.get(hostViewId);
+        if (!set) return;
+        set.delete(emit);
+        if (set.size === 0) titleChangedSubs.delete(hostViewId);
       });
     }),
   };

@@ -11,7 +11,7 @@ void setViewInputPassthrough(ViewHost* v, bool passthrough);
 
 extern "C" {
 
-BUNITE_EXPORT int32_t bunite_abi_version(void) { return 4; }
+BUNITE_EXPORT int32_t bunite_abi_version(void) { return 5; }
 
 BUNITE_EXPORT void bunite_set_log_level(int32_t level) {
   if (level < 0) level = 0;
@@ -153,6 +153,42 @@ BUNITE_EXPORT void bunite_view_execute_javascript(uint32_t view_id, const char* 
   ViewHost* v = getView(view_id);
   if (!v || !v->webview || !script) return;
   v->webview->ExecuteScript(utf8ToWide(script).c_str(), nullptr);
+}
+
+BUNITE_EXPORT void bunite_view_evaluate(uint32_t view_id, uint32_t request_id, const char* script) {
+  ViewHost* v = getView(view_id);
+  if (!v || !v->webview || !script) {
+    std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                          ",\"ok\":false,\"code\":\"not_supported\","
+                          "\"message\":\"view not ready\"}";
+    emitWebviewEvent(view_id, "evaluate-result", payload);
+    return;
+  }
+  auto lifetime = g_runtime.lifetime;
+  v->webview->ExecuteScript(
+      utf8ToWide(script).c_str(),
+      Microsoft::WRL::Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
+          [lifetime, view_id, request_id](HRESULT hr, LPCWSTR raw) -> HRESULT {
+            if (!lifetime || !lifetime->alive.load()) return S_OK;
+            std::string payload;
+            if (FAILED(hr) || !raw) {
+              payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"runtime_error\","
+                        "\"message\":\"ExecuteScript failed hr=0x" +
+                        [hr]() { char b[16]; snprintf(b, sizeof(b), "%08x", static_cast<unsigned>(hr)); return std::string(b); }() +
+                        "\"}";
+            } else {
+              // WebView2 returns JSON-encoded result. Embed as a JSON string so
+              // the JS-side parses it as a string and re-JSON.parses to get the
+              // value back (the `value` field of the envelope is a raw JSON
+              // string per the FFI contract).
+              std::string value = wideToUtf8(raw);
+              payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":true,\"value\":\"" + escapeJsonString(value) + "\"}";
+            }
+            emitWebviewEvent(view_id, "evaluate-result", payload);
+            return S_OK;
+          }).Get());
 }
 
 BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char* url) {

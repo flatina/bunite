@@ -8,8 +8,13 @@ import {
   type Connection,
   type BytesPipe,
 } from "../../rpc/index";
+import type { EvaluateResult, SurfaceCapabilities } from "../../rpc/framework";
 import { createEncryptedPipe } from "../encryptedPipe";
-import { ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady } from "../native";
+import {
+  ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady,
+  setEvaluateResultHandler, type NativeEvaluateResult
+} from "../native";
+import { getNativeEngineName } from "../native";
 import { attachBrowserViewRegistry, getRpcPort } from "./Socket";
 import { getAppRuntimeOrThrow } from "./App";
 import { randomBytes } from "node:crypto";
@@ -18,6 +23,52 @@ import { removeSurfacesForHostView } from "./SurfaceRegistry";
 
 const BrowserViewMap: Record<number, BrowserView> = {};
 let nextWebviewId = 1;
+
+// Evaluate request plumbing — native fires `evaluate-result` events keyed by
+// requestId. Resolvers are sliced by viewId on dispatch (set once at module
+// load).
+let nextEvaluateRequestId = 1;
+const evaluateResolvers = new Map<number, (result: EvaluateResult) => void>();
+
+function registerEvaluateRequest(resolve: (result: EvaluateResult) => void): number {
+  const id = nextEvaluateRequestId++;
+  evaluateResolvers.set(id, resolve);
+  return id;
+}
+
+setEvaluateResultHandler((_viewId, raw: NativeEvaluateResult) => {
+  const resolve = evaluateResolvers.get(raw.requestId);
+  if (!resolve) return;
+  evaluateResolvers.delete(raw.requestId);
+  if (raw.ok && raw.value !== undefined) {
+    try {
+      resolve({ ok: true, value: JSON.parse(raw.value) });
+    } catch (e) {
+      resolve({ ok: false, code: "runtime_error", message: `result JSON parse failed: ${(e as Error).message}` });
+    }
+  } else {
+    resolve({
+      ok: false,
+      code: (raw.code as EvaluateResult extends { code: infer C } ? C : never) ?? "runtime_error",
+      message: raw.message ?? "evaluate failed",
+    });
+  }
+});
+
+function computeCapabilities(engine: string | null): SurfaceCapabilities {
+  const supports = engine === "webview2" || engine === "cef";
+  return {
+    evaluate: supports,
+    crossOriginEval: false,
+    titleChanged: supports,
+    nativeInputTrusted: false,
+    click: false,
+    type: false,
+    press: false,
+    scroll: false,
+    screenshot: false,
+  };
+}
 
 export type BrowserViewOptions = {
   url: string | null;
@@ -208,6 +259,20 @@ export class BrowserView {
     }
   }
 
+  evaluate(script: string): Promise<EvaluateResult> {
+    if (!this.nativeAttached) {
+      return Promise.resolve({ ok: false, code: "not_supported", message: "native runtime unavailable" });
+    }
+    return new Promise<EvaluateResult>((resolve) => {
+      const requestId = registerEvaluateRequest(resolve);
+      getNativeLibrary()?.symbols.bunite_view_evaluate(this.id, requestId, toCString(script));
+    });
+  }
+
+  capabilities(): SurfaceCapabilities {
+    return computeCapabilities(getNativeEngineName());
+  }
+
   goBack() {
     if (this.nativeAttached) {
       getNativeLibrary()?.symbols.bunite_view_go_back(this.id);
@@ -314,7 +379,7 @@ export class BrowserView {
     cancelWaitForViewReady(this.id);
     this.nativeAttached = false;
     for (const eventName of [
-      "will-navigate", "did-navigate", "dom-ready", "new-window-open", "permission-requested"
+      "will-navigate", "did-navigate", "dom-ready", "new-window-open", "permission-requested", "title-changed"
     ]) {
       buniteEventEmitter.removeAllListeners(`${eventName}-${this.id}`);
     }
@@ -322,7 +387,7 @@ export class BrowserView {
   }
 
   on(
-    name: "will-navigate" | "did-navigate" | "dom-ready" | "new-window-open" | "permission-requested",
+    name: "will-navigate" | "did-navigate" | "dom-ready" | "new-window-open" | "permission-requested" | "title-changed",
     handler: (event: unknown) => void
   ) {
     const specificName = `${name}-${this.id}`;

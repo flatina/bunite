@@ -84,7 +84,8 @@ class BuniteCefClient
     public CefLoadHandler,
     public CefRequestHandler,
     public CefResourceRequestHandler,
-    public CefPermissionHandler {
+    public CefPermissionHandler,
+    public CefDisplayHandler {
 public:
   explicit BuniteCefClient(ViewHost* view)
     : view_(view) {}
@@ -93,6 +94,37 @@ public:
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
+  CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+
+  bool OnProcessMessageReceived(
+    CefRefPtr<CefBrowser> /*browser*/,
+    CefRefPtr<CefFrame> /*frame*/,
+    CefProcessId /*source_process*/,
+    CefRefPtr<CefProcessMessage> message
+  ) override {
+    if (message->GetName() != "bunite.evaluate.result") return false;
+    auto args = message->GetArgumentList();
+    if (!args || args->GetSize() < 4) return true;
+    uint32_t request_id = static_cast<uint32_t>(args->GetInt(0));
+    bool ok = args->GetBool(1);
+    std::string a2 = args->GetString(2).ToString();   // value (when ok) | code (when !ok)
+    std::string msg = args->GetString(3).ToString();  // message (when !ok)
+    std::string payload = "{\"requestId\":" + std::to_string(request_id) + ",\"ok\":";
+    if (ok) {
+      payload += "true,\"value\":\"" + bunite_win::escapeJsonString(a2) + "\"}";
+    } else {
+      payload += "false,\"code\":\"" + bunite_win::escapeJsonString(a2) +
+                 "\",\"message\":\"" + bunite_win::escapeJsonString(msg) + "\"}";
+    }
+    bunite_win::emitWebviewEvent(view_->id, "evaluate-result", payload);
+    return true;
+  }
+
+  void OnTitleChange(CefRefPtr<CefBrowser>, const CefString& title) override {
+    CEF_REQUIRE_UI_THREAD();
+    std::string payload = "{\"title\":\"" + bunite_win::escapeJsonString(title.ToString()) + "\"}";
+    bunite_win::emitWebviewEvent(view_->id, "title-changed", payload);
+  }
 
   void OnBeforeDevToolsPopup(
     CefRefPtr<CefBrowser>,

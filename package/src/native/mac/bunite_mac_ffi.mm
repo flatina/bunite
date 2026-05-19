@@ -20,7 +20,7 @@ using bunite_mac::runOnUiThreadSync;
 
 namespace {
 
-constexpr int32_t kBuniteAbiVersion = 4;
+constexpr int32_t kBuniteAbiVersion = 5;
 
 // warn-once — avoid log spam from tight JS call loops.
 #define BUNITE_MAC_TODO(name)                                       \
@@ -271,6 +271,15 @@ extern "C" BUNITE_EXPORT void bunite_view_execute_javascript(uint32_t view_id, c
   runOnUiThreadSync([=]() {
     if (auto* v = bunite_mac::findView(view_id)) [v->webview evaluateJavaScript:s completionHandler:nil];
   });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_evaluate(uint32_t view_id, uint32_t request_id, const char* /*script*/) {
+  // Stage A: macOS evaluate not yet implemented. Report not_supported so the
+  // JS side's whenReady() resolves with a structured envelope.
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"not_supported\","
+                        "\"message\":\"macOS evaluate not implemented (Stage A: Windows only)\"}";
+  bunite_mac::emitWebviewEvent(view_id, "evaluate-result", payload);
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char* url) {

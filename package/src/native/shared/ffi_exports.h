@@ -15,6 +15,8 @@
 extern "C" {
 #endif
 
+/** ABI version. Bump on any breaking change to symbol set / signatures.
+ *  v5 (2026-05): adds `bunite_view_evaluate` + `evaluate-result` webview event. */
 BUNITE_EXPORT int32_t bunite_abi_version(void);
 BUNITE_EXPORT void bunite_set_log_level(int32_t level);
 BUNITE_EXPORT bool bunite_init(
@@ -87,6 +89,14 @@ BUNITE_EXPORT bool bunite_view_create(
 	const char* preload_origins_json
 );
 BUNITE_EXPORT void bunite_view_execute_javascript(uint32_t view_id, const char* script);
+/**
+ * Evaluate `script` in the view's main frame and report the result via the
+ * webview event handler as `evaluate-result` with payload
+ *   { requestId, ok: true, value }            // value is the raw JSON string
+ *   { requestId, ok: false, code, message }   // code: cross_origin / runtime_error / not_supported / ...
+ * Backends that don't implement evaluation report not_supported synchronously.
+ */
+BUNITE_EXPORT void bunite_view_evaluate(uint32_t view_id, uint32_t request_id, const char* script);
 BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char* url);
 BUNITE_EXPORT void bunite_view_load_html(uint32_t view_id, const char* html);
 BUNITE_EXPORT void bunite_register_appres_route(const char* path);

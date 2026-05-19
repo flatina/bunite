@@ -117,6 +117,22 @@ function definePolyfillClass(): CustomElementConstructor {
         this._iframe.style.display = hidden ? "none" : "block";
       }
     }
+
+    // Automation surface — web iframe polyfill is intentionally limited.
+    // Sandbox omits `allow-same-origin`, so `contentWindow.eval` would fail even
+    // for same-origin URLs. Reporting `evaluate: false` matches reality; callers
+    // can opt-in with `<bunite-webview unsandboxed>` and extend this method.
+    async evaluate(_script: string) {
+      return { ok: false as const, code: "not_supported" as const, message: "iframe polyfill does not support evaluate" };
+    }
+
+    async capabilities() {
+      return {
+        evaluate: false, crossOriginEval: false, titleChanged: false,
+        nativeInputTrusted: false, click: false, type: false, press: false,
+        scroll: false, screenshot: false,
+      };
+    }
   }
 
   cachedClass = BuniteWebviewPolyfill;

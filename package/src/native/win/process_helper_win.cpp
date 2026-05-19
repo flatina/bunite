@@ -35,6 +35,68 @@ public:
     return this;
   }
 
+  bool OnProcessMessageReceived(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    CefProcessId /*source_process*/,
+    CefRefPtr<CefProcessMessage> message
+  ) override {
+    if (message->GetName() != "bunite.evaluate.request") return false;
+    auto args = message->GetArgumentList();
+    if (!args || args->GetSize() < 2) return true;
+    uint32_t request_id = static_cast<uint32_t>(args->GetInt(0));
+    std::string script = args->GetString(1).ToString();
+
+    auto context = frame->GetV8Context();
+    if (!context) {
+      auto reply = CefProcessMessage::Create("bunite.evaluate.result");
+      auto rl = reply->GetArgumentList();
+      rl->SetInt(0, static_cast<int>(request_id));
+      rl->SetBool(1, false);
+      rl->SetString(2, "runtime_error");
+      rl->SetString(3, "no V8 context");
+      frame->SendProcessMessage(PID_BROWSER, reply);
+      return true;
+    }
+
+    context->Enter();
+    CefRefPtr<CefV8Value> retval;
+    CefRefPtr<CefV8Exception> exception;
+    bool ok = context->Eval(script, "bunite://evaluate", 0, retval, exception);
+
+    auto reply = CefProcessMessage::Create("bunite.evaluate.result");
+    auto rl = reply->GetArgumentList();
+    rl->SetInt(0, static_cast<int>(request_id));
+    if (ok && retval) {
+      // V8 JSON.stringify for cross-process transport.
+      auto global = context->GetGlobal();
+      auto json_obj = global->GetValue("JSON");
+      auto stringify = json_obj ? json_obj->GetValue("stringify") : nullptr;
+      std::string json_str;
+      if (stringify && stringify->IsFunction()) {
+        CefV8ValueList args2; args2.push_back(retval);
+        auto json_v = stringify->ExecuteFunction(json_obj, args2);
+        if (json_v && json_v->IsString()) json_str = json_v->GetStringValue().ToString();
+      }
+      if (json_str.empty()) json_str = "null";
+      rl->SetBool(1, true);
+      rl->SetString(2, json_str);
+      rl->SetString(3, "");
+    } else {
+      std::string msg = exception ? exception->GetMessage().ToString() : "eval failed";
+      // SecurityError typically arises from cross-origin reach.
+      std::string code = (msg.find("SecurityError") != std::string::npos ||
+                          msg.find("cross-origin") != std::string::npos)
+                         ? "cross_origin" : "runtime_error";
+      rl->SetBool(1, false);
+      rl->SetString(2, code);
+      rl->SetString(3, msg);
+    }
+    context->Exit();
+    frame->SendProcessMessage(PID_BROWSER, reply);
+    return true;
+  }
+
   void OnRegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) override {
     registrar->AddCustomScheme(
       "appres",

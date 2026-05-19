@@ -6,7 +6,7 @@
 using bunite_win::runOnUiThreadSync;
 using bunite_win::runOnCefUiThreadSync;
 
-static constexpr int32_t BUNITE_ABI_VERSION = 4;
+static constexpr int32_t BUNITE_ABI_VERSION = 5;
 
 namespace {
 
@@ -533,6 +533,24 @@ extern "C" BUNITE_EXPORT void bunite_view_execute_javascript(uint32_t view_id, c
     view->browser->GetMainFrame()->ExecuteJavaScript(
       code, view->browser->GetMainFrame()->GetURL(), 0
     );
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_evaluate(uint32_t view_id, uint32_t request_id, const char* script) {
+  bunite_win::postCefUiTask([view_id, request_id, code = std::string(script ? script : "")]() {
+    auto* view = bunite_win::getViewHostById(view_id);
+    if (!view || !view->browser || !view->browser->GetMainFrame()) {
+      std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                            ",\"ok\":false,\"code\":\"not_supported\","
+                            "\"message\":\"view not ready\"}";
+      bunite_win::emitWebviewEvent(view_id, "evaluate-result", payload);
+      return;
+    }
+    auto message = CefProcessMessage::Create("bunite.evaluate.request");
+    auto args = message->GetArgumentList();
+    args->SetInt(0, static_cast<int>(request_id));
+    args->SetString(1, code);
+    view->browser->GetMainFrame()->SendProcessMessage(PID_RENDERER, message);
   });
 }
 

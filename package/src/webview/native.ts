@@ -1,7 +1,7 @@
 // <bunite-webview> custom element — registered in every appres:// page via preload.
 
 import type { ClientOf } from "../rpc/index";
-import type { SurfaceCap } from "../rpc/framework";
+import type { SurfaceCap, EvaluateResult, SurfaceCapabilities } from "../rpc/framework";
 
 declare const host: {
   runtime(): Promise<ClientOf<typeof import("../rpc/framework").RuntimeCap>>;
@@ -23,6 +23,12 @@ function callSurface<R>(fn: (s: SurfaceClient) => Promise<R> | R): Promise<R | v
     }
     return undefined;
   });
+}
+
+/** Like `callSurface` but never swallows — automation surface API needs to
+ *  return structured envelopes so callers can react to surface absence. */
+function callSurfaceTyped<R>(fn: (s: SurfaceClient) => Promise<R> | R): Promise<R> {
+  return getSurfaceCap().then(fn);
 }
 
 // OverlaySyncController: ResizeObserver + rAF position polling; dirty-flag coalescing ≤1 IPC/frame.
@@ -142,6 +148,22 @@ class BuniteWebviewElement extends HTMLElement {
         }
       }
     })();
+    void (async () => {
+      try {
+        const s = await getSurfaceCap();
+        const stream = s.titleChanged();
+        for await (const ev of stream) {
+          if (ctrl.signal.aborted) break;
+          if (ev.surfaceId === this._surfaceId) {
+            this.dispatchEvent(new CustomEvent("title-changed", { detail: { title: ev.title } }));
+          }
+        }
+      } catch (err) {
+        if ((globalThis as { __BUNITE_DEBUG__?: boolean }).__BUNITE_DEBUG__) {
+          console.warn("[bunite] titleChanged stream failed", err);
+        }
+      }
+    })();
     this._waitForLayout();
   }
 
@@ -224,6 +246,24 @@ class BuniteWebviewElement extends HTMLElement {
 
   navigate(url: string) {
     this.setAttribute("src", url);
+  }
+
+  async evaluate(script: string): Promise<EvaluateResult> {
+    const sid = this._surfaceId;
+    if (sid == null) return { ok: false, code: "not_supported", message: "surface not ready" };
+    return callSurfaceTyped((s) => s.evaluate({ surfaceId: sid, script }));
+  }
+
+  async capabilities(): Promise<SurfaceCapabilities> {
+    const sid = this._surfaceId;
+    if (sid == null) {
+      return {
+        evaluate: false, crossOriginEval: false, titleChanged: false,
+        nativeInputTrusted: false, click: false, type: false, press: false,
+        scroll: false, screenshot: false,
+      };
+    }
+    return callSurfaceTyped((s) => s.capabilities({ surfaceId: sid }));
   }
 
   private _applySurfaceHidden() {

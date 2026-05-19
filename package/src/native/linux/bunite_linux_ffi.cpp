@@ -133,6 +133,14 @@ extern "C" BUNITE_EXPORT void bunite_view_execute_javascript(uint32_t view_id, c
   });
 }
 
+extern "C" BUNITE_EXPORT void bunite_view_evaluate(uint32_t view_id, uint32_t request_id, const char* /*script*/) {
+  // Stage A: Linux evaluate not yet implemented.
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"not_supported\","
+                        "\"message\":\"Linux evaluate not implemented (Stage A: Windows only)\"}";
+  bunite_linux::emitWebviewEvent(view_id, "evaluate-result", payload);
+}
+
 extern "C" BUNITE_EXPORT void bunite_view_load_url(uint32_t view_id, const char* url) {
   std::string s = url ? url : "";
   runOnUiThreadSync([=]() {

@@ -72,6 +72,28 @@ export const ShellCap = defineCap("bunite.Shell", {
 
 export type SurfaceMask = { x: number; y: number; w: number; h: number };
 
+/** Automation feature flags reported per surface. Append-only — consumers
+ *  treat missing fields as `false`. Backend-honest: a method may exist on the
+ *  RPC surface but return `not_supported` when the backend can't fulfil it. */
+export interface SurfaceCapabilities {
+  evaluate: boolean;
+  crossOriginEval: boolean;
+  titleChanged: boolean;
+  /** Stage A: always false. Set true when SendInput focus choreography lands. */
+  nativeInputTrusted: boolean;
+  click: boolean;
+  type: boolean;
+  press: boolean;
+  scroll: boolean;
+  screenshot: boolean;
+  /** Present only when `screenshot` is true. */
+  formats?: ("png" | "jpeg")[];
+}
+
+export type EvaluateResult =
+  | { ok: true; value: unknown }
+  | { ok: false; code: "cross_origin" | "runtime_error" | "not_supported" | "timeout"; message: string };
+
 export const SurfaceCap = defineCap("bunite.Surface", {
   init: call<{
     src: string;
@@ -90,7 +112,10 @@ export const SurfaceCap = defineCap("bunite.Surface", {
   navigate: call<{ surfaceId: number; url: string }, void>(),
   goBack: call<{ surfaceId: number }, void>(),
   reload: call<{ surfaceId: number }, void>(),
+  evaluate: call<{ surfaceId: number; script: string }, EvaluateResult>(),
+  capabilities: call<{ surfaceId: number }, SurfaceCapabilities>(),
   didNavigate: stream<void, { surfaceId: number; url: string }>(),
+  titleChanged: stream<void, { surfaceId: number; title: string }>(),
 });
 
 export const RuntimeCap = defineCap("bunite.Runtime", {

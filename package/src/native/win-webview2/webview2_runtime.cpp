@@ -806,6 +806,21 @@ static void attachControllerCallbacks(ViewHost* view) {
           }).Get(),
       &tok);
 
+  // DocumentTitleChanged — surface for automation `titleChanged` stream.
+  view->webview->add_DocumentTitleChanged(
+      Callback<ICoreWebView2DocumentTitleChangedEventHandler>(
+          [lifetime, view_id](ICoreWebView2* wv, IUnknown*) -> HRESULT {
+            if (!lifetime || !lifetime->alive.load()) return S_OK;
+            LPWSTR title_raw = nullptr;
+            if (wv) wv->get_DocumentTitle(&title_raw);
+            std::string title = wideToUtf8(title_raw);
+            if (title_raw) CoTaskMemFree(title_raw);
+            std::string payload = "{\"title\":\"" + escapeJsonString(title) + "\"}";
+            emitWebviewEvent(view_id, "title-changed", payload);
+            return S_OK;
+          }).Get(),
+      &tok);
+
   // PermissionRequested — map to bunite kind and stash deferral.
   view->webview->add_PermissionRequested(
       Callback<ICoreWebView2PermissionRequestedEventHandler>(
