@@ -48,10 +48,10 @@ public:
     std::string script = args->GetString(1).ToString();
 
     auto context = frame->GetV8Context();
+    auto reply = CefProcessMessage::Create("bunite.evaluate.result");
+    auto rl = reply->GetArgumentList();
+    rl->SetInt(0, static_cast<int>(request_id));
     if (!context) {
-      auto reply = CefProcessMessage::Create("bunite.evaluate.result");
-      auto rl = reply->GetArgumentList();
-      rl->SetInt(0, static_cast<int>(request_id));
       rl->SetBool(1, false);
       rl->SetString(2, "runtime_error");
       rl->SetString(3, "no V8 context");
@@ -59,37 +59,64 @@ public:
       return true;
     }
 
+    // Same wrapper as WebView2/mac/linux: try/catch returning a JSON envelope
+    // string. SecurityError is detected locale-independently inside the JS.
+    std::string wrapped =
+        "(function(){try{return JSON.stringify({__bunite_ok:true,value:(" + script +
+        ")})}catch(e){var c=(e&&e.name===\"SecurityError\")?\"cross_origin\":\"runtime_error\";"
+        "return JSON.stringify({__bunite_ok:false,code:c,"
+        "message:(e&&e.message)?e.message:String(e),"
+        "name:(e&&e.name)||\"\"})}})()";
+
     context->Enter();
     CefRefPtr<CefV8Value> retval;
     CefRefPtr<CefV8Exception> exception;
-    bool ok = context->Eval(script, "bunite://evaluate", 0, retval, exception);
+    bool ok = context->Eval(wrapped, "bunite://evaluate", 0, retval, exception);
 
-    auto reply = CefProcessMessage::Create("bunite.evaluate.result");
-    auto rl = reply->GetArgumentList();
-    rl->SetInt(0, static_cast<int>(request_id));
-    if (ok && retval) {
-      // V8 JSON.stringify for cross-process transport.
-      auto global = context->GetGlobal();
-      auto json_obj = global->GetValue("JSON");
-      auto stringify = json_obj ? json_obj->GetValue("stringify") : nullptr;
-      std::string json_str;
-      if (stringify && stringify->IsFunction()) {
-        CefV8ValueList args2; args2.push_back(retval);
-        auto json_v = stringify->ExecuteFunction(json_obj, args2);
-        if (json_v && json_v->IsString()) json_str = json_v->GetStringValue().ToString();
+    if (ok && retval && retval->IsString()) {
+      std::string inner = retval->GetStringValue().ToString();
+      if (inner.find("\"__bunite_ok\":true") != std::string::npos) {
+        static const std::string prefix = "{\"__bunite_ok\":true,\"value\":";
+        std::string value_json = "null";
+        if (inner.compare(0, prefix.size(), prefix) == 0 &&
+            inner.size() > prefix.size() + 1) {
+          value_json = inner.substr(prefix.size(), inner.size() - prefix.size() - 1);
+        }
+        rl->SetBool(1, true);
+        rl->SetString(2, value_json);
+        rl->SetString(3, "");
+      } else {
+        // Anchor at the envelope prefix — user-controlled e.message could
+        // otherwise inject a fake "code" via the substring scan above.
+        static const std::string codePrefix = "{\"__bunite_ok\":false,\"code\":\"";
+        std::string code = "runtime_error";
+        std::string msg = "script threw";
+        if (inner.compare(0, codePrefix.size(), codePrefix) == 0) {
+          size_t start = codePrefix.size();
+          size_t end = start;
+          while (end < inner.size() && inner[end] != '"') ++end;
+          if (end > start) code = inner.substr(start, end - start);
+          static const std::string msgKey = "\",\"message\":\"";
+          if (end + msgKey.size() <= inner.size() &&
+              inner.compare(end, msgKey.size(), msgKey) == 0) {
+            size_t mstart = end + msgKey.size();
+            size_t mend = mstart;
+            while (mend < inner.size()) {
+              if (inner[mend] == '"' && (mend == mstart || inner[mend - 1] != '\\')) break;
+              ++mend;
+            }
+            if (mend > mstart) msg = inner.substr(mstart, mend - mstart);
+          }
+        }
+        rl->SetBool(1, false);
+        rl->SetString(2, code);
+        rl->SetString(3, msg);
       }
-      if (json_str.empty()) json_str = "null";
-      rl->SetBool(1, true);
-      rl->SetString(2, json_str);
-      rl->SetString(3, "");
     } else {
+      // Wrapper itself failed (syntax error in user script, or V8 internal).
       std::string msg = exception ? exception->GetMessage().ToString() : "eval failed";
-      // SecurityError typically arises from cross-origin reach.
-      std::string code = (msg.find("SecurityError") != std::string::npos ||
-                          msg.find("cross-origin") != std::string::npos)
-                         ? "cross_origin" : "runtime_error";
       rl->SetBool(1, false);
-      rl->SetString(2, code);
+      rl->SetString(2, "runtime_error");
       rl->SetString(3, msg);
     }
     context->Exit();

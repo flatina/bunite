@@ -87,6 +87,8 @@ class BuniteCefClient
     public CefPermissionHandler,
     public CefDisplayHandler {
 public:
+  // BuniteCefClient is constructed 1:1 with a `ViewHost*`; `last_title_` is
+  // therefore per-view. OnTitleChange runs on the CEF UI thread (single).
   explicit BuniteCefClient(ViewHost* view)
     : view_(view) {}
 
@@ -122,7 +124,13 @@ public:
 
   void OnTitleChange(CefRefPtr<CefBrowser>, const CefString& title) override {
     CEF_REQUIRE_UI_THREAD();
-    std::string payload = "{\"title\":\"" + bunite_win::escapeJsonString(title.ToString()) + "\"}";
+    std::string s = title.ToString();
+    // Filter the transients CEF emits during initial / mid-load (blank doc
+    // placeholder, momentary URL-as-title) and dedup on the last emitted value.
+    if (s.empty()) return;
+    if (s == last_title_) return;
+    last_title_ = s;
+    std::string payload = "{\"title\":\"" + bunite_win::escapeJsonString(s) + "\"}";
     bunite_win::emitWebviewEvent(view_->id, "title-changed", payload);
   }
 
@@ -341,6 +349,7 @@ public:
 
 private:
   ViewHost* view_;
+  std::string last_title_;
 
   IMPLEMENT_REFCOUNTING(BuniteCefClient);
 };

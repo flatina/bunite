@@ -15,7 +15,6 @@ import {
   setEvaluateResultHandler, type NativeEvaluateResult,
   setScreenshotResultHandler, type NativeScreenshotResult,
 } from "../native";
-import { getNativeEngineName } from "../native";
 import { attachBrowserViewRegistry, getRpcPort } from "./Socket";
 import { getAppRuntimeOrThrow } from "./App";
 import { randomBytes } from "node:crypto";
@@ -116,29 +115,34 @@ setEvaluateResultHandler((viewId, raw: NativeEvaluateResult) => {
   }
 });
 
-function computeCapabilities(engine: string | null): SurfaceCapabilities {
-  const evalSupports =
-    engine === "webview2" || engine === "cef" ||
-    engine === "wkwebview" || engine === "webkitgtk";
-  // CEF uses true OS input path (isTrusted=true). WebView2 CDP + WKWebView
-  // synthetic NSEvent both produce isTrusted=false. linux: no input path.
-  const inputSupports =
-    engine === "webview2" || engine === "cef" || engine === "wkwebview";
-  const nativeInputTrusted = engine === "cef";
-  // Screenshot: WebView2 CapturePreview, CEF PrintWindow, WKWebView takeSnapshot,
-  // WebKitGTK get_snapshot. CEF path needs spike verification at runtime.
-  const screenshotSupports = evalSupports;
+// Bit positions match the native enum in `ffi_exports.h` (BuniteCapBit).
+const CAP_EVALUATE             = 1 << 0;
+const CAP_CROSS_ORIGIN_EVAL    = 1 << 1;
+const CAP_TITLE_CHANGED        = 1 << 2;
+const CAP_NATIVE_INPUT_TRUSTED = 1 << 3;
+const CAP_CLICK                = 1 << 4;
+const CAP_TYPE                 = 1 << 5;
+const CAP_PRESS                = 1 << 6;
+const CAP_SCROLL               = 1 << 7;
+const CAP_SCREENSHOT           = 1 << 8;
+const CAP_FORMAT_PNG           = 1 << 9;
+const CAP_FORMAT_JPEG          = 1 << 10;
+
+function decodeCapabilityBits(bits: number): SurfaceCapabilities {
+  const formats: ("png" | "jpeg")[] = [];
+  if (bits & CAP_FORMAT_PNG) formats.push("png");
+  if (bits & CAP_FORMAT_JPEG) formats.push("jpeg");
   return {
-    evaluate: evalSupports,
-    crossOriginEval: false,
-    titleChanged: evalSupports,
-    nativeInputTrusted,
-    click: inputSupports,
-    type: inputSupports,
-    press: inputSupports,
-    scroll: inputSupports,
-    screenshot: screenshotSupports,
-    formats: screenshotSupports ? ["png", "jpeg"] : undefined,
+    evaluate: !!(bits & CAP_EVALUATE),
+    crossOriginEval: !!(bits & CAP_CROSS_ORIGIN_EVAL),
+    titleChanged: !!(bits & CAP_TITLE_CHANGED),
+    nativeInputTrusted: !!(bits & CAP_NATIVE_INPUT_TRUSTED),
+    click: !!(bits & CAP_CLICK),
+    type: !!(bits & CAP_TYPE),
+    press: !!(bits & CAP_PRESS),
+    scroll: !!(bits & CAP_SCROLL),
+    screenshot: !!(bits & CAP_SCREENSHOT),
+    ...(formats.length > 0 ? { formats } : {}),
   };
 }
 
@@ -342,7 +346,9 @@ export class BrowserView {
   }
 
   capabilities(): SurfaceCapabilities {
-    return computeCapabilities(getNativeEngineName());
+    if (!this.nativeAttached) return decodeCapabilityBits(0);
+    const bits = getNativeLibrary()?.symbols.bunite_view_capabilities(this.id) ?? 0;
+    return decodeCapabilityBits(bits);
   }
 
   click(x: number, y: number, button: 0 | 1 | 2, clickCount: number, modifiers: number) {

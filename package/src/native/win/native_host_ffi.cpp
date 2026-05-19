@@ -17,7 +17,7 @@
 using bunite_win::runOnUiThreadSync;
 using bunite_win::runOnCefUiThreadSync;
 
-static constexpr int32_t BUNITE_ABI_VERSION = 6;
+static constexpr int32_t BUNITE_ABI_VERSION = 7;
 
 namespace {
 
@@ -1128,6 +1128,19 @@ bool captureToBytes(HWND hwnd, const wchar_t* mimeFormat, int32_t quality,
 }
 
 }  // namespace
+
+extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
+  // CEF — native input (isTrusted=true), PrintWindow screenshot (Win 8.1+).
+  auto* view = bunite_win::getViewHostById(view_id);
+  if (!view) return 0;
+  uint32_t bits = BUNITE_CAP_EVALUATE | BUNITE_CAP_TITLE_CHANGED |
+                  BUNITE_CAP_NATIVE_INPUT_TRUSTED |
+                  BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL;
+  if (IsWindows8Point1OrGreater()) {
+    bits |= BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
+  }
+  return bits;
+}
 
 extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
                                                        const char* format, int32_t quality) {

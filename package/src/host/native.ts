@@ -119,6 +119,7 @@ type NativeSymbols = {
   bunite_view_screenshot: (
     viewId: number, requestId: number, format: CStringPointer, quality: number
   ) => void;
+  bunite_view_capabilities: (viewId: number) => number;
   bunite_view_load_url: (viewId: number, url: CStringPointer) => void;
   bunite_view_load_html: (viewId: number, html: CStringPointer) => void;
   bunite_view_remove: (viewId: number) => void;
@@ -325,6 +326,10 @@ const nativeSymbolDefinitions = {
   bunite_view_screenshot: {
     args: [FFIType.u32, FFIType.u32, FFIType.cstring, FFIType.i32],
     returns: FFIType.void
+  },
+  bunite_view_capabilities: {
+    args: [FFIType.u32],
+    returns: FFIType.u32
   },
   bunite_view_load_url: {
     args: [FFIType.u32, FFIType.cstring],
@@ -712,7 +717,7 @@ export async function initNativeRuntime(
     throw new Error(`bunite: failed to load native library at ${artifacts.nativeLibPath}.`);
   }
 
-  const EXPECTED_ABI = 6;
+  const EXPECTED_ABI = 7;
   const nativeAbi = nativeLibrary.symbols.bunite_abi_version();
   if (nativeAbi !== EXPECTED_ABI) {
     throw new Error(

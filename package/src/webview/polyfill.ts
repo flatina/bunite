@@ -27,6 +27,45 @@ function definePolyfillClass(): CustomElementConstructor {
     static observedAttributes = ["src", "sandbox", "unsandboxed"];
 
     private _iframe: HTMLIFrameElement | null = null;
+    private _titleObserver: MutationObserver | null = null;
+    private _lastTitle: string = "";
+
+    private isReachable(): boolean {
+      if (!this._iframe) return false;
+      try {
+        return this._iframe.contentDocument != null;
+      } catch { return false; }
+    }
+
+    private modifierBag(mods?: string[]): {
+      shiftKey: boolean; ctrlKey: boolean; altKey: boolean; metaKey: boolean;
+    } {
+      return {
+        shiftKey: !!mods?.includes("shift"),
+        ctrlKey:  !!mods?.includes("ctrl"),
+        altKey:   !!mods?.includes("alt"),
+        metaKey:  !!mods?.includes("meta"),
+      };
+    }
+
+    private setupTitleObserver() {
+      this._titleObserver?.disconnect();
+      this._titleObserver = null;
+      if (!this.isReachable()) return;
+      const doc = this._iframe!.contentDocument!;
+      this._lastTitle = doc.title;
+      const fire = () => {
+        const t = doc.title;
+        if (t && t !== this._lastTitle) {
+          this._lastTitle = t;
+          this.dispatchEvent(new CustomEvent("title-changed", { detail: { title: t } }));
+        }
+      };
+      const observer = new MutationObserver(fire);
+      const headEl = doc.head ?? doc.documentElement;
+      if (headEl) observer.observe(headEl, { childList: true, subtree: true, characterData: true });
+      this._titleObserver = observer;
+    }
 
     private applySandbox(iframe: HTMLIFrameElement) {
       if (this.hasAttribute("unsandboxed")) {
@@ -67,6 +106,7 @@ function definePolyfillClass(): CustomElementConstructor {
         // navigation (or before any explicit navigate).
         if (isBlockedSrc(url)) return;
         this.dispatchEvent(new CustomEvent("did-navigate", { detail: { url } }));
+        this.setupTitleObserver();
       });
 
       this._iframe = iframe;
@@ -74,6 +114,8 @@ function definePolyfillClass(): CustomElementConstructor {
     }
 
     disconnectedCallback() {
+      this._titleObserver?.disconnect();
+      this._titleObserver = null;
       this._iframe?.remove();
       this._iframe = null;
     }
@@ -118,28 +160,86 @@ function definePolyfillClass(): CustomElementConstructor {
       }
     }
 
-    // Automation surface — web iframe polyfill is intentionally limited.
-    // Sandbox omits `allow-same-origin`, so `contentWindow.eval` would fail even
-    // for same-origin URLs. Reporting `evaluate: false` matches reality; callers
-    // can opt-in with `<bunite-webview unsandboxed>` and extend this method.
-    async evaluate(_script: string) {
-      return { ok: false as const, code: "not_supported" as const, message: "iframe polyfill does not support evaluate" };
+    // Automation surface — works when the iframe is same-origin reachable
+    // (i.e. `<bunite-webview unsandboxed>` + same-origin src). Default sandbox
+    // strips `allow-same-origin`, so reachability is opt-in. `isTrusted` on
+    // synthesised DOM events is always false → `nativeInputTrusted` stays false.
+    async evaluate(script: string) {
+      if (!this.isReachable()) {
+        return { ok: false as const, code: "cross_origin" as const, message: "iframe content not same-origin" };
+      }
+      try {
+        const win = this._iframe!.contentWindow as Window & { eval(s: string): unknown };
+        return { ok: true as const, value: win.eval(script) };
+      } catch (e: unknown) {
+        const err = e as { name?: string; message?: string };
+        if (err?.name === "SecurityError") {
+          return { ok: false as const, code: "cross_origin" as const, message: err.message ?? "SecurityError" };
+        }
+        return { ok: false as const, code: "runtime_error" as const, message: err?.message ?? String(e) };
+      }
     }
 
     async capabilities() {
+      const reachable = this.isReachable();
       return {
-        evaluate: false, crossOriginEval: false, titleChanged: false,
-        nativeInputTrusted: false, click: false, type: false, press: false,
-        scroll: false, screenshot: false,
+        evaluate: reachable, crossOriginEval: false, titleChanged: reachable,
+        nativeInputTrusted: false,
+        click: reachable, type: reachable, press: reachable, scroll: reachable,
+        screenshot: false,
       };
     }
 
-    // Element parity with the native path. B4 wires sandbox-aware impls
-    // (unsandboxed + same-origin reachability → synthetic events).
-    async sendClick(_args: { x: number; y: number; button?: string; clickCount?: number; modifiers?: string[] }) {}
-    async sendType(_text: string) {}
-    async sendPress(_key: string, _modifiers?: string[]) {}
-    async sendScroll(_args: { dx: number; dy: number; x?: number; y?: number; modifiers?: string[] }) {}
+    async sendClick(args: {
+      x: number; y: number; button?: string; clickCount?: number; modifiers?: string[];
+    }) {
+      if (!this.isReachable()) return;
+      const doc = this._iframe!.contentDocument!;
+      const target = doc.elementFromPoint(args.x, args.y) ?? doc.body;
+      if (!target) return;
+      const init: MouseEventInit = {
+        bubbles: true, cancelable: true, view: this._iframe!.contentWindow,
+        clientX: args.x, clientY: args.y,
+        button: args.button === "right" ? 2 : args.button === "middle" ? 1 : 0,
+        detail: args.clickCount ?? 1,
+        ...this.modifierBag(args.modifiers),
+      };
+      target.dispatchEvent(new MouseEvent("mousedown", init));
+      target.dispatchEvent(new MouseEvent("mouseup", init));
+      target.dispatchEvent(new MouseEvent("click", init));
+    }
+
+    async sendType(text: string) {
+      if (!this.isReachable()) return;
+      const doc = this._iframe!.contentDocument!;
+      const target = doc.activeElement as (HTMLInputElement | HTMLTextAreaElement | null);
+      if (!target || !("setRangeText" in target)) return;
+      // setRangeText preserves selection + caret; the `data` field on an
+      // InputEvent + bubbling lets React-style controllers detect the change.
+      const start = target.selectionStart ?? target.value.length;
+      const end = target.selectionEnd ?? target.value.length;
+      target.setRangeText(text, start, end, "end");
+      target.dispatchEvent(new InputEvent("input", { bubbles: true, data: text, inputType: "insertText" }));
+    }
+
+    async sendPress(key: string, modifiers?: string[]) {
+      if (!this.isReachable()) return;
+      const doc = this._iframe!.contentDocument!;
+      const target = (doc.activeElement ?? doc.body) as Element | null;
+      if (!target) return;
+      const init: KeyboardEventInit = {
+        bubbles: true, cancelable: true, key, ...this.modifierBag(modifiers),
+      };
+      target.dispatchEvent(new KeyboardEvent("keydown", init));
+      target.dispatchEvent(new KeyboardEvent("keypress", init));
+      target.dispatchEvent(new KeyboardEvent("keyup", init));
+    }
+
+    async sendScroll(args: { dx: number; dy: number; x?: number; y?: number; modifiers?: string[] }) {
+      if (!this.isReachable()) return;
+      this._iframe!.contentWindow!.scrollBy(args.dx, args.dy);
+    }
+
     async screenshot(_args?: { format?: "png" | "jpeg"; quality?: number }) {
       return { ok: false as const, code: "not_supported" as const, message: "iframe polyfill does not support screenshot" };
     }

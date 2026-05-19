@@ -171,18 +171,27 @@ void on_evaluate_done(GObject* source, GAsyncResult* res, gpointer user_data) {
       }
       payload += ",\"ok\":true,\"value\":\"" + bunite_linux::escapeJsonString(value_json) + "\"}";
     } else {
+      static const std::string codePrefix = "{\"__bunite_ok\":false,\"code\":\"";
+      std::string code = "runtime_error";
       std::string msg = "script threw";
-      size_t key = inner.find("\"message\":\"");
-      if (key != std::string::npos) {
-        size_t start = key + std::strlen("\"message\":\"");
+      if (inner.compare(0, codePrefix.size(), codePrefix) == 0) {
+        size_t start = codePrefix.size();
         size_t end = start;
-        while (end < inner.size()) {
-          if (inner[end] == '"' && (end == start || inner[end - 1] != '\\')) break;
-          ++end;
+        while (end < inner.size() && inner[end] != '"') ++end;
+        if (end > start) code = inner.substr(start, end - start);
+        static const std::string msgKey = "\",\"message\":\"";
+        if (end + msgKey.size() <= inner.size() &&
+            inner.compare(end, msgKey.size(), msgKey) == 0) {
+          size_t mstart = end + msgKey.size();
+          size_t mend = mstart;
+          while (mend < inner.size()) {
+            if (inner[mend] == '"' && (mend == mstart || inner[mend - 1] != '\\')) break;
+            ++mend;
+          }
+          if (mend > mstart) msg = inner.substr(mstart, mend - mstart);
         }
-        if (end > start) msg = inner.substr(start, end - start);
       }
-      payload += ",\"ok\":false,\"code\":\"runtime_error\","
+      payload += ",\"ok\":false,\"code\":\"" + bunite_linux::escapeJsonString(code) + "\","
                  "\"message\":\"" + bunite_linux::escapeJsonString(msg) + "\"}";
     }
   }
@@ -206,7 +215,8 @@ extern "C" BUNITE_EXPORT void bunite_view_evaluate(uint32_t view_id, uint32_t re
   std::string wrapped =
       "(function(){try{return JSON.stringify({__bunite_ok:true,value:("
       + std::string(script) +
-      ")})}catch(e){return JSON.stringify({__bunite_ok:false,"
+      ")})}catch(e){var c=(e&&e.name===\"SecurityError\")?\"cross_origin\":\"runtime_error\";"
+      "return JSON.stringify({__bunite_ok:false,code:c,"
       "message:(e&&e.message)?e.message:String(e),"
       "name:(e&&e.name)||\"\"})}})()";
   runOnUiThreadSync([=]() {
@@ -429,6 +439,14 @@ void on_snapshot_done(GObject* source, GAsyncResult* res, gpointer user_data) {
 }
 
 }  // namespace
+
+extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
+  // WebKitGTK — input dispatch impossible on GTK4+Wayland; screenshot via cairo.
+  auto* v = bunite_linux::findView(view_id);
+  if (!v) return 0;
+  return BUNITE_CAP_EVALUATE | BUNITE_CAP_TITLE_CHANGED |
+         BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
+}
 
 extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
                                                        const char* format, int32_t quality) {

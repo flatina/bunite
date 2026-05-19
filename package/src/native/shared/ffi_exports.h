@@ -16,6 +16,8 @@ extern "C" {
 #endif
 
 /** ABI version. Bump on any breaking change to symbol set / signatures.
+ *  v7 (2026-05): adds `bunite_view_screenshot` + `bunite_view_capabilities`
+ *                + capability bitset (`BuniteCapBit`).
  *  v6 (2026-05): adds input dispatch — `bunite_view_click/type/press/scroll`.
  *  v5 (2026-05): adds `bunite_view_evaluate` + `evaluate-result` webview event. */
 BUNITE_EXPORT int32_t bunite_abi_version(void);
@@ -165,6 +167,24 @@ BUNITE_EXPORT void bunite_view_scroll(
 	double y,
 	uint32_t modifiers
 );
+
+/** Per-view automation capability bitset. Each backend returns the bits it
+ *  actually supports — TS layer decodes to `SurfaceCapabilities` object.
+ *  Bits are locked at ABI v6; append-only. */
+enum BuniteCapBit {
+	BUNITE_CAP_EVALUATE             = 1u << 0,
+	BUNITE_CAP_CROSS_ORIGIN_EVAL    = 1u << 1,
+	BUNITE_CAP_TITLE_CHANGED        = 1u << 2,
+	BUNITE_CAP_NATIVE_INPUT_TRUSTED = 1u << 3,
+	BUNITE_CAP_CLICK                = 1u << 4,
+	BUNITE_CAP_TYPE                 = 1u << 5,
+	BUNITE_CAP_PRESS                = 1u << 6,
+	BUNITE_CAP_SCROLL               = 1u << 7,
+	BUNITE_CAP_SCREENSHOT           = 1u << 8,
+	BUNITE_CAP_FORMAT_PNG           = 1u << 9,
+	BUNITE_CAP_FORMAT_JPEG          = 1u << 10,
+};
+BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id);
 
 /** Capture the visible viewport as a PNG/JPEG image. Async — result reported
  *  via the webview event handler as `screenshot-result` with payload

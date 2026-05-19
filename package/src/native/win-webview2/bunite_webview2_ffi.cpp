@@ -12,7 +12,7 @@ void setViewInputPassthrough(ViewHost* v, bool passthrough);
 
 extern "C" {
 
-BUNITE_EXPORT int32_t bunite_abi_version(void) { return 6; }
+BUNITE_EXPORT int32_t bunite_abi_version(void) { return 7; }
 
 BUNITE_EXPORT void bunite_set_log_level(int32_t level) {
   if (level < 0) level = 0;
@@ -172,7 +172,8 @@ BUNITE_EXPORT void bunite_view_evaluate(uint32_t view_id, uint32_t request_id, c
   std::string wrapped =
       "(function(){try{return JSON.stringify({__bunite_ok:true,value:("
       + std::string(script) +
-      ")})}catch(e){return JSON.stringify({__bunite_ok:false,"
+      ")})}catch(e){var c=(e&&e.name===\"SecurityError\")?\"cross_origin\":\"runtime_error\";"
+      "return JSON.stringify({__bunite_ok:false,code:c,"
       "message:(e&&e.message)?e.message:String(e),"
       "name:(e&&e.name)||\"\"})}})()";
 
@@ -236,21 +237,31 @@ BUNITE_EXPORT void bunite_view_evaluate(uint32_t view_id, uint32_t request_id, c
                 payload = "{\"requestId\":" + std::to_string(request_id) +
                           ",\"ok\":true,\"value\":\"" + escapeJsonString(value_json) + "\"}";
               } else {
-                // __bunite_ok:false branch. Extract message string for envelope.
+                // __bunite_ok:false branch. Anchor extraction at fixed prefix —
+                // user-controlled e.message could otherwise inject a fake "code".
+                static const std::string codePrefix = "{\"__bunite_ok\":false,\"code\":\"";
+                std::string code = "runtime_error";
                 std::string msg = "script threw";
-                size_t key = inner.find("\"message\":\"");
-                if (key != std::string::npos) {
-                  size_t start = key + std::strlen("\"message\":\"");
-                  // Find unescaped closing quote.
+                if (inner.compare(0, codePrefix.size(), codePrefix) == 0) {
+                  size_t start = codePrefix.size();
                   size_t end = start;
-                  while (end < inner.size()) {
-                    if (inner[end] == '"' && (end == start || inner[end - 1] != '\\')) break;
-                    ++end;
+                  while (end < inner.size() && inner[end] != '"') ++end;
+                  if (end > start) code = inner.substr(start, end - start);
+                  // message key follows immediately after `","` separator.
+                  static const std::string msgKey = "\",\"message\":\"";
+                  if (end + msgKey.size() <= inner.size() &&
+                      inner.compare(end, msgKey.size(), msgKey) == 0) {
+                    size_t mstart = end + msgKey.size();
+                    size_t mend = mstart;
+                    while (mend < inner.size()) {
+                      if (inner[mend] == '"' && (mend == mstart || inner[mend - 1] != '\\')) break;
+                      ++mend;
+                    }
+                    if (mend > mstart) msg = inner.substr(mstart, mend - mstart);
                   }
-                  if (end > start) msg = inner.substr(start, end - start);
                 }
                 payload = "{\"requestId\":" + std::to_string(request_id) +
-                          ",\"ok\":false,\"code\":\"runtime_error\","
+                          ",\"ok\":false,\"code\":\"" + escapeJsonString(code) + "\","
                           "\"message\":\"" + msg + "\"}";
               }
             }
@@ -454,6 +465,15 @@ void emitScreenshotError(uint32_t view_id, uint32_t request_id, const char* code
 }
 
 }  // namespace
+
+BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
+  // WebView2 — CDP input path (isTrusted=false), CapturePreview screenshot.
+  ViewHost* v = getView(view_id);
+  if (!v) return 0;
+  return BUNITE_CAP_EVALUATE | BUNITE_CAP_TITLE_CHANGED |
+         BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
+         BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
+}
 
 BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
                                             const char* format, int32_t /*quality*/) {
