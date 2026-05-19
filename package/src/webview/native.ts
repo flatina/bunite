@@ -275,6 +275,42 @@ class BuniteWebviewElement extends HTMLElement {
     return callSurfaceTyped((s) => s.capabilities({ surfaceId: sid }));
   }
 
+  // Automation input — `send*` prefix avoids clashing with HTMLElement.click() / .scroll().
+  async sendClick(args: {
+    x: number; y: number;
+    button?: "left" | "middle" | "right";
+    clickCount?: number;
+    modifiers?: Array<"alt" | "ctrl" | "meta" | "shift">;
+  }): Promise<void> {
+    const sid = this._surfaceId;
+    if (sid == null) return;
+    await callSurfaceTyped((s) => s.click({ surfaceId: sid, ...args }));
+  }
+
+  async sendType(text: string): Promise<void> {
+    const sid = this._surfaceId;
+    if (sid == null) return;
+    await callSurfaceTyped((s) => s.type({ surfaceId: sid, text }));
+  }
+
+  async sendPress(
+    key: string,
+    modifiers?: Array<"alt" | "ctrl" | "meta" | "shift">
+  ): Promise<void> {
+    const sid = this._surfaceId;
+    if (sid == null) return;
+    await callSurfaceTyped((s) => s.press({ surfaceId: sid, key, modifiers }));
+  }
+
+  async sendScroll(args: {
+    dx: number; dy: number; x?: number; y?: number;
+    modifiers?: Array<"alt" | "ctrl" | "meta" | "shift">;
+  }): Promise<void> {
+    const sid = this._surfaceId;
+    if (sid == null) return;
+    await callSurfaceTyped((s) => s.scroll({ surfaceId: sid, ...args }));
+  }
+
   private _applySurfaceHidden() {
     const sid = this._surfaceId;
     if (sid == null) return;

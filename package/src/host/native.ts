@@ -102,6 +102,20 @@ type NativeSymbols = {
   bunite_view_reload: (viewId: number) => void;
   bunite_view_execute_javascript: (viewId: number, script: CStringPointer) => void;
   bunite_view_evaluate: (viewId: number, requestId: number, script: CStringPointer) => void;
+  bunite_view_click: (
+    viewId: number, x: number, y: number,
+    button: number, clickCount: number, modifiers: number
+  ) => void;
+  bunite_view_type: (viewId: number, text: CStringPointer) => void;
+  bunite_view_press: (
+    viewId: number, windowsVkCode: number, macKeyCode: number,
+    key: CStringPointer, code: CStringPointer, character: CStringPointer,
+    modifiers: number
+  ) => void;
+  bunite_view_scroll: (
+    viewId: number, dx: number, dy: number,
+    x: number, y: number, modifiers: number
+  ) => void;
   bunite_view_load_url: (viewId: number, url: CStringPointer) => void;
   bunite_view_load_html: (viewId: number, html: CStringPointer) => void;
   bunite_view_remove: (viewId: number) => void;
@@ -287,6 +301,22 @@ const nativeSymbolDefinitions = {
   },
   bunite_view_evaluate: {
     args: [FFIType.u32, FFIType.u32, FFIType.cstring],
+    returns: FFIType.void
+  },
+  bunite_view_click: {
+    args: [FFIType.u32, FFIType.f64, FFIType.f64, FFIType.i32, FFIType.i32, FFIType.u32],
+    returns: FFIType.void
+  },
+  bunite_view_type: {
+    args: [FFIType.u32, FFIType.cstring],
+    returns: FFIType.void
+  },
+  bunite_view_press: {
+    args: [FFIType.u32, FFIType.i32, FFIType.i32, FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.u32],
+    returns: FFIType.void
+  },
+  bunite_view_scroll: {
+    args: [FFIType.u32, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.u32],
     returns: FFIType.void
   },
   bunite_view_load_url: {
@@ -656,7 +686,7 @@ export async function initNativeRuntime(
     throw new Error(`bunite: failed to load native library at ${artifacts.nativeLibPath}.`);
   }
 
-  const EXPECTED_ABI = 5;
+  const EXPECTED_ABI = 6;
   const nativeAbi = nativeLibrary.symbols.bunite_abi_version();
   if (nativeAbi !== EXPECTED_ABI) {
     throw new Error(

@@ -94,6 +94,28 @@ export type EvaluateResult =
   | { ok: true; value: unknown }
   | { ok: false; code: "cross_origin" | "runtime_error" | "not_supported" | "timeout"; message: string };
 
+/** Modifier bitmask for input dispatch. Backends translate to native form. */
+export type Modifier = "alt" | "ctrl" | "meta" | "shift";
+
+export interface ClickArgs {
+  surfaceId: number;
+  x: number;
+  y: number;
+  button?: "left" | "middle" | "right";
+  clickCount?: number;
+  modifiers?: Modifier[];
+}
+export interface TypeArgs { surfaceId: number; text: string }
+export interface PressArgs { surfaceId: number; key: string; modifiers?: Modifier[] }
+export interface ScrollArgs {
+  surfaceId: number;
+  dx: number;
+  dy: number;
+  x?: number;
+  y?: number;
+  modifiers?: Modifier[];
+}
+
 export const SurfaceCap = defineCap("bunite.Surface", {
   init: call<{
     src: string;
@@ -114,6 +136,10 @@ export const SurfaceCap = defineCap("bunite.Surface", {
   reload: call<{ surfaceId: number }, void>(),
   evaluate: call<{ surfaceId: number; script: string }, EvaluateResult>(),
   capabilities: call<{ surfaceId: number }, SurfaceCapabilities>(),
+  click: call<ClickArgs, void>(),
+  type: call<TypeArgs, void>(),
+  press: call<PressArgs, void>(),
+  scroll: call<ScrollArgs, void>(),
   didNavigate: stream<void, { surfaceId: number; url: string }>(),
   titleChanged: stream<void, { surfaceId: number; title: string }>(),
 });

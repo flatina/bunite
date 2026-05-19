@@ -6,6 +6,9 @@ import {
 } from "./SurfaceRegistry";
 import { SurfaceCap, type ImplOf, IpcError } from "../../rpc/index";
 import { Stream } from "../../rpc/stream";
+import { encodeModifiers, resolveKey } from "./inputDispatch";
+
+const BUTTON_CODE: Record<"left" | "middle" | "right", 0 | 1 | 2> = { left: 0, middle: 1, right: 2 };
 
 function applyHostOffset(hostView: BrowserView, x: number, y: number) {
   return { x: x + hostView.frame.x, y: y + hostView.frame.y };
@@ -149,6 +152,31 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       const record = ownedSurface(surfaceId);
       if (!record) return { ok: false, code: "not_supported", message: "surface not found" };
       return record.view.evaluate(script);
+    },
+
+    click: ({ surfaceId, x, y, button = "left", clickCount = 1, modifiers }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return;
+      record.view.click(x, y, BUTTON_CODE[button], clickCount, encodeModifiers(modifiers));
+    },
+
+    type: ({ surfaceId, text }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return;
+      record.view.type(text);
+    },
+
+    press: ({ surfaceId, key, modifiers }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return;
+      const r = resolveKey(key);
+      record.view.press(r.windowsVkCode, r.macKeyCode, r.key, r.code, r.character, encodeModifiers(modifiers));
+    },
+
+    scroll: ({ surfaceId, dx, dy, x = 0, y = 0, modifiers }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return;
+      record.view.scroll(dx, dy, x, y, encodeModifiers(modifiers));
     },
 
     capabilities: ({ surfaceId }) => {

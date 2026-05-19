@@ -335,6 +335,13 @@ extern "C" BUNITE_EXPORT void bunite_view_remove(uint32_t view_id) {
   runOnUiThreadSync([=]() { bunite_linux::removeView(view_id); });
 }
 
+// Input dispatch — no-op on GTK4 + Wayland (no portable synthetic-input primitive).
+// Capability `click/type/press/scroll: false` is honest; calls are silent no-ops.
+extern "C" BUNITE_EXPORT void bunite_view_click(uint32_t, double, double, int32_t, int32_t, uint32_t) {}
+extern "C" BUNITE_EXPORT void bunite_view_type(uint32_t, const char*) {}
+extern "C" BUNITE_EXPORT void bunite_view_press(uint32_t, int32_t, int32_t, const char*, const char*, const char*, uint32_t) {}
+extern "C" BUNITE_EXPORT void bunite_view_scroll(uint32_t, double, double, double, double, uint32_t) {}
+
 extern "C" BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id) {
   (void)view_id; BUNITE_LINUX_TODO("bunite_view_open_devtools");
 }

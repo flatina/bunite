@@ -133,6 +133,13 @@ function definePolyfillClass(): CustomElementConstructor {
         scroll: false, screenshot: false,
       };
     }
+
+    // Element parity with the native path. B4 wires sandbox-aware impls
+    // (unsandboxed + same-origin reachability → synthetic events).
+    async sendClick(_args: { x: number; y: number; button?: string; clickCount?: number; modifiers?: string[] }) {}
+    async sendType(_text: string) {}
+    async sendPress(_key: string, _modifiers?: string[]) {}
+    async sendScroll(_args: { dx: number; dy: number; x?: number; y?: number; modifiers?: string[] }) {}
   }
 
   cachedClass = BuniteWebviewPolyfill;

@@ -16,6 +16,7 @@ extern "C" {
 #endif
 
 /** ABI version. Bump on any breaking change to symbol set / signatures.
+ *  v6 (2026-05): adds input dispatch — `bunite_view_click/type/press/scroll`.
  *  v5 (2026-05): adds `bunite_view_evaluate` + `evaluate-result` webview event. */
 BUNITE_EXPORT int32_t bunite_abi_version(void);
 BUNITE_EXPORT void bunite_set_log_level(int32_t level);
@@ -124,6 +125,47 @@ BUNITE_EXPORT void bunite_view_set_anchor(uint32_t view_id, int mode, double ins
 BUNITE_EXPORT void bunite_view_go_back(uint32_t view_id);
 BUNITE_EXPORT void bunite_view_reload(uint32_t view_id);
 BUNITE_EXPORT void bunite_view_remove(uint32_t view_id);
+
+/* Input dispatch (ABI v6). Coordinates are CSS px, viewport-relative (TS
+ * normalizes devicePixelRatio + container offset). Modifier bitmask is
+ * Alt=1, Ctrl=2, Meta=4, Shift=8. Backends translate to their native form.
+ * No result envelope — `nativeInputTrusted` capability indicates DOM trust. */
+BUNITE_EXPORT void bunite_view_click(
+	uint32_t view_id,
+	double x,
+	double y,
+	int32_t button,       /* 0=left, 1=middle, 2=right */
+	int32_t click_count,  /* >=1 */
+	uint32_t modifiers
+);
+/** Type UTF-8 text. Each codepoint becomes a CHAR / insertText event — no IME composition. */
+BUNITE_EXPORT void bunite_view_type(uint32_t view_id, const char* text);
+/** Press a key: down + (optional) char + up.
+ *  `windows_vk_code` is Win32 VK_* for CEF / WebView2 CDP path.
+ *  `mac_key_code` is the Quartz Event Services hardware key code (kVK_*) — separate
+ *  from Win VK because DOM `KeyboardEvent.code` is derived from this on WebKit.
+ *  `key` / `code` are DOM `KeyboardEvent.key` / `.code` strings, passed to CDP so
+ *  the page sees the correct values. `character` is UTF-8 for the CHAR event;
+ *  empty = skip char. 0 vk codes = skip the virtual-key down/up. */
+BUNITE_EXPORT void bunite_view_press(
+	uint32_t view_id,
+	int32_t windows_vk_code,
+	int32_t mac_key_code,
+	const char* key,
+	const char* code,
+	const char* character,
+	uint32_t modifiers
+);
+/** Scroll at (x, y). dx/dy in CSS px; positive = right/down. */
+BUNITE_EXPORT void bunite_view_scroll(
+	uint32_t view_id,
+	double dx,
+	double dy,
+	double x,
+	double y,
+	uint32_t modifiers
+);
+
 BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id);
 BUNITE_EXPORT void bunite_view_close_devtools(uint32_t view_id);
 BUNITE_EXPORT void bunite_view_toggle_devtools(uint32_t view_id);

@@ -20,7 +20,7 @@ using bunite_mac::runOnUiThreadSync;
 
 namespace {
 
-constexpr int32_t kBuniteAbiVersion = 5;
+constexpr int32_t kBuniteAbiVersion = 6;
 
 // warn-once — avoid log spam from tight JS call loops.
 #define BUNITE_MAC_TODO(name)                                       \
@@ -499,6 +499,134 @@ extern "C" BUNITE_EXPORT void bunite_view_reload(uint32_t view_id) {
 
 extern "C" BUNITE_EXPORT void bunite_view_remove(uint32_t view_id) {
   runOnUiThreadSync([=]() { bunite_mac::removeView(view_id); });
+}
+
+// Input dispatch — synthesized NSEvent + window sendEvent: (full responder chain).
+// `isTrusted` is false (synthetic), so `nativeInputTrusted` capability stays false.
+namespace {
+
+NSEventModifierFlags macModifiers(uint32_t bits) {
+  NSEventModifierFlags m = 0;
+  if (bits & 8) m |= NSEventModifierFlagShift;
+  if (bits & 2) m |= NSEventModifierFlagControl;
+  if (bits & 1) m |= NSEventModifierFlagOption;
+  if (bits & 4) m |= NSEventModifierFlagCommand;
+  return m;
+}
+
+NSEventType macMouseDownType(int32_t button) {
+  switch (button) {
+    case 1: return NSEventTypeOtherMouseDown;
+    case 2: return NSEventTypeRightMouseDown;
+    default: return NSEventTypeLeftMouseDown;
+  }
+}
+NSEventType macMouseUpType(int32_t button) {
+  switch (button) {
+    case 1: return NSEventTypeOtherMouseUp;
+    case 2: return NSEventTypeRightMouseUp;
+    default: return NSEventTypeLeftMouseUp;
+  }
+}
+
+// FFI x/y is CSS px in top-left view space; convert to AppKit window coords.
+// WKWebView is non-flipped, so y flips against bounds.height.
+NSPoint viewPointToWindow(NSView* view, double x, double y) {
+  NSRect bounds = view.bounds;
+  NSPoint local = view.isFlipped ? NSMakePoint(x, y) : NSMakePoint(x, bounds.size.height - y);
+  return [view convertPoint:local toView:nil];
+}
+
+}  // namespace
+
+extern "C" BUNITE_EXPORT void bunite_view_click(uint32_t view_id, double x, double y,
+                                                  int32_t button, int32_t click_count, uint32_t modifiers) {
+  if (click_count < 1) click_count = 1;
+  runOnUiThreadSync([=]() {
+    auto* v = bunite_mac::findView(view_id);
+    if (!v || !v->webview || !v->webview.window) return;
+    NSWindow* win = v->webview.window;
+    NSPoint loc = viewPointToWindow(v->webview, x, y);
+    NSEventModifierFlags flags = macModifiers(modifiers);
+    // dblclick parity: ascending clickCount per pair.
+    for (int i = 1; i <= click_count; ++i) {
+      NSEvent* down = [NSEvent mouseEventWithType:macMouseDownType(button)
+                                         location:loc modifierFlags:flags
+                                        timestamp:[[NSProcessInfo processInfo] systemUptime]
+                                     windowNumber:win.windowNumber context:nil
+                                      eventNumber:0 clickCount:i pressure:1.0];
+      NSEvent* up = [NSEvent mouseEventWithType:macMouseUpType(button)
+                                       location:loc modifierFlags:flags
+                                      timestamp:[[NSProcessInfo processInfo] systemUptime]
+                                   windowNumber:win.windowNumber context:nil
+                                    eventNumber:0 clickCount:i pressure:0.0];
+      // Dispatch via the window so hit-test + responder chain run normally.
+      if (down) [win sendEvent:down];
+      if (up)   [win sendEvent:up];
+    }
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_type(uint32_t view_id, const char* text) {
+  std::string s = text ? text : "";
+  runOnUiThreadSync([=]() {
+    auto* v = bunite_mac::findView(view_id);
+    if (!v || !v->webview) return;
+    NSString* ns = [NSString stringWithUTF8String:s.c_str()];
+    if (!ns.length) return;
+    // WKWebView conforms to NSTextInputClient — insertText: routes through
+    // its IME chain so DOM input events fire on focused editable elements.
+    if ([v->webview respondsToSelector:@selector(insertText:)]) {
+      [(id)v->webview insertText:ns];
+    }
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_press(uint32_t view_id, int32_t /*windows_vk_code*/,
+                                                  int32_t mac_key_code, const char* /*key*/, const char* /*code*/,
+                                                  const char* character, uint32_t modifiers) {
+  std::string char_str = character ? character : "";
+  runOnUiThreadSync([=]() {
+    auto* v = bunite_mac::findView(view_id);
+    if (!v || !v->webview || !v->webview.window) return;
+    NSString* chars = char_str.empty() ? @"" : [NSString stringWithUTF8String:char_str.c_str()];
+    NSEventModifierFlags flags = macModifiers(modifiers);
+    NSWindow* win = v->webview.window;
+    NSEvent* down = [NSEvent keyEventWithType:NSEventTypeKeyDown
+                                     location:NSZeroPoint modifierFlags:flags
+                                    timestamp:[[NSProcessInfo processInfo] systemUptime]
+                                 windowNumber:win.windowNumber context:nil
+                                   characters:chars charactersIgnoringModifiers:chars
+                                    isARepeat:NO keyCode:(unsigned short)mac_key_code];
+    NSEvent* up = [NSEvent keyEventWithType:NSEventTypeKeyUp
+                                   location:NSZeroPoint modifierFlags:flags
+                                  timestamp:[[NSProcessInfo processInfo] systemUptime]
+                               windowNumber:win.windowNumber context:nil
+                                 characters:chars charactersIgnoringModifiers:chars
+                                  isARepeat:NO keyCode:(unsigned short)mac_key_code];
+    if (down) [win sendEvent:down];
+    if (up)   [win sendEvent:up];
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_scroll(uint32_t view_id, double dx, double dy,
+                                                   double x, double y, uint32_t modifiers) {
+  runOnUiThreadSync([=]() {
+    auto* v = bunite_mac::findView(view_id);
+    if (!v || !v->webview || !v->webview.window) return;
+    CGEventRef cg = CGEventCreateScrollWheelEvent(NULL, kCGScrollEventUnitPixel, 2,
+                                                  static_cast<int32_t>(-dy),
+                                                  static_cast<int32_t>(-dx));
+    if (!cg) return;
+    // CGEvent location is screen coords; CSS px → window → screen.
+    NSPoint inWin = viewPointToWindow(v->webview, x, y);
+    NSPoint onScreen = [v->webview.window convertPointToScreen:inWin];
+    CGEventSetLocation(cg, CGPointMake(onScreen.x, onScreen.y));
+    CGEventSetFlags(cg, (CGEventFlags)macModifiers(modifiers));
+    NSEvent* ev = [NSEvent eventWithCGEvent:cg];
+    CFRelease(cg);
+    if (ev) [v->webview scrollWheel:ev];
+  });
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id) {

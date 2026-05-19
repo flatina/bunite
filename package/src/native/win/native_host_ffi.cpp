@@ -6,7 +6,7 @@
 using bunite_win::runOnUiThreadSync;
 using bunite_win::runOnCefUiThreadSync;
 
-static constexpr int32_t BUNITE_ABI_VERSION = 5;
+static constexpr int32_t BUNITE_ABI_VERSION = 6;
 
 namespace {
 
@@ -855,6 +855,144 @@ extern "C" BUNITE_EXPORT void bunite_view_reload(uint32_t view_id) {
 
 extern "C" BUNITE_EXPORT void bunite_view_remove(uint32_t view_id) {
   bunite_win::postCefUiTask([view_id]() { bunite_win::closeViewHost(bunite_win::getViewHostById(view_id)); });
+}
+
+// Input dispatch — native CEF API. Real OS-input path → MouseEvent.isTrusted = true.
+namespace {
+
+constexpr uint32_t MOD_ALT = 1, MOD_CTRL = 2, MOD_META = 4, MOD_SHIFT = 8;
+
+uint32_t cefModifiers(uint32_t bits) {
+  uint32_t flags = 0;
+  if (bits & MOD_SHIFT) flags |= EVENTFLAG_SHIFT_DOWN;
+  if (bits & MOD_CTRL)  flags |= EVENTFLAG_CONTROL_DOWN;
+  if (bits & MOD_ALT)   flags |= EVENTFLAG_ALT_DOWN;
+  if (bits & MOD_META)  flags |= EVENTFLAG_COMMAND_DOWN;
+  return flags;
+}
+
+cef_mouse_button_type_t cefButton(int32_t b) {
+  switch (b) { case 1: return MBT_MIDDLE; case 2: return MBT_RIGHT; default: return MBT_LEFT; }
+}
+
+}  // namespace
+
+extern "C" BUNITE_EXPORT void bunite_view_click(uint32_t view_id, double x, double y,
+                                                  int32_t button, int32_t click_count, uint32_t modifiers) {
+  if (click_count < 1) click_count = 1;
+  bunite_win::postCefUiTask([view_id, x, y, button, click_count, modifiers]() {
+    auto* view = bunite_win::getViewHostById(view_id);
+    if (!view || !view->browser) return;
+    auto host = view->browser->GetHost();
+    if (!host) return;
+    CefMouseEvent ev{};
+    ev.x = static_cast<int>(x);
+    ev.y = static_cast<int>(y);
+    ev.modifiers = cefModifiers(modifiers);
+    // Multi-click → repeated pairs with increasing clickCount so the page sees dblclick.
+    for (int i = 1; i <= click_count; ++i) {
+      host->SendMouseClickEvent(ev, cefButton(button), /*mouseUp=*/false, i);
+      host->SendMouseClickEvent(ev, cefButton(button), /*mouseUp=*/true, i);
+    }
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_type(uint32_t view_id, const char* text) {
+  std::string s = text ? text : "";
+  bunite_win::postCefUiTask([view_id, s]() {
+    auto* view = bunite_win::getViewHostById(view_id);
+    if (!view || !view->browser) return;
+    auto host = view->browser->GetHost();
+    if (!host) return;
+    std::wstring wide(s.size(), 0);
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()),
+                                wide.data(), static_cast<int>(wide.size()));
+    wide.resize(n);
+    // BMP codepoints map cleanly to a single CHAR event. Surrogate pairs would
+    // arrive as two CHAR events (mis-firing `keypress` twice); warn-once + skip
+    // until proper supplementary-plane handling lands.
+    for (size_t i = 0; i < wide.size(); ++i) {
+      wchar_t ch = wide[i];
+      if (ch >= 0xD800 && ch <= 0xDBFF) {
+        static bool warned = false;
+        if (!warned) { warned = true; BUNITE_WARN("cef type: supplementary-plane codepoint skipped"); }
+        if (i + 1 < wide.size()) ++i;  // skip low surrogate
+        continue;
+      }
+      CefKeyEvent ke{};
+      ke.type = KEYEVENT_CHAR;
+      ke.character = ch;
+      ke.unmodified_character = ch;
+      host->SendKeyEvent(ke);
+    }
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_press(uint32_t view_id, int32_t windows_vk_code,
+                                                  int32_t /*mac_key_code*/,
+                                                  const char* /*key*/, const char* /*code*/,
+                                                  const char* character, uint32_t modifiers) {
+  std::string char_str = character ? character : "";
+  bunite_win::postCefUiTask([view_id, windows_vk_code, char_str, modifiers]() {
+    auto* view = bunite_win::getViewHostById(view_id);
+    if (!view || !view->browser) return;
+    auto host = view->browser->GetHost();
+    if (!host) return;
+    uint32_t mod = cefModifiers(modifiers);
+
+    // 3-event sequence: RAWKEYDOWN + CHAR + KEYUP — DOM keydown/keypress/keyup parity.
+    if (windows_vk_code != 0) {
+      CefKeyEvent down{};
+      down.type = KEYEVENT_RAWKEYDOWN;
+      down.windows_key_code = windows_vk_code;
+      down.native_key_code = windows_vk_code;
+      down.modifiers = mod;
+      host->SendKeyEvent(down);
+    }
+    if (!char_str.empty()) {
+      std::wstring wide(char_str.size(), 0);
+      int n = MultiByteToWideChar(CP_UTF8, 0, char_str.c_str(), static_cast<int>(char_str.size()),
+                                  wide.data(), static_cast<int>(wide.size()));
+      wide.resize(n);
+      for (size_t i = 0; i < wide.size(); ++i) {
+        wchar_t ch = wide[i];
+        if (ch >= 0xD800 && ch <= 0xDBFF) {
+          if (i + 1 < wide.size()) ++i;
+          continue;
+        }
+        CefKeyEvent ce{};
+        ce.type = KEYEVENT_CHAR;
+        ce.character = ch;
+        ce.unmodified_character = ch;
+        ce.windows_key_code = ch;
+        ce.modifiers = mod;
+        host->SendKeyEvent(ce);
+      }
+    }
+    if (windows_vk_code != 0) {
+      CefKeyEvent up{};
+      up.type = KEYEVENT_KEYUP;
+      up.windows_key_code = windows_vk_code;
+      up.native_key_code = windows_vk_code;
+      up.modifiers = mod;
+      host->SendKeyEvent(up);
+    }
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_scroll(uint32_t view_id, double dx, double dy,
+                                                   double x, double y, uint32_t modifiers) {
+  bunite_win::postCefUiTask([view_id, dx, dy, x, y, modifiers]() {
+    auto* view = bunite_win::getViewHostById(view_id);
+    if (!view || !view->browser) return;
+    auto host = view->browser->GetHost();
+    if (!host) return;
+    CefMouseEvent ev{};
+    ev.x = static_cast<int>(x);
+    ev.y = static_cast<int>(y);
+    ev.modifiers = cefModifiers(modifiers);
+    host->SendMouseWheelEvent(ev, static_cast<int>(dx), static_cast<int>(dy));
+  });
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id) {

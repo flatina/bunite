@@ -68,18 +68,23 @@ setEvaluateResultHandler((viewId, raw: NativeEvaluateResult) => {
 });
 
 function computeCapabilities(engine: string | null): SurfaceCapabilities {
-  const supports =
+  const evalSupports =
     engine === "webview2" || engine === "cef" ||
     engine === "wkwebview" || engine === "webkitgtk";
+  // CEF uses true OS input path (isTrusted=true). WebView2 CDP + WKWebView
+  // synthetic NSEvent both produce isTrusted=false. linux: no input path.
+  const inputSupports =
+    engine === "webview2" || engine === "cef" || engine === "wkwebview";
+  const nativeInputTrusted = engine === "cef";
   return {
-    evaluate: supports,
+    evaluate: evalSupports,
     crossOriginEval: false,
-    titleChanged: supports,
-    nativeInputTrusted: false,
-    click: false,
-    type: false,
-    press: false,
-    scroll: false,
+    titleChanged: evalSupports,
+    nativeInputTrusted,
+    click: inputSupports,
+    type: inputSupports,
+    press: inputSupports,
+    scroll: inputSupports,
     screenshot: false,
   };
 }
@@ -285,6 +290,30 @@ export class BrowserView {
 
   capabilities(): SurfaceCapabilities {
     return computeCapabilities(getNativeEngineName());
+  }
+
+  click(x: number, y: number, button: 0 | 1 | 2, clickCount: number, modifiers: number) {
+    if (!this.nativeAttached) return;
+    getNativeLibrary()?.symbols.bunite_view_click(this.id, x, y, button, clickCount, modifiers);
+  }
+
+  type(text: string) {
+    if (!this.nativeAttached) return;
+    getNativeLibrary()?.symbols.bunite_view_type(this.id, toCString(text));
+  }
+
+  press(windowsVkCode: number, macKeyCode: number, key: string, code: string, character: string, modifiers: number) {
+    if (!this.nativeAttached) return;
+    getNativeLibrary()?.symbols.bunite_view_press(
+      this.id, windowsVkCode, macKeyCode,
+      toCString(key), toCString(code), toCString(character),
+      modifiers
+    );
+  }
+
+  scroll(dx: number, dy: number, x: number, y: number, modifiers: number) {
+    if (!this.nativeAttached) return;
+    getNativeLibrary()?.symbols.bunite_view_scroll(this.id, dx, dy, x, y, modifiers);
   }
 
   goBack() {

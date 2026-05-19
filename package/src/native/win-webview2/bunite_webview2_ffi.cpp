@@ -11,7 +11,7 @@ void setViewInputPassthrough(ViewHost* v, bool passthrough);
 
 extern "C" {
 
-BUNITE_EXPORT int32_t bunite_abi_version(void) { return 5; }
+BUNITE_EXPORT int32_t bunite_abi_version(void) { return 6; }
 
 BUNITE_EXPORT void bunite_set_log_level(int32_t level) {
   if (level < 0) level = 0;
@@ -365,6 +365,84 @@ BUNITE_EXPORT void bunite_view_reload(uint32_t view_id) {
 }
 
 BUNITE_EXPORT void bunite_view_remove(uint32_t view_id) { destroyView(view_id); }
+
+// Input dispatch — CDP via CallDevToolsProtocolMethod (Playwright pattern).
+// MouseEvent.isTrusted is false (CDP-synthesized); capability honest.
+namespace {
+
+const char* cdpMouseButton(int32_t b) {
+  switch (b) { case 1: return "middle"; case 2: return "right"; default: return "left"; }
+}
+
+void cdpCall(ViewHost* v, const wchar_t* method, const std::string& json) {
+  if (!v || !v->webview) return;
+  v->webview->CallDevToolsProtocolMethod(
+      method, utf8ToWide(json).c_str(), nullptr);
+}
+
+}  // namespace
+
+BUNITE_EXPORT void bunite_view_click(uint32_t view_id, double x, double y,
+                                      int32_t button, int32_t click_count, uint32_t modifiers) {
+  ViewHost* v = getView(view_id);
+  if (!v) return;
+  if (click_count < 1) click_count = 1;
+  // Multi-click → repeated pairs with increasing clickCount so the page sees
+  // a dblclick (Playwright convention).
+  for (int i = 1; i <= click_count; ++i) {
+    std::string base = "\"x\":" + std::to_string(x) + ",\"y\":" + std::to_string(y) +
+                       ",\"button\":\"" + cdpMouseButton(button) + "\","
+                       "\"clickCount\":" + std::to_string(i) +
+                       ",\"modifiers\":" + std::to_string(modifiers);
+    cdpCall(v, L"Input.dispatchMouseEvent", "{\"type\":\"mousePressed\"," + base + "}");
+    cdpCall(v, L"Input.dispatchMouseEvent", "{\"type\":\"mouseReleased\"," + base + "}");
+  }
+}
+
+BUNITE_EXPORT void bunite_view_type(uint32_t view_id, const char* text) {
+  ViewHost* v = getView(view_id);
+  if (!v || !text) return;
+  std::string json = "{\"text\":\"" + escapeJsonString(text) + "\"}";
+  cdpCall(v, L"Input.insertText", json);
+}
+
+BUNITE_EXPORT void bunite_view_press(uint32_t view_id, int32_t windows_vk_code,
+                                      int32_t /*mac_key_code*/, const char* key, const char* code,
+                                      const char* character, uint32_t modifiers) {
+  ViewHost* v = getView(view_id);
+  if (!v) return;
+  std::string char_str = character ? character : "";
+  std::string key_str = key ? key : "";
+  std::string code_str = code ? code : "";
+
+  auto buildPart = [&](const char* type, bool include_text) {
+    std::string out = "{\"type\":\"";
+    out += type;
+    out += "\",\"modifiers\":" + std::to_string(modifiers);
+    if (windows_vk_code != 0) out += ",\"windowsVirtualKeyCode\":" + std::to_string(windows_vk_code);
+    if (!key_str.empty())  out += ",\"key\":\""  + escapeJsonString(key_str)  + "\"";
+    if (!code_str.empty()) out += ",\"code\":\"" + escapeJsonString(code_str) + "\"";
+    if (include_text && !char_str.empty())
+      out += ",\"text\":\"" + escapeJsonString(char_str) + "\"";
+    out += "}";
+    return out;
+  };
+
+  cdpCall(v, L"Input.dispatchKeyEvent", buildPart("keyDown", /*include_text=*/true));
+  cdpCall(v, L"Input.dispatchKeyEvent", buildPart("keyUp",   /*include_text=*/false));
+}
+
+BUNITE_EXPORT void bunite_view_scroll(uint32_t view_id, double dx, double dy,
+                                       double x, double y, uint32_t modifiers) {
+  ViewHost* v = getView(view_id);
+  if (!v) return;
+  std::string json = "{\"type\":\"mouseWheel\",\"x\":" + std::to_string(x) +
+                     ",\"y\":" + std::to_string(y) +
+                     ",\"deltaX\":" + std::to_string(dx) +
+                     ",\"deltaY\":" + std::to_string(dy) +
+                     ",\"modifiers\":" + std::to_string(modifiers) + "}";
+  cdpCall(v, L"Input.dispatchMouseEvent", json);
+}
 
 BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id) {
   ViewHost* v = getView(view_id);
