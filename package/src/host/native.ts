@@ -116,6 +116,9 @@ type NativeSymbols = {
     viewId: number, dx: number, dy: number,
     x: number, y: number, modifiers: number
   ) => void;
+  bunite_view_screenshot: (
+    viewId: number, requestId: number, format: CStringPointer, quality: number
+  ) => void;
   bunite_view_load_url: (viewId: number, url: CStringPointer) => void;
   bunite_view_load_html: (viewId: number, html: CStringPointer) => void;
   bunite_view_remove: (viewId: number) => void;
@@ -319,6 +322,10 @@ const nativeSymbolDefinitions = {
     args: [FFIType.u32, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.u32],
     returns: FFIType.void
   },
+  bunite_view_screenshot: {
+    args: [FFIType.u32, FFIType.u32, FFIType.cstring, FFIType.i32],
+    returns: FFIType.void
+  },
   bunite_view_load_url: {
     args: [FFIType.u32, FFIType.cstring],
     returns: FFIType.void
@@ -378,6 +385,20 @@ export type NativeEvaluateResult = {
 let evaluateResultHandler: ((viewId: number, result: NativeEvaluateResult) => void) | null = null;
 export function setEvaluateResultHandler(handler: (viewId: number, result: NativeEvaluateResult) => void) {
   evaluateResultHandler = handler;
+}
+
+export type NativeScreenshotResult = {
+  requestId: number;
+  ok: boolean;
+  format?: "png" | "jpeg";
+  mime?: string;
+  dataBase64?: string;
+  code?: string;
+  message?: string;
+};
+let screenshotResultHandler: ((viewId: number, result: NativeScreenshotResult) => void) | null = null;
+export function setScreenshotResultHandler(handler: (viewId: number, result: NativeScreenshotResult) => void) {
+  screenshotResultHandler = handler;
 }
 
 // Per-view deferred resolvers for "view-ready" (OnAfterCreated).
@@ -527,6 +548,11 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
               value?: string; code?: string; message?: string;
             };
             evaluateResultHandler?.(viewId, parsed);
+            break;
+          }
+          case "screenshot-result": {
+            const parsed = maybeParsePayload(payload) as NativeScreenshotResult;
+            screenshotResultHandler?.(viewId, parsed);
             break;
           }
           case "title-changed": {

@@ -1,6 +1,7 @@
 #include "webview2_internal.h"
 
 #include <cstring>
+#include <wincrypt.h>  // CryptBinaryToStringA — base64 encoding for screenshot payload.
 
 using namespace bunite_webview2;
 
@@ -430,6 +431,83 @@ BUNITE_EXPORT void bunite_view_press(uint32_t view_id, int32_t windows_vk_code,
 
   cdpCall(v, L"Input.dispatchKeyEvent", buildPart("keyDown", /*include_text=*/true));
   cdpCall(v, L"Input.dispatchKeyEvent", buildPart("keyUp",   /*include_text=*/false));
+}
+
+namespace {
+
+// Win CryptoAPI base64 — `bytes` → printable string (no line breaks).
+std::string base64Encode(const BYTE* bytes, DWORD len) {
+  DWORD out_len = 0;
+  if (!CryptBinaryToStringA(bytes, len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, nullptr, &out_len)) return {};
+  std::string out(out_len, '\0');
+  if (!CryptBinaryToStringA(bytes, len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, out.data(), &out_len)) return {};
+  out.resize(out_len);  // CryptBinaryToString writes including trailing null on some configs; trim.
+  while (!out.empty() && out.back() == '\0') out.pop_back();
+  return out;
+}
+
+void emitScreenshotError(uint32_t view_id, uint32_t request_id, const char* code, const std::string& message) {
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"" + code + "\","
+                        "\"message\":\"" + escapeJsonString(message) + "\"}";
+  emitWebviewEvent(view_id, "screenshot-result", payload);
+}
+
+}  // namespace
+
+BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
+                                            const char* format, int32_t /*quality*/) {
+  ViewHost* v = getView(view_id);
+  if (!v || !v->webview) {
+    emitScreenshotError(view_id, request_id, "not_supported", "view not ready");
+    return;
+  }
+  std::string fmt = format ? format : "png";
+  COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT cwv_fmt;
+  std::string mime;
+  if (fmt == "jpeg" || fmt == "jpg") {
+    cwv_fmt = COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG;
+    fmt = "jpeg"; mime = "image/jpeg";
+  } else {
+    cwv_fmt = COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG;
+    fmt = "png"; mime = "image/png";
+  }
+  ComPtr<IStream> stream;
+  HRESULT hr = CreateStreamOnHGlobal(nullptr, TRUE, &stream);
+  if (FAILED(hr) || !stream) {
+    emitScreenshotError(view_id, request_id, "runtime_error", "CreateStreamOnHGlobal failed");
+    return;
+  }
+  auto lifetime = g_runtime.lifetime;
+  v->webview->CapturePreview(
+      cwv_fmt, stream.Get(),
+      Microsoft::WRL::Callback<ICoreWebView2CapturePreviewCompletedHandler>(
+          [lifetime, view_id, request_id, fmt, mime, stream](HRESULT hr2) -> HRESULT {
+            if (!lifetime || !lifetime->alive.load()) return S_OK;
+            if (FAILED(hr2)) {
+              emitScreenshotError(view_id, request_id, "runtime_error", "CapturePreview failed");
+              return S_OK;
+            }
+            HGLOBAL hg = nullptr;
+            if (FAILED(GetHGlobalFromStream(stream.Get(), &hg)) || !hg) {
+              emitScreenshotError(view_id, request_id, "runtime_error", "GetHGlobalFromStream failed");
+              return S_OK;
+            }
+            const SIZE_T size = GlobalSize(hg);
+            void* ptr = GlobalLock(hg);
+            std::string b64 = ptr ? base64Encode(static_cast<const BYTE*>(ptr), static_cast<DWORD>(size)) : std::string{};
+            if (ptr) GlobalUnlock(hg);
+            if (b64.empty()) {
+              emitScreenshotError(view_id, request_id, "runtime_error", "base64 encode failed");
+              return S_OK;
+            }
+            std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                  ",\"ok\":true,\"format\":\"" + fmt +
+                                  "\",\"mime\":\"" + mime +
+                                  "\",\"dataBase64\":\"" + b64 + "\"}";
+            emitWebviewEvent(view_id, "screenshot-result", payload);
+            return S_OK;
+          }).Get());
 }
 
 BUNITE_EXPORT void bunite_view_scroll(uint32_t view_id, double dx, double dy,

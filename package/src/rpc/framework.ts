@@ -116,6 +116,16 @@ export interface ScrollArgs {
   modifiers?: Modifier[];
 }
 
+export interface ScreenshotArgs {
+  surfaceId: number;
+  format?: "png" | "jpeg";
+  /** JPEG only; 0–100. Ignored for PNG. */
+  quality?: number;
+}
+export type ScreenshotResult =
+  | { ok: true; data: Uint8Array; mime: string; format: "png" | "jpeg" }
+  | { ok: false; code: "not_supported" | "runtime_error" | "timeout" | "black_frame"; message: string };
+
 export const SurfaceCap = defineCap("bunite.Surface", {
   init: call<{
     src: string;
@@ -140,6 +150,7 @@ export const SurfaceCap = defineCap("bunite.Surface", {
   type: call<TypeArgs, void>(),
   press: call<PressArgs, void>(),
   scroll: call<ScrollArgs, void>(),
+  screenshot: call<ScreenshotArgs, ScreenshotResult>(),
   didNavigate: stream<void, { surfaceId: number; url: string }>(),
   titleChanged: stream<void, { surfaceId: number; title: string }>(),
 });

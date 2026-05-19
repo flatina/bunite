@@ -179,6 +179,12 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       record.view.scroll(dx, dy, x, y, encodeModifiers(modifiers));
     },
 
+    screenshot: async ({ surfaceId, format = "png", quality = 90 }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return { ok: false as const, code: "not_supported" as const, message: "surface not found" };
+      return record.view.screenshot(format, quality);
+    },
+
     capabilities: ({ surfaceId }) => {
       const record = ownedSurface(surfaceId);
       if (!record) {

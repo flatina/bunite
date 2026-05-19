@@ -1,10 +1,13 @@
 #include "bunite_linux_internal.h"
 #include "webview_storage.h"
 
+#include <cairo.h>
+
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <vector>
 
 using bunite_linux::g_runtime;
 using bunite_linux::runOnUiThreadSync;
@@ -341,6 +344,107 @@ extern "C" BUNITE_EXPORT void bunite_view_click(uint32_t, double, double, int32_
 extern "C" BUNITE_EXPORT void bunite_view_type(uint32_t, const char*) {}
 extern "C" BUNITE_EXPORT void bunite_view_press(uint32_t, int32_t, int32_t, const char*, const char*, const char*, uint32_t) {}
 extern "C" BUNITE_EXPORT void bunite_view_scroll(uint32_t, double, double, double, double, uint32_t) {}
+
+// Screenshot — webkit_web_view_get_snapshot → cairo_surface_t → PNG bytes via
+// cairo_surface_write_to_png_stream → g_base64_encode. JPEG path uses GdkPixbuf
+// for `pixbuf_save_to_buffer(... "jpeg" ...)`.
+namespace {
+
+struct LinuxShotCtx {
+  uint32_t view_id;
+  uint32_t request_id;
+  std::string format;  // "png" | "jpeg"
+  int32_t quality;
+};
+
+void emitLinuxShotError(uint32_t view_id, uint32_t request_id, const char* code, const std::string& msg) {
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"" + code + "\","
+                        "\"message\":\"" + bunite_linux::escapeJsonString(msg) + "\"}";
+  bunite_linux::emitWebviewEvent(view_id, "screenshot-result", payload);
+}
+
+cairo_status_t cairo_buf_writer(void* closure, const unsigned char* data, unsigned int len) {
+  auto* buf = static_cast<std::vector<unsigned char>*>(closure);
+  buf->insert(buf->end(), data, data + len);
+  return CAIRO_STATUS_SUCCESS;
+}
+
+void on_snapshot_done(GObject* source, GAsyncResult* res, gpointer user_data) {
+  auto* ctx = static_cast<LinuxShotCtx*>(user_data);
+  WebKitWebView* wv = WEBKIT_WEB_VIEW(source);
+  GError* err = nullptr;
+  cairo_surface_t* surface = webkit_web_view_get_snapshot_finish(wv, res, &err);
+  if (!surface) {
+    emitLinuxShotError(ctx->view_id, ctx->request_id, "runtime_error",
+                       err ? err->message : "snapshot returned nil");
+    if (err) g_error_free(err);
+    delete ctx;
+    return;
+  }
+
+  std::vector<unsigned char> bytes;
+  cairo_status_t st = CAIRO_STATUS_SUCCESS;
+  std::string mime;
+  if (ctx->format == "jpeg" || ctx->format == "jpg") {
+    // No native cairo JPEG; render surface to GdkPixbuf via cairo, save JPEG buffer.
+    int w = cairo_image_surface_get_width(surface);
+    int h = cairo_image_surface_get_height(surface);
+    GdkPixbuf* pix = gdk_pixbuf_get_from_surface(surface, 0, 0, w, h);
+    if (!pix) { st = CAIRO_STATUS_NO_MEMORY; }
+    else {
+      gchar* raw = nullptr; gsize raw_len = 0;
+      char qbuf[8]; snprintf(qbuf, sizeof(qbuf), "%d", ctx->quality < 0 ? 90 : (ctx->quality > 100 ? 100 : ctx->quality));
+      GError* perr = nullptr;
+      if (gdk_pixbuf_save_to_buffer(pix, &raw, &raw_len, "jpeg", &perr, "quality", qbuf, nullptr)) {
+        bytes.assign(raw, raw + raw_len);
+        g_free(raw);
+      } else {
+        if (perr) { st = CAIRO_STATUS_WRITE_ERROR; g_error_free(perr); }
+      }
+      g_object_unref(pix);
+    }
+    mime = "image/jpeg";
+    ctx->format = "jpeg";
+  } else {
+    st = cairo_surface_write_to_png_stream(surface, cairo_buf_writer, &bytes);
+    mime = "image/png";
+    ctx->format = "png";
+  }
+  cairo_surface_destroy(surface);
+
+  if (st != CAIRO_STATUS_SUCCESS || bytes.empty()) {
+    emitLinuxShotError(ctx->view_id, ctx->request_id, "runtime_error", "encode failed");
+    delete ctx;
+    return;
+  }
+  gchar* b64 = g_base64_encode(bytes.data(), bytes.size());
+  std::string payload = "{\"requestId\":" + std::to_string(ctx->request_id) +
+                        ",\"ok\":true,\"format\":\"" + ctx->format +
+                        "\",\"mime\":\"" + mime +
+                        "\",\"dataBase64\":\"" + (b64 ? b64 : "") + "\"}";
+  if (b64) g_free(b64);
+  bunite_linux::emitWebviewEvent(ctx->view_id, "screenshot-result", payload);
+  delete ctx;
+}
+
+}  // namespace
+
+extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
+                                                       const char* format, int32_t quality) {
+  std::string fmt = format ? format : "png";
+  runOnUiThreadSync([=]() {
+    auto* v = bunite_linux::findView(view_id);
+    if (!v || !v->webview) {
+      emitLinuxShotError(view_id, request_id, "not_supported", "view not ready");
+      return;
+    }
+    auto* ctx = new LinuxShotCtx{view_id, request_id, fmt, quality};
+    webkit_web_view_get_snapshot(v->webview, WEBKIT_SNAPSHOT_REGION_VISIBLE,
+                                 WEBKIT_SNAPSHOT_OPTIONS_NONE, nullptr,
+                                 on_snapshot_done, ctx);
+  });
+}
 
 extern "C" BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id) {
   (void)view_id; BUNITE_LINUX_TODO("bunite_view_open_devtools");

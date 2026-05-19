@@ -166,6 +166,22 @@ BUNITE_EXPORT void bunite_view_scroll(
 	uint32_t modifiers
 );
 
+/** Capture the visible viewport as a PNG/JPEG image. Async — result reported
+ *  via the webview event handler as `screenshot-result` with payload
+ *    { requestId, ok: true, format, mime, dataBase64 }
+ *    { requestId, ok: false, code, message }
+ *  Error codes: `not_supported`, `runtime_error`, `timeout`, `black_frame` (CEF
+ *  compositor surface unreachable). `quality` is 0–100 for JPEG only — ignored
+ *  for PNG, and ignored entirely on WebView2 (`CapturePreview` has no quality
+ *  parameter; output uses Edge's default ~80). `dataBase64` is base64-encoded
+ *  image bytes; TS layer decodes. */
+BUNITE_EXPORT void bunite_view_screenshot(
+	uint32_t view_id,
+	uint32_t request_id,
+	const char* format,
+	int32_t quality
+);
+
 BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id);
 BUNITE_EXPORT void bunite_view_close_devtools(uint32_t view_id);
 BUNITE_EXPORT void bunite_view_toggle_devtools(uint32_t view_id);

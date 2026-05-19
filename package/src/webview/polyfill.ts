@@ -140,6 +140,9 @@ function definePolyfillClass(): CustomElementConstructor {
     async sendType(_text: string) {}
     async sendPress(_key: string, _modifiers?: string[]) {}
     async sendScroll(_args: { dx: number; dy: number; x?: number; y?: number; modifiers?: string[] }) {}
+    async screenshot(_args?: { format?: "png" | "jpeg"; quality?: number }) {
+      return { ok: false as const, code: "not_supported" as const, message: "iframe polyfill does not support screenshot" };
+    }
   }
 
   cachedClass = BuniteWebviewPolyfill;

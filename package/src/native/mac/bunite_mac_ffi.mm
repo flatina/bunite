@@ -629,6 +629,64 @@ extern "C" BUNITE_EXPORT void bunite_view_scroll(uint32_t view_id, double dx, do
   });
 }
 
+// Screenshot — WKWebView.takeSnapshotWithConfiguration: + NSBitmapImageRep PNG/JPEG.
+namespace {
+
+void emitMacScreenshotError(uint32_t view_id, uint32_t request_id, const char* code, NSString* msg) {
+  std::string m = msg ? (msg.UTF8String ?: "") : "";
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"" + code + "\","
+                        "\"message\":\"" + bunite_mac::escapeJsonString(m) + "\"}";
+  bunite_mac::emitWebviewEvent(view_id, "screenshot-result", payload);
+}
+
+}  // namespace
+
+extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
+                                                       const char* format, int32_t quality) {
+  std::string fmt = format ? format : "png";
+  runOnUiThreadSync([=]() {
+    auto* v = bunite_mac::findView(view_id);
+    if (!v || !v->webview) {
+      emitMacScreenshotError(view_id, request_id, "not_supported", @"view not ready");
+      return;
+    }
+    WKSnapshotConfiguration* cfg = [[WKSnapshotConfiguration alloc] init];
+    cfg.afterScreenUpdates = YES;
+    const bool jpeg = (fmt == "jpeg" || fmt == "jpg");
+    NSString* outFmt = jpeg ? @"jpeg" : @"png";
+    NSString* mime = jpeg ? @"image/jpeg" : @"image/png";
+    [v->webview takeSnapshotWithConfiguration:cfg
+                            completionHandler:^(NSImage* img, NSError* err) {
+      if (err || !img) {
+        emitMacScreenshotError(view_id, request_id, "runtime_error", err ? err.localizedDescription : @"takeSnapshot returned nil");
+        return;
+      }
+      CGImageRef cgImg = [img CGImageForProposedRect:nullptr context:nil hints:nil];
+      if (!cgImg) {
+        emitMacScreenshotError(view_id, request_id, "runtime_error", @"CGImageForProposedRect failed");
+        return;
+      }
+      NSBitmapImageRep* rep = [[NSBitmapImageRep alloc] initWithCGImage:cgImg];
+      NSDictionary* props = jpeg
+        ? @{ NSImageCompressionFactor: @((quality < 0 ? 0.9 : std::min(quality, 100) / 100.0)) }
+        : @{};
+      NSData* data = [rep representationUsingType:(jpeg ? NSBitmapImageFileTypeJPEG : NSBitmapImageFileTypePNG)
+                                       properties:props];
+      if (!data || data.length == 0) {
+        emitMacScreenshotError(view_id, request_id, "runtime_error", @"encode failed");
+        return;
+      }
+      NSString* b64 = [data base64EncodedStringWithOptions:0];
+      std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                            ",\"ok\":true,\"format\":\"" + outFmt.UTF8String +
+                            "\",\"mime\":\"" + mime.UTF8String +
+                            "\",\"dataBase64\":\"" + (b64.UTF8String ?: "") + "\"}";
+      bunite_mac::emitWebviewEvent(view_id, "screenshot-result", payload);
+    }];
+  });
+}
+
 extern "C" BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id) {
   runOnUiThreadSync([=]() {
     if (@available(macOS 13.3, *)) {

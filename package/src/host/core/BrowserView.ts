@@ -8,11 +8,12 @@ import {
   type Connection,
   type BytesPipe,
 } from "../../rpc/index";
-import type { EvaluateResult, SurfaceCapabilities } from "../../rpc/framework";
+import type { EvaluateResult, SurfaceCapabilities, ScreenshotResult } from "../../rpc/framework";
 import { createEncryptedPipe } from "../encryptedPipe";
 import {
   ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady,
-  setEvaluateResultHandler, type NativeEvaluateResult
+  setEvaluateResultHandler, type NativeEvaluateResult,
+  setScreenshotResultHandler, type NativeScreenshotResult,
 } from "../native";
 import { getNativeEngineName } from "../native";
 import { attachBrowserViewRegistry, getRpcPort } from "./Socket";
@@ -47,6 +48,54 @@ function rejectEvaluatesForView(viewId: number) {
   }
 }
 
+// Screenshot resolvers — parallel to evaluate. Native fires `screenshot-result`
+// keyed by requestId; payload carries base64 data which TS decodes to Uint8Array.
+type ScreenshotPending = { viewId: number; resolve: (result: ScreenshotResult) => void };
+let nextScreenshotRequestId = 1;
+const screenshotResolvers = new Map<number, ScreenshotPending>();
+
+function registerScreenshotRequest(viewId: number, resolve: (result: ScreenshotResult) => void): number {
+  const id = nextScreenshotRequestId++;
+  screenshotResolvers.set(id, { viewId, resolve });
+  return id;
+}
+
+function rejectScreenshotsForView(viewId: number) {
+  for (const [reqId, entry] of screenshotResolvers) {
+    if (entry.viewId === viewId) {
+      screenshotResolvers.delete(reqId);
+      entry.resolve({ ok: false, code: "not_supported", message: "view destroyed" });
+    }
+  }
+}
+
+function decodeBase64(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+setScreenshotResultHandler((viewId, raw: NativeScreenshotResult) => {
+  const entry = screenshotResolvers.get(raw.requestId);
+  if (!entry) return;
+  if (entry.viewId !== viewId) return;
+  screenshotResolvers.delete(raw.requestId);
+  if (raw.ok && raw.dataBase64 && raw.format && raw.mime) {
+    try {
+      entry.resolve({ ok: true, data: decodeBase64(raw.dataBase64), mime: raw.mime, format: raw.format });
+    } catch (e) {
+      entry.resolve({ ok: false, code: "runtime_error", message: `base64 decode failed: ${(e as Error).message}` });
+    }
+  } else {
+    entry.resolve({
+      ok: false,
+      code: (raw.code as "not_supported" | "runtime_error" | "timeout") ?? "runtime_error",
+      message: raw.message ?? "screenshot failed",
+    });
+  }
+});
+
 setEvaluateResultHandler((viewId, raw: NativeEvaluateResult) => {
   const entry = evaluateResolvers.get(raw.requestId);
   if (!entry) return;
@@ -76,6 +125,9 @@ function computeCapabilities(engine: string | null): SurfaceCapabilities {
   const inputSupports =
     engine === "webview2" || engine === "cef" || engine === "wkwebview";
   const nativeInputTrusted = engine === "cef";
+  // Screenshot: WebView2 CapturePreview, CEF PrintWindow, WKWebView takeSnapshot,
+  // WebKitGTK get_snapshot. CEF path needs spike verification at runtime.
+  const screenshotSupports = evalSupports;
   return {
     evaluate: evalSupports,
     crossOriginEval: false,
@@ -85,7 +137,8 @@ function computeCapabilities(engine: string | null): SurfaceCapabilities {
     type: inputSupports,
     press: inputSupports,
     scroll: inputSupports,
-    screenshot: false,
+    screenshot: screenshotSupports,
+    formats: screenshotSupports ? ["png", "jpeg"] : undefined,
   };
 }
 
@@ -316,6 +369,25 @@ export class BrowserView {
     getNativeLibrary()?.symbols.bunite_view_scroll(this.id, dx, dy, x, y, modifiers);
   }
 
+  screenshot(format: "png" | "jpeg", quality: number): Promise<ScreenshotResult> {
+    if (!this.nativeAttached) {
+      return Promise.resolve({ ok: false, code: "not_supported", message: "native runtime unavailable" });
+    }
+    return new Promise<ScreenshotResult>((resolve) => {
+      const requestId = registerScreenshotRequest(this.id, resolve);
+      // Timeout — guards against silent hangs (e.g. CEF compositor never delivers).
+      const timer = setTimeout(() => {
+        if (screenshotResolvers.delete(requestId)) {
+          resolve({ ok: false, code: "timeout", message: "screenshot timed out after 30s" });
+        }
+      }, 30_000);
+      const wrappedResolve = (r: ScreenshotResult) => { clearTimeout(timer); resolve(r); };
+      // Replace the registered resolver so the timeout-clearing wrapper runs on success.
+      screenshotResolvers.set(requestId, { viewId: this.id, resolve: wrappedResolve });
+      getNativeLibrary()?.symbols.bunite_view_screenshot(this.id, requestId, toCString(format), quality);
+    });
+  }
+
   goBack() {
     if (this.nativeAttached) {
       getNativeLibrary()?.symbols.bunite_view_go_back(this.id);
@@ -421,6 +493,7 @@ export class BrowserView {
     removeSurfacesForHostView(this.id);
     cancelWaitForViewReady(this.id);
     rejectEvaluatesForView(this.id);
+    rejectScreenshotsForView(this.id);
     this.nativeAttached = false;
     for (const eventName of [
       "will-navigate", "did-navigate", "dom-ready", "new-window-open", "permission-requested", "title-changed"

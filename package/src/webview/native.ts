@@ -1,7 +1,7 @@
 // <bunite-webview> custom element — registered in every appres:// page via preload.
 
 import type { ClientOf } from "../rpc/index";
-import type { SurfaceCap, EvaluateResult, SurfaceCapabilities } from "../rpc/framework";
+import type { SurfaceCap, EvaluateResult, SurfaceCapabilities, ScreenshotResult } from "../rpc/framework";
 
 declare const host: {
   runtime(): Promise<ClientOf<typeof import("../rpc/framework").RuntimeCap>>;
@@ -309,6 +309,12 @@ class BuniteWebviewElement extends HTMLElement {
     const sid = this._surfaceId;
     if (sid == null) return;
     await callSurfaceTyped((s) => s.scroll({ surfaceId: sid, ...args }));
+  }
+
+  async screenshot(args?: { format?: "png" | "jpeg"; quality?: number }): Promise<ScreenshotResult> {
+    const sid = this._surfaceId;
+    if (sid == null) return { ok: false, code: "not_supported", message: "surface not ready" };
+    return callSurfaceTyped((s) => s.screenshot({ surfaceId: sid, ...args }));
   }
 
   private _applySurfaceHidden() {

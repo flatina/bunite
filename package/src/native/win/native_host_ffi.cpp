@@ -3,6 +3,17 @@
 #include "include/cef_version.h"
 #include "include/cef_version_info.h"
 
+// Screenshot path — PrintWindow PW_RENDERFULLCONTENT into HBITMAP, WIC encode
+// to PNG/JPEG IStream, CryptBinaryToString → base64. PW_RENDERFULLCONTENT (Win
+// 8.1+) captures DComp/D3D-composed content. The detection sweep at the end of
+// captureToBytes rejects all-black frames (silent compositor mismatch). For
+// hardware-accelerated CEF that even RENDERFULLCONTENT can't reach, the call
+// returns black_frame and callers must fall back (CDP `Page.captureScreenshot`
+// migration is the long-term plan).
+#include <wincodec.h>
+#include <wincrypt.h>
+#include <VersionHelpers.h>
+
 using bunite_win::runOnUiThreadSync;
 using bunite_win::runOnCefUiThreadSync;
 
@@ -992,6 +1003,169 @@ extern "C" BUNITE_EXPORT void bunite_view_scroll(uint32_t view_id, double dx, do
     ev.y = static_cast<int>(y);
     ev.modifiers = cefModifiers(modifiers);
     host->SendMouseWheelEvent(ev, static_cast<int>(dx), static_cast<int>(dy));
+  });
+}
+
+namespace {
+
+std::string cefBase64Encode(const BYTE* bytes, DWORD len) {
+  DWORD out_len = 0;
+  if (!CryptBinaryToStringA(bytes, len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, nullptr, &out_len)) return {};
+  std::string out(out_len, '\0');
+  if (!CryptBinaryToStringA(bytes, len, CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, out.data(), &out_len)) return {};
+  out.resize(out_len);
+  while (!out.empty() && out.back() == '\0') out.pop_back();
+  return out;
+}
+
+void emitScreenshotError(uint32_t view_id, uint32_t request_id, const char* code, const std::string& msg) {
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"" + code + "\","
+                        "\"message\":\"" + bunite_win::escapeJsonString(msg) + "\"}";
+  bunite_win::emitWebviewEvent(view_id, "screenshot-result", payload);
+}
+
+// Sample 9 pixels (corners + edge midpoints + center). If all are RGB(0,0,0),
+// PrintWindow handed us a black frame from a compositor it couldn't reach.
+bool looksBlack(HBITMAP bmp, int w, int h) {
+  BITMAPINFO bi{};
+  bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bi.bmiHeader.biWidth = w;
+  bi.bmiHeader.biHeight = -h;  // top-down
+  bi.bmiHeader.biPlanes = 1;
+  bi.bmiHeader.biBitCount = 32;
+  bi.bmiHeader.biCompression = BI_RGB;
+  std::vector<uint32_t> pixels(w * h);
+  HDC dc = GetDC(nullptr);
+  int got = GetDIBits(dc, bmp, 0, h, pixels.data(), &bi, DIB_RGB_COLORS);
+  ReleaseDC(nullptr, dc);
+  if (got <= 0) return false;
+  const int xs[3] = { 0, w / 2, w - 1 };
+  const int ys[3] = { 0, h / 2, h - 1 };
+  for (int yi = 0; yi < 3; ++yi) for (int xi = 0; xi < 3; ++xi) {
+    if ((pixels[ys[yi] * w + xs[xi]] & 0x00FFFFFF) != 0) return false;
+  }
+  return true;
+}
+
+// Capture `hwnd` to PNG/JPEG bytes via PrintWindow + WIC. Returns empty on failure.
+bool captureToBytes(HWND hwnd, const wchar_t* mimeFormat, int32_t quality,
+                    std::vector<BYTE>& out, std::string& errCode) {
+  errCode.clear();
+  if (!IsWindows8Point1OrGreater()) { errCode = "not_supported"; return false; }
+  RECT rc{};
+  if (!GetClientRect(hwnd, &rc)) { errCode = "runtime_error"; return false; }
+  const int w = rc.right - rc.left;
+  const int h = rc.bottom - rc.top;
+  if (w <= 0 || h <= 0) { errCode = "runtime_error"; return false; }
+
+  // CefBrowserHost's HWND owns the DPI context; using its DC keeps per-monitor scaling correct.
+  HDC src = GetDC(hwnd);
+  HDC mem = CreateCompatibleDC(src);
+  HBITMAP bmp = CreateCompatibleBitmap(src, w, h);
+  HGDIOBJ old = SelectObject(mem, bmp);
+  // PW_RENDERFULLCONTENT (0x2) — capture D3D / DComp surfaces. Falls back to
+  // WM_PRINT on < Win 8.1 (gated above).
+  BOOL ok = PrintWindow(hwnd, mem, 0x00000002);
+  SelectObject(mem, old);
+  DeleteDC(mem);
+  ReleaseDC(hwnd, src);
+  if (!ok) { DeleteObject(bmp); errCode = "runtime_error"; return false; }
+
+  // Black-frame detection: PrintWindow returns TRUE even when the GPU
+  // compositor surface is unreachable. Sample pixels; bail honestly.
+  if (looksBlack(bmp, w, h)) { DeleteObject(bmp); errCode = "black_frame"; return false; }
+
+  // WIC needs COM on this thread; tolerate already-initialised modes.
+  HRESULT coHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  const bool coOwned = (coHr == S_OK || coHr == S_FALSE);
+  auto coCleanup = [coOwned]() { if (coOwned) CoUninitialize(); };
+
+  Microsoft::WRL::ComPtr<IWICImagingFactory> factory;
+  if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                              IID_PPV_ARGS(&factory)))) { DeleteObject(bmp); coCleanup(); errCode = "runtime_error"; return false; }
+
+  Microsoft::WRL::ComPtr<IStream> stream;
+  if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream))) { DeleteObject(bmp); coCleanup(); errCode = "runtime_error"; return false; }
+
+  GUID container = (wcscmp(mimeFormat, L"jpeg") == 0) ? GUID_ContainerFormatJpeg : GUID_ContainerFormatPng;
+
+  Microsoft::WRL::ComPtr<IWICBitmapEncoder> encoder;
+  if (FAILED(factory->CreateEncoder(container, nullptr, &encoder)) ||
+      FAILED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache))) {
+    DeleteObject(bmp); coCleanup(); errCode = "runtime_error"; return false;
+  }
+  Microsoft::WRL::ComPtr<IWICBitmapFrameEncode> frame;
+  Microsoft::WRL::ComPtr<IPropertyBag2> bag;
+  if (FAILED(encoder->CreateNewFrame(&frame, &bag))) { DeleteObject(bmp); coCleanup(); errCode = "runtime_error"; return false; }
+  if (container == GUID_ContainerFormatJpeg && bag) {
+    PROPBAG2 opt{}; opt.pstrName = const_cast<LPOLESTR>(L"ImageQuality");
+    VARIANT v{}; v.vt = VT_R4; v.fltVal = (quality < 0 ? 0.9f : std::min(quality, 100) / 100.0f);
+    bag->Write(1, &opt, &v);
+  }
+  if (FAILED(frame->Initialize(bag.Get()))) { DeleteObject(bmp); coCleanup(); errCode = "runtime_error"; return false; }
+  Microsoft::WRL::ComPtr<IWICBitmap> wic_bmp;
+  if (FAILED(factory->CreateBitmapFromHBITMAP(bmp, nullptr, WICBitmapIgnoreAlpha, &wic_bmp))) {
+    DeleteObject(bmp); coCleanup(); errCode = "runtime_error"; return false;
+  }
+  // WIC bitmap retains a reference to the HBITMAP pixel data — keep `bmp`
+  // alive until encoder.Commit() finishes reading pixels.
+  if (FAILED(frame->WriteSource(wic_bmp.Get(), nullptr)) ||
+      FAILED(frame->Commit()) || FAILED(encoder->Commit())) {
+    DeleteObject(bmp); coCleanup(); errCode = "runtime_error"; return false;
+  }
+  DeleteObject(bmp);
+
+  HGLOBAL hg = nullptr;
+  if (FAILED(GetHGlobalFromStream(stream.Get(), &hg)) || !hg) { coCleanup(); errCode = "runtime_error"; return false; }
+  const SIZE_T sz = GlobalSize(hg);
+  void* p = GlobalLock(hg);
+  if (!p) { coCleanup(); errCode = "runtime_error"; return false; }
+  out.assign(static_cast<BYTE*>(p), static_cast<BYTE*>(p) + sz);
+  GlobalUnlock(hg);
+  coCleanup();
+  return true;
+}
+
+}  // namespace
+
+extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
+                                                       const char* format, int32_t quality) {
+  std::string fmt = format ? format : "png";
+  bunite_win::postCefUiTask([view_id, request_id, fmt, quality]() {
+    auto* view = bunite_win::getViewHostById(view_id);
+    if (!view || !view->browser) {
+      emitScreenshotError(view_id, request_id, "not_supported", "view not ready");
+      return;
+    }
+    HWND hwnd = view->browser->GetHost()->GetWindowHandle();
+    if (!hwnd) {
+      emitScreenshotError(view_id, request_id, "not_supported", "no window handle");
+      return;
+    }
+    const bool jpeg = (fmt == "jpeg" || fmt == "jpg");
+    std::vector<BYTE> bytes;
+    std::string errCode;
+    if (!captureToBytes(hwnd, jpeg ? L"jpeg" : L"png", quality, bytes, errCode) || bytes.empty()) {
+      const char* code = errCode.empty() ? "runtime_error" : errCode.c_str();
+      const char* msg = (errCode == "black_frame")
+        ? "PrintWindow returned all-black; CEF compositor unreachable"
+        : (errCode == "not_supported" ? "PW_RENDERFULLCONTENT requires Windows 8.1+" : "PrintWindow + WIC failed");
+      emitScreenshotError(view_id, request_id, code, msg);
+      return;
+    }
+    std::string b64 = cefBase64Encode(bytes.data(), static_cast<DWORD>(bytes.size()));
+    if (b64.empty()) {
+      emitScreenshotError(view_id, request_id, "runtime_error", "base64 encode failed");
+      return;
+    }
+    const std::string mime = jpeg ? "image/jpeg" : "image/png";
+    const std::string outFmt = jpeg ? "jpeg" : "png";
+    std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                          ",\"ok\":true,\"format\":\"" + outFmt +
+                          "\",\"mime\":\"" + mime +
+                          "\",\"dataBase64\":\"" + b64 + "\"}";
+    bunite_win::emitWebviewEvent(view_id, "screenshot-result", payload);
   });
 }
 
