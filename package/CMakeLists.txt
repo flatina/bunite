@@ -100,6 +100,9 @@ if(WIN32)
     advapi32.lib
     shell32.lib
     ole32.lib
+    gdi32.lib
+    windowscodecs.lib  # WIC PNG/JPEG encode for bunite_view_screenshot
+    crypt32.lib        # CryptBinaryToString base64 encoding
   )
   target_link_options(BuniteNative PRIVATE /DELAYLOAD:libcef.dll)
   set_target_properties(BuniteNative PROPERTIES
@@ -195,6 +198,7 @@ if(WIN32)
       shell32.lib
       ole32.lib
       version.lib
+      crypt32.lib  # CryptBinaryToString base64 for bunite_view_screenshot
     )
     set_target_properties(BuniteNativeWebView2 PROPERTIES
       OUTPUT_NAME "libBuniteNativeWebView2"

@@ -444,6 +444,8 @@ BUNITE_EXPORT void bunite_view_press(uint32_t view_id, int32_t windows_vk_code,
   cdpCall(v, L"Input.dispatchKeyEvent", buildPart("keyUp",   /*include_text=*/false));
 }
 
+}  // extern "C" — temporarily exit so C++ helpers below can return std::string.
+
 namespace {
 
 // Win CryptoAPI base64 — `bytes` → printable string (no line breaks).
@@ -465,6 +467,8 @@ void emitScreenshotError(uint32_t view_id, uint32_t request_id, const char* code
 }
 
 }  // namespace
+
+extern "C" {
 
 BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
   // WebView2 — CDP input path (isTrusted=false), CapturePreview screenshot.

@@ -12,6 +12,7 @@
 // migration is the long-term plan).
 #include <wincodec.h>
 #include <wincrypt.h>
+#include <wrl/client.h>
 #include <VersionHelpers.h>
 
 using bunite_win::runOnUiThreadSync;
@@ -871,14 +872,15 @@ extern "C" BUNITE_EXPORT void bunite_view_remove(uint32_t view_id) {
 // Input dispatch — native CEF API. Real OS-input path → MouseEvent.isTrusted = true.
 namespace {
 
-constexpr uint32_t MOD_ALT = 1, MOD_CTRL = 2, MOD_META = 4, MOD_SHIFT = 8;
+// Local names — `MOD_ALT`/`MOD_SHIFT` are Win32 RegisterHotKey macros.
+constexpr uint32_t kBmodAlt = 1, kBmodCtrl = 2, kBmodMeta = 4, kBmodShift = 8;
 
 uint32_t cefModifiers(uint32_t bits) {
   uint32_t flags = 0;
-  if (bits & MOD_SHIFT) flags |= EVENTFLAG_SHIFT_DOWN;
-  if (bits & MOD_CTRL)  flags |= EVENTFLAG_CONTROL_DOWN;
-  if (bits & MOD_ALT)   flags |= EVENTFLAG_ALT_DOWN;
-  if (bits & MOD_META)  flags |= EVENTFLAG_COMMAND_DOWN;
+  if (bits & kBmodShift) flags |= EVENTFLAG_SHIFT_DOWN;
+  if (bits & kBmodCtrl)  flags |= EVENTFLAG_CONTROL_DOWN;
+  if (bits & kBmodAlt)   flags |= EVENTFLAG_ALT_DOWN;
+  if (bits & kBmodMeta)  flags |= EVENTFLAG_COMMAND_DOWN;
   return flags;
 }
 
