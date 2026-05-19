@@ -175,6 +175,12 @@ export class BrowserWindow {
         Boolean(this.frame.minimized),
         Boolean(this.frame.maximized)
       ) ?? false;
+    if (!this.nativeAttached) {
+      console.error(
+        `[bunite] bunite_window_create returned false for window ${this.id} — ` +
+        `window will be unusable. Check native log (BUNITE_LOG_LEVEL=info).`
+      );
+    }
 
     BrowserWindowMap[this.id] = this;
     buniteEventEmitter.on(`focus-${this.id}`, () => { lastFocusedWindowId = this.id; });
