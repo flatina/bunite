@@ -1,7 +1,7 @@
 {
   "name": "bunite-core",
   "description": "Uniting UI and Bun",
-  "version": "0.11.2",
+  "version": "0.11.3",
   "type": "module",
   "scripts": {
     "setup:cef": "bun ../tools/bunite-dev/scripts/setup-cef.ts",
@@ -24,7 +24,7 @@
     "msgpackr": "^1.11.9"
   },
   "optionalDependencies": {
-    "bunite-native-win-x64": "0.0.6",
+    "bunite-native-win-x64": "0.0.7",
     "bunite-native-mac-arm64": "0.0.1",
     "bunite-native-linux-x64": "0.0.1"
   }
