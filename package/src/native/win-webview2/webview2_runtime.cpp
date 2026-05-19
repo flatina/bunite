@@ -415,7 +415,7 @@ static DWORD styleForTitleBar(const std::wstring& tbs) {
 bool createWindow(uint32_t window_id, double x, double y, double w, double h,
                   const char* title, const char* title_bar_style,
                   bool transparent, bool hidden, bool minimized, bool maximized) {
-  BUNITE_INFO("webview2: createWindow id=%u xy=(%g,%g) size=(%g,%g) hidden=%d trans=%d",
+  BUNITE_DEBUG("webview2: createWindow id=%u xy=(%g,%g) size=(%g,%g) hidden=%d trans=%d",
               window_id, x, y, w, h, hidden, transparent);
   WindowHost* host = new WindowHost();
   host->id = window_id;
@@ -444,7 +444,7 @@ bool createWindow(uint32_t window_id, double x, double y, double w, double h,
     delete host;
     return false;
   }
-  BUNITE_INFO("webview2: createWindow hwnd=%p id=%u", hwnd, window_id);
+  BUNITE_DEBUG("webview2: createWindow hwnd=%p id=%u", hwnd, window_id);
   host->hwnd = hwnd;
   if (transparent) {
     // Fully transparent layered window — pixels are sourced from the WebView2
@@ -549,7 +549,7 @@ static void wireView(ViewHost* view, std::function<void()> on_attached) {
       view->container_hwnd,
       Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
           [lifetime, view_id, on_attached](HRESULT cr, ICoreWebView2Controller* ctl) -> HRESULT {
-            BUNITE_INFO("webview2: controller-create completion view=%u hr=0x%08x",
+            BUNITE_DEBUG("webview2: controller-create completion view=%u hr=0x%08x",
                         view_id, static_cast<unsigned>(cr));
             if (!lifetime || !lifetime->alive.load()) return S_OK;
             ViewHost* v = getView(view_id);
@@ -643,7 +643,7 @@ bool createView(uint32_t view_id, uint32_t window_id,
                 double x, double y, double w, double h,
                 bool auto_resize, bool sandbox,
                 const char* preload_origins_json) {
-  BUNITE_INFO("webview2: createView view=%u window=%u url=%s",
+  BUNITE_DEBUG("webview2: createView view=%u window=%u url=%s",
               view_id, window_id, url && *url ? url : "(none)");
   WindowHost* window = getWindow(window_id);
   if (!window) {
