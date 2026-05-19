@@ -211,7 +211,8 @@ std::vector<std::string> parseNavigationRulesJson(const std::string& rules_json)
 }
 
 bool shouldAlwaysAllowNavigationUrl(const std::string& url) {
-  return url == "about:blank" || url.rfind("appres://app.internal/internal/", 0) == 0;
+  // Exact-match — prefix would let `../../evil` style paths bypass scrutiny.
+  return url == "about:blank" || url == "appres://app.internal/internal/index.html";
 }
 
 uint32_t cefPermissionsToBuniteKind(uint32_t cef_bits) {

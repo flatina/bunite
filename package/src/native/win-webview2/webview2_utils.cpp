@@ -50,14 +50,14 @@ std::string escapeJsonString(const std::string& s) {
   return out;
 }
 
+// Wildcard semantics shared with CEF/mac/linux backends: `*` only (no `?`),
+// locale-respecting std::tolower. Keeping the 4 impls in lockstep is the rule.
 bool globMatchCaseInsensitive(const std::string& pattern, const std::string& value) {
-  auto lower = [](char c) -> char {
-    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : c;
-  };
   size_t pi = 0, vi = 0, star = std::string::npos, match = 0;
   while (vi < value.size()) {
-    if (pi < pattern.size() && (pattern[pi] == '?' ||
-                                lower(pattern[pi]) == lower(value[vi]))) {
+    if (pi < pattern.size() &&
+        std::tolower(static_cast<unsigned char>(pattern[pi])) ==
+          std::tolower(static_cast<unsigned char>(value[vi]))) {
       pi++; vi++;
     } else if (pi < pattern.size() && pattern[pi] == '*') {
       star = pi++; match = vi;
@@ -232,9 +232,12 @@ COREWEBVIEW2_PERMISSION_STATE buniteStateToWebView2(uint32_t state) {
   }
 }
 
+// Whitelist must be exact-match — prefix would let `../../evil` style paths
+// bypass nav-rule scrutiny (the appres scheme handler still blocks file
+// access, but the navigation decision itself should be honest).
 bool shouldAlwaysAllowNavigationUrl(const std::string& url) {
   return url == "about:blank" ||
-         url.rfind("appres://app.internal/internal/", 0) == 0;
+         url == "appres://app.internal/internal/index.html";
 }
 
 // Same semantics as CEF / mac / linux: `^` prefix = block, last-match-wins,
