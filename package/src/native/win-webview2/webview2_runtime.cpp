@@ -311,6 +311,19 @@ bool initRuntime(const char* engine_dir, bool /*hide_console*/,
 
   g_runtime.initialized.store(true);
   BUNITE_INFO("webview2: runtime initialized");
+
+  // Eager-start the WebView2 environment so engine_version_string is ready by
+  // the time the first BrowserWindow title is set. Bounded drain — if Edge
+  // takes longer than the budget we just fall back to "unknown".
+  ensureEnvironment([]() {});
+  auto t0 = std::chrono::steady_clock::now();
+  while (!g_runtime.env_ready && !g_runtime.shutting_down.load() &&
+         std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::steady_clock::now() - t0).count() < 500) {
+    pumpOnce();
+    Sleep(1);
+  }
+
   return true;
 }
 
