@@ -25,29 +25,41 @@ const BrowserViewMap: Record<number, BrowserView> = {};
 let nextWebviewId = 1;
 
 // Evaluate request plumbing — native fires `evaluate-result` events keyed by
-// requestId. Resolvers are sliced by viewId on dispatch (set once at module
-// load).
+// requestId. Each pending entry records its viewId so detachFromNative can
+// reject any in-flight Promises for that view (otherwise the resolver leaks
+// when the view is destroyed mid-evaluate).
+type EvaluatePending = { viewId: number; resolve: (result: EvaluateResult) => void };
 let nextEvaluateRequestId = 1;
-const evaluateResolvers = new Map<number, (result: EvaluateResult) => void>();
+const evaluateResolvers = new Map<number, EvaluatePending>();
 
-function registerEvaluateRequest(resolve: (result: EvaluateResult) => void): number {
+function registerEvaluateRequest(viewId: number, resolve: (result: EvaluateResult) => void): number {
   const id = nextEvaluateRequestId++;
-  evaluateResolvers.set(id, resolve);
+  evaluateResolvers.set(id, { viewId, resolve });
   return id;
 }
 
-setEvaluateResultHandler((_viewId, raw: NativeEvaluateResult) => {
-  const resolve = evaluateResolvers.get(raw.requestId);
-  if (!resolve) return;
+function rejectEvaluatesForView(viewId: number) {
+  for (const [reqId, entry] of evaluateResolvers) {
+    if (entry.viewId === viewId) {
+      evaluateResolvers.delete(reqId);
+      entry.resolve({ ok: false, code: "not_supported", message: "view destroyed" });
+    }
+  }
+}
+
+setEvaluateResultHandler((viewId, raw: NativeEvaluateResult) => {
+  const entry = evaluateResolvers.get(raw.requestId);
+  if (!entry) return;
+  if (entry.viewId !== viewId) return;  // foreign event — ignore
   evaluateResolvers.delete(raw.requestId);
   if (raw.ok && raw.value !== undefined) {
     try {
-      resolve({ ok: true, value: JSON.parse(raw.value) });
+      entry.resolve({ ok: true, value: JSON.parse(raw.value) });
     } catch (e) {
-      resolve({ ok: false, code: "runtime_error", message: `result JSON parse failed: ${(e as Error).message}` });
+      entry.resolve({ ok: false, code: "runtime_error", message: `result JSON parse failed: ${(e as Error).message}` });
     }
   } else {
-    resolve({
+    entry.resolve({
       ok: false,
       code: (raw.code as EvaluateResult extends { code: infer C } ? C : never) ?? "runtime_error",
       message: raw.message ?? "evaluate failed",
@@ -264,7 +276,7 @@ export class BrowserView {
       return Promise.resolve({ ok: false, code: "not_supported", message: "native runtime unavailable" });
     }
     return new Promise<EvaluateResult>((resolve) => {
-      const requestId = registerEvaluateRequest(resolve);
+      const requestId = registerEvaluateRequest(this.id, resolve);
       getNativeLibrary()?.symbols.bunite_view_evaluate(this.id, requestId, toCString(script));
     });
   }
@@ -377,6 +389,7 @@ export class BrowserView {
   detachFromNative() {
     removeSurfacesForHostView(this.id);
     cancelWaitForViewReady(this.id);
+    rejectEvaluatesForView(this.id);
     this.nativeAttached = false;
     for (const eventName of [
       "will-navigate", "did-navigate", "dom-ready", "new-window-open", "permission-requested", "title-changed"

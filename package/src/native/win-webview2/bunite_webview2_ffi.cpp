@@ -164,9 +164,20 @@ BUNITE_EXPORT void bunite_view_evaluate(uint32_t view_id, uint32_t request_id, c
     emitWebviewEvent(view_id, "evaluate-result", payload);
     return;
   }
+  // Wrap user script in a JS try/catch envelope: WebView2 ExecuteScript
+  // returns "null" when the script throws (HRESULT success), so without this
+  // wrapper a thrown error is indistinguishable from a literal `null`. The
+  // wrapper surfaces throws as `{__bunite_err: <message>}` for CEF-parity.
+  std::string wrapped =
+      "(function(){try{return JSON.stringify({__bunite_ok:true,value:("
+      + std::string(script) +
+      ")})}catch(e){return JSON.stringify({__bunite_ok:false,"
+      "message:(e&&e.message)?e.message:String(e),"
+      "name:(e&&e.name)||\"\"})}})()";
+
   auto lifetime = g_runtime.lifetime;
   v->webview->ExecuteScript(
-      utf8ToWide(script).c_str(),
+      utf8ToWide(wrapped).c_str(),
       Microsoft::WRL::Callback<ICoreWebView2ExecuteScriptCompletedHandler>(
           [lifetime, view_id, request_id](HRESULT hr, LPCWSTR raw) -> HRESULT {
             if (!lifetime || !lifetime->alive.load()) return S_OK;
@@ -178,13 +189,69 @@ BUNITE_EXPORT void bunite_view_evaluate(uint32_t view_id, uint32_t request_id, c
                         [hr]() { char b[16]; snprintf(b, sizeof(b), "%08x", static_cast<unsigned>(hr)); return std::string(b); }() +
                         "\"}";
             } else {
-              // WebView2 returns JSON-encoded result. Embed as a JSON string so
-              // the JS-side parses it as a string and re-JSON.parses to get the
-              // value back (the `value` field of the envelope is a raw JSON
-              // string per the FFI contract).
-              std::string value = wideToUtf8(raw);
-              payload = "{\"requestId\":" + std::to_string(request_id) +
-                        ",\"ok\":true,\"value\":\"" + escapeJsonString(value) + "\"}";
+              // `raw` is a JSON-encoded string. After WebView2's outer
+              // JSON.stringify, the wrapper's return value (itself a JSON
+              // string) arrives as a JSON-quoted JSON string — parse the outer
+              // quotes via simple unescape into the inner JSON envelope.
+              std::string outer = wideToUtf8(raw);
+              // outer looks like: "\"{\\\"__bunite_ok\\\":true,...}\""
+              // We need the inner JSON. Walk-and-decode minimally.
+              std::string inner;
+              if (outer.size() >= 2 && outer.front() == '"' && outer.back() == '"') {
+                inner.reserve(outer.size());
+                for (size_t i = 1; i + 1 < outer.size(); ++i) {
+                  if (outer[i] == '\\' && i + 2 < outer.size()) {
+                    char nxt = outer[i + 1];
+                    switch (nxt) {
+                      case '"': inner += '"'; ++i; break;
+                      case '\\': inner += '\\'; ++i; break;
+                      case 'n': inner += '\n'; ++i; break;
+                      case 'r': inner += '\r'; ++i; break;
+                      case 't': inner += '\t'; ++i; break;
+                      case '/': inner += '/'; ++i; break;
+                      default: inner += outer[i]; break;
+                    }
+                  } else {
+                    inner += outer[i];
+                  }
+                }
+              }
+              if (inner.empty()) {
+                // Wrapper didn't produce a string — script failure before catch
+                // (e.g. parse error). Surface as runtime_error.
+                payload = "{\"requestId\":" + std::to_string(request_id) +
+                          ",\"ok\":false,\"code\":\"runtime_error\","
+                          "\"message\":\"script returned non-string from wrapper\"}";
+              } else if (inner.find("\"__bunite_ok\":true") != std::string::npos) {
+                // Re-parse to find `value:`. Strip the prefix/suffix manually —
+                // the wrapper always emits {"__bunite_ok":true,"value":<JSON>}.
+                static const std::string prefix = "{\"__bunite_ok\":true,\"value\":";
+                static const std::string suffix = "}";
+                std::string value_json = "null";
+                if (inner.compare(0, prefix.size(), prefix) == 0 &&
+                    inner.size() > prefix.size() + suffix.size()) {
+                  value_json = inner.substr(prefix.size(), inner.size() - prefix.size() - 1);
+                }
+                payload = "{\"requestId\":" + std::to_string(request_id) +
+                          ",\"ok\":true,\"value\":\"" + escapeJsonString(value_json) + "\"}";
+              } else {
+                // __bunite_ok:false branch. Extract message string for envelope.
+                std::string msg = "script threw";
+                size_t key = inner.find("\"message\":\"");
+                if (key != std::string::npos) {
+                  size_t start = key + std::strlen("\"message\":\"");
+                  // Find unescaped closing quote.
+                  size_t end = start;
+                  while (end < inner.size()) {
+                    if (inner[end] == '"' && (end == start || inner[end - 1] != '\\')) break;
+                    ++end;
+                  }
+                  if (end > start) msg = inner.substr(start, end - start);
+                }
+                payload = "{\"requestId\":" + std::to_string(request_id) +
+                          ",\"ok\":false,\"code\":\"runtime_error\","
+                          "\"message\":\"" + msg + "\"}";
+              }
             }
             emitWebviewEvent(view_id, "evaluate-result", payload);
             return S_OK;

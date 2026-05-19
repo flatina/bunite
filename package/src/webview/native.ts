@@ -120,6 +120,7 @@ class BuniteWebviewElement extends HTMLElement {
   private _userHidden = false;
   private _layoutObserver: ResizeObserver | null = null;
   private _unsubNavigate: (() => void) | null = null;
+  private _activeStreams: Array<{ cancel?: () => void }> = [];
 
   constructor() {
     super();
@@ -136,6 +137,7 @@ class BuniteWebviewElement extends HTMLElement {
       try {
         const s = await getSurfaceCap();
         const stream = s.didNavigate();
+        this._activeStreams.push(stream as { cancel?: () => void });
         for await (const ev of stream) {
           if (ctrl.signal.aborted) break;
           if (ev.surfaceId === this._surfaceId) {
@@ -152,6 +154,7 @@ class BuniteWebviewElement extends HTMLElement {
       try {
         const s = await getSurfaceCap();
         const stream = s.titleChanged();
+        this._activeStreams.push(stream as { cancel?: () => void });
         for await (const ev of stream) {
           if (ctrl.signal.aborted) break;
           if (ev.surfaceId === this._surfaceId) {
@@ -198,6 +201,12 @@ class BuniteWebviewElement extends HTMLElement {
     this._aborted = true;
     this._unsubNavigate?.();
     this._unsubNavigate = null;
+    // Cancel pending stream iterators so the `for await` actually unblocks —
+    // AbortController alone only takes effect at the next received chunk.
+    for (const stream of this._activeStreams) {
+      try { stream.cancel?.(); } catch {}
+    }
+    this._activeStreams = [];
     this._layoutObserver?.disconnect();
     this._layoutObserver = null;
     this._syncCtrl?.stop();
