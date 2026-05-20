@@ -471,10 +471,14 @@ void emitScreenshotError(uint32_t view_id, uint32_t request_id, const char* code
 extern "C" {
 
 BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
-  // WebView2 — CDP input path (isTrusted=false), CapturePreview screenshot.
+  // WebView2 — CDP input path. Empirically dispatchMouseEvent /
+  // dispatchKeyEvent / insertText produce events with `isTrusted=true` on
+  // the page (Edge runtime injects below DevTools surface; differs from
+  // browser-process CDP where isTrusted=false).
   ViewHost* v = getView(view_id);
   if (!v) return 0;
   return BUNITE_CAP_EVALUATE | BUNITE_CAP_TITLE_CHANGED |
+         BUNITE_CAP_NATIVE_INPUT_TRUSTED |
          BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
 }

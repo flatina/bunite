@@ -921,22 +921,38 @@ extern "C" BUNITE_EXPORT void bunite_view_type(uint32_t view_id, const char* tex
     int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()),
                                 wide.data(), static_cast<int>(wide.size()));
     wide.resize(n);
-    // BMP codepoints map cleanly to a single CHAR event. Surrogate pairs would
-    // arrive as two CHAR events (mis-firing `keypress` twice); warn-once + skip
-    // until proper supplementary-plane handling lands.
+    // Per character: RAWKEYDOWN + CHAR + KEYUP. CHAR-only doesn't trigger the
+    // DOM `input` event on text fields — Chromium expects a paired key cycle.
+    // BMP only (surrogate pairs would mis-fire `keypress` twice).
     for (size_t i = 0; i < wide.size(); ++i) {
       wchar_t ch = wide[i];
       if (ch >= 0xD800 && ch <= 0xDBFF) {
         static bool warned = false;
         if (!warned) { warned = true; BUNITE_WARN("cef type: supplementary-plane codepoint skipped"); }
-        if (i + 1 < wide.size()) ++i;  // skip low surrogate
+        if (i + 1 < wide.size()) ++i;
         continue;
       }
-      CefKeyEvent ke{};
-      ke.type = KEYEVENT_CHAR;
-      ke.character = ch;
-      ke.unmodified_character = ch;
-      host->SendKeyEvent(ke);
+      const int vk = (ch >= 'a' && ch <= 'z') ? (ch - ('a' - 'A'))  // letters map to upper VK
+                    : (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ? ch
+                    : 0;
+      CefKeyEvent down{};
+      down.type = KEYEVENT_RAWKEYDOWN;
+      down.windows_key_code = vk ? vk : ch;
+      down.character = ch;
+      down.unmodified_character = ch;
+      host->SendKeyEvent(down);
+      CefKeyEvent c{};
+      c.type = KEYEVENT_CHAR;
+      c.windows_key_code = ch;
+      c.character = ch;
+      c.unmodified_character = ch;
+      host->SendKeyEvent(c);
+      CefKeyEvent up{};
+      up.type = KEYEVENT_KEYUP;
+      up.windows_key_code = vk ? vk : ch;
+      up.character = ch;
+      up.unmodified_character = ch;
+      host->SendKeyEvent(up);
     }
   });
 }
@@ -1054,7 +1070,6 @@ bool looksBlack(HBITMAP bmp, int w, int h) {
 bool captureToBytes(HWND hwnd, const wchar_t* mimeFormat, int32_t quality,
                     std::vector<BYTE>& out, std::string& errCode) {
   errCode.clear();
-  if (!IsWindows8Point1OrGreater()) { errCode = "not_supported"; return false; }
   RECT rc{};
   if (!GetClientRect(hwnd, &rc)) { errCode = "runtime_error"; return false; }
   const int w = rc.right - rc.left;
@@ -1132,16 +1147,16 @@ bool captureToBytes(HWND hwnd, const wchar_t* mimeFormat, int32_t quality,
 }  // namespace
 
 extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
-  // CEF — native input (isTrusted=true), PrintWindow screenshot (Win 8.1+).
+  // CEF — native input (isTrusted=true), PrintWindow screenshot. Runtime
+  // black-frame detection in captureToBytes handles compositors PW_RENDER
+  // FULLCONTENT can't reach (older OS, GPU mismatch); don't gate on a
+  // manifest-dependent OS-version helper.
   auto* view = bunite_win::getViewHostById(view_id);
   if (!view) return 0;
-  uint32_t bits = BUNITE_CAP_EVALUATE | BUNITE_CAP_TITLE_CHANGED |
-                  BUNITE_CAP_NATIVE_INPUT_TRUSTED |
-                  BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL;
-  if (IsWindows8Point1OrGreater()) {
-    bits |= BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
-  }
-  return bits;
+  return BUNITE_CAP_EVALUATE | BUNITE_CAP_TITLE_CHANGED |
+         BUNITE_CAP_NATIVE_INPUT_TRUSTED |
+         BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
+         BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
