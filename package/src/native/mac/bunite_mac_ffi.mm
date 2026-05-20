@@ -559,8 +559,15 @@ extern "C" BUNITE_EXPORT void bunite_view_click(uint32_t view_id, double x, doub
     if (!v || !v->webview || !v->webview.window) return;
     NSWindow* win = v->webview.window;
     NSPoint loc = viewPointToWindow(v->webview, x, y);
-    NSEventModifierFlags flags = macModifiers(modifiers);
-    // dblclick parity: ascending clickCount per pair.
+    // Strip the Control bit from mouse-event modifierFlags: AppKit converts
+    // Ctrl+leftMouseDown into a secondary click (context-menu modal),
+    // deadlocking the cooperative pump. Page-side `ctrlKey` will read false
+    // for ctrl-click on mac as a result — callers needing ctrl-click should
+    // wrap with explicit `press("Control")` keydown/keyup.
+    NSEventModifierFlags flags = macModifiers(modifiers) & ~NSEventModifierFlagControl;
+    // dblclick parity: ascending clickCount per pair. Dispatch directly to
+    // the WKWebView — `[win sendEvent:]` enters AppKit's modal mouse-tracking
+    // loop and deadlocks the cooperative pump.
     for (int i = 1; i <= click_count; ++i) {
       NSEvent* down = [NSEvent mouseEventWithType:macMouseDownType(button)
                                          location:loc modifierFlags:flags
@@ -572,9 +579,20 @@ extern "C" BUNITE_EXPORT void bunite_view_click(uint32_t view_id, double x, doub
                                       timestamp:[[NSProcessInfo processInfo] systemUptime]
                                    windowNumber:win.windowNumber context:nil
                                     eventNumber:0 clickCount:i pressure:0.0];
-      // Dispatch via the window so hit-test + responder chain run normally.
-      if (down) [win sendEvent:down];
-      if (up)   [win sendEvent:up];
+      // Dispatch directly to WKWebView — `[NSApp sendEvent:]` would translate
+      // Ctrl+leftMouseDown into rightMouseDown (AppKit's emulated secondary
+      // click), entering the context-menu modal run-loop mode and stalling
+      // the cooperative pump indefinitely.
+      if (down) {
+        if (button == 0)      [v->webview mouseDown:down];
+        else if (button == 2) [v->webview rightMouseDown:down];
+        else                  [v->webview otherMouseDown:down];
+      }
+      if (up) {
+        if (button == 0)      [v->webview mouseUp:up];
+        else if (button == 2) [v->webview rightMouseUp:up];
+        else                  [v->webview otherMouseUp:up];
+      }
     }
   });
 }
@@ -616,8 +634,9 @@ extern "C" BUNITE_EXPORT void bunite_view_press(uint32_t view_id, int32_t /*wind
                                windowNumber:win.windowNumber context:nil
                                  characters:chars charactersIgnoringModifiers:chars
                                   isARepeat:NO keyCode:(unsigned short)mac_key_code];
-    if (down) [win sendEvent:down];
-    if (up)   [win sendEvent:up];
+    // Direct WKWebView dispatch — same translation/modal concerns as click.
+    if (down) [v->webview keyDown:down];
+    if (up)   [v->webview keyUp:up];
   });
 }
 
@@ -655,10 +674,13 @@ void emitMacScreenshotError(uint32_t view_id, uint32_t request_id, const char* c
 }  // namespace
 
 extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
-  // WKWebView — synthetic NSEvent input (isTrusted=false), takeSnapshot screenshot.
+  // WKWebView — synthetic NSEvent dispatched directly to the view. Empirically
+  // WebKit marks these events `isTrusted=true` on the page (the synthesis bit
+  // matters for AppKit responder routing, not for the DOM trust flag).
   auto* v = bunite_mac::findView(view_id);
   if (!v) return 0;
   return BUNITE_CAP_EVALUATE | BUNITE_CAP_TITLE_CHANGED |
+         BUNITE_CAP_NATIVE_INPUT_TRUSTED |
          BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
 }
