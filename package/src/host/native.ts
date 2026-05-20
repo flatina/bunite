@@ -116,6 +116,13 @@ type NativeSymbols = {
     viewId: number, dx: number, dy: number,
     x: number, y: number, modifiers: number
   ) => void;
+  bunite_view_mouse: (
+    viewId: number, action: number, x: number, y: number,
+    button: number, modifiers: number
+  ) => void;
+  bunite_view_respond_dialog: (
+    viewId: number, requestId: number, accept: boolean, text: CStringPointer
+  ) => void;
   bunite_view_screenshot: (
     viewId: number, requestId: number, format: CStringPointer, quality: number
   ) => void;
@@ -321,6 +328,14 @@ const nativeSymbolDefinitions = {
   },
   bunite_view_scroll: {
     args: [FFIType.u32, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.u32],
+    returns: FFIType.void
+  },
+  bunite_view_mouse: {
+    args: [FFIType.u32, FFIType.i32, FFIType.f64, FFIType.f64, FFIType.i32, FFIType.u32],
+    returns: FFIType.void
+  },
+  bunite_view_respond_dialog: {
+    args: [FFIType.u32, FFIType.u32, FFIType.bool, FFIType.cstring],
     returns: FFIType.void
   },
   bunite_view_screenshot: {
@@ -590,6 +605,31 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
             );
             break;
           }
+          case "dialog": {
+            const parsed = maybeParsePayload(payload) as {
+              requestId: number;
+              kind: "alert" | "confirm" | "prompt" | "beforeunload";
+              message: string;
+              defaultPrompt?: string;
+            };
+            buniteEventEmitter.emitEvent(
+              buniteEventEmitter.events.webview.dialog(parsed),
+              viewId
+            );
+            break;
+          }
+          case "console-message": {
+            const parsed = maybeParsePayload(payload) as {
+              level: "log" | "warn" | "error" | "info" | "debug";
+              args: string[];
+              ts: number;
+            };
+            buniteEventEmitter.emitEvent(
+              buniteEventEmitter.events.webview.consoleMessage(parsed),
+              viewId
+            );
+            break;
+          }
         }
       },
       {
@@ -739,7 +779,7 @@ export async function initNativeRuntime(
     throw new Error(`bunite: failed to load native library at ${artifacts.nativeLibPath}.`);
   }
 
-  const EXPECTED_ABI = 8;
+  const EXPECTED_ABI = 9;
   const nativeAbi = nativeLibrary.symbols.bunite_abi_version();
   if (nativeAbi !== EXPECTED_ABI) {
     throw new Error(

@@ -16,6 +16,16 @@ extern "C" {
 #endif
 
 /** ABI version. Bump on any breaking change to symbol set / signatures.
+ *  v9 (2026-05): adds `bunite_view_mouse` (move/down/up primitives for drag &
+ *                hover) + `bunite_view_respond_dialog`. Webview event names
+ *                expand to include `dialog` (alert/confirm/prompt/beforeunload)
+ *                and `console-message` (the latter is RPC-pushed by preload,
+ *                not emitted by native — listed here for the host-side event
+ *                channel completeness). Capability bits add `MOUSE` (1<<11),
+ *                `DIALOGS` (1<<12), `CONSOLE` (1<<13). `NATIVE_INPUT_TRUSTED`
+ *                meaning stretches to include `mouse` (click/type/press/mouse
+ *                all produce isTrusted=true on supporting backends; scroll and
+ *                screenshot remain outside that guarantee).
  *  v8 (2026-05): `bunite_view_press` gains `action` (down/up/both), `extended`
  *                (Win 0xE0 scancode prefix), `location` (DOM KeyboardEvent
  *                location, 0/1/2/3) params. Webview event names expand to
@@ -188,6 +198,30 @@ BUNITE_EXPORT void bunite_view_scroll(
 	uint32_t modifiers
 );
 
+/** Raw mouse primitive. `action` 0=move, 1=down, 2=up. `button` 0=left, 1=middle,
+ *  2=right (ignored for move). Coordinates are CSS px viewport-relative. Drag is
+ *  composed = down → move(s) → up. Backends without input support (linux GTK)
+ *  treat as no-op. `modifiers` per-call atomic — no sticky state. */
+BUNITE_EXPORT void bunite_view_mouse(
+	uint32_t view_id,
+	int32_t action,
+	double x,
+	double y,
+	int32_t button,
+	uint32_t modifiers
+);
+
+/** Respond to a page-initiated modal dialog previously announced via the
+ *  webview event channel as `dialog` (`{requestId, kind, message, defaultPrompt?}`).
+ *  `accept` decides confirm/beforeunload outcome and gates whether `text` is
+ *  applied to `prompt`. Backends release the held page execution. */
+BUNITE_EXPORT void bunite_view_respond_dialog(
+	uint32_t view_id,
+	uint32_t request_id,
+	bool accept,
+	const char* text
+);
+
 /** Per-view automation capability bitset. Each backend returns the bits it
  *  actually supports — TS layer decodes to `SurfaceCapabilities` object.
  *  Bits are locked at ABI v6; append-only. */
@@ -195,7 +229,7 @@ enum BuniteCapBit {
 	BUNITE_CAP_EVALUATE             = 1u << 0,
 	BUNITE_CAP_CROSS_ORIGIN_EVAL    = 1u << 1,
 	BUNITE_CAP_SURFACE_EVENTS       = 1u << 2,
-	BUNITE_CAP_NATIVE_INPUT_TRUSTED = 1u << 3,
+	BUNITE_CAP_NATIVE_INPUT_TRUSTED = 1u << 3,  /* click/type/press/mouse all isTrusted=true */
 	BUNITE_CAP_CLICK                = 1u << 4,
 	BUNITE_CAP_TYPE                 = 1u << 5,
 	BUNITE_CAP_PRESS                = 1u << 6,
@@ -203,6 +237,9 @@ enum BuniteCapBit {
 	BUNITE_CAP_SCREENSHOT           = 1u << 8,
 	BUNITE_CAP_FORMAT_PNG           = 1u << 9,
 	BUNITE_CAP_FORMAT_JPEG          = 1u << 10,
+	BUNITE_CAP_MOUSE                = 1u << 11,
+	BUNITE_CAP_DIALOGS              = 1u << 12,
+	BUNITE_CAP_CONSOLE              = 1u << 13,
 };
 BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id);
 

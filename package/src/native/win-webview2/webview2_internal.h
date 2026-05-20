@@ -17,6 +17,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -86,6 +87,15 @@ struct ViewHost {
 
   std::atomic<bool> ready{false};
   std::atomic<bool> closing{false};
+
+  // Pending page-initiated dialogs (alert/confirm/prompt/beforeunload).
+  // ScriptDialogOpening hands us a `Deferral` we Complete() on host response.
+  struct PendingDialog {
+    ComPtr<ICoreWebView2ScriptDialogOpeningEventArgs> args;
+    ComPtr<ICoreWebView2Deferral> deferral;
+  };
+  std::unordered_map<uint32_t, PendingDialog> pending_dialogs;
+  uint32_t next_dialog_request_id = 1;
 };
 
 struct WindowHost {

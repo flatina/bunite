@@ -61,6 +61,12 @@ struct ViewState {
   // HTML stashed by load_html; appres handler serves at internal/index.html.
   std::string stored_html;
   std::vector<std::string> navigation_rules;
+
+  // Page-initiated dialogs awaiting host response (alert/confirm/prompt).
+  // WKUIDelegate completion handlers are held in `__strong` blocks until
+  // respondToDialog invokes them; the page execution is paused meanwhile.
+  std::unordered_map<uint32_t, void(^)(bool /*accept*/, const std::string& /*text*/)> pending_dialogs;
+  uint32_t next_dialog_request_id = 1;
 };
 
 // ---------------------------------------------------------------------------

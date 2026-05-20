@@ -11,5 +11,9 @@ export default {
   titleChanged: (data: { detail: string }) => new BuniteEvent("title-changed", data),
   loadStart: (data: { detail: string }) => new BuniteEvent("load-start", data),
   loadFinish: (data: { detail: string }) => new BuniteEvent("load-finish", data),
-  loadFail: (data: { url: string; reason?: string }) => new BuniteEvent("load-fail", data)
+  loadFail: (data: { url: string; reason?: string }) => new BuniteEvent("load-fail", data),
+  dialog: (data: { requestId: number; kind: "alert" | "confirm" | "prompt" | "beforeunload"; message: string; defaultPrompt?: string }) =>
+    new BuniteEvent("dialog", data),
+  consoleMessage: (data: { level: "log" | "warn" | "error" | "info" | "debug"; args: string[]; ts: number }) =>
+    new BuniteEvent("console-message", data)
 };

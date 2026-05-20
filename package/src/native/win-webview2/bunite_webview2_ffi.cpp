@@ -12,7 +12,7 @@ void setViewInputPassthrough(ViewHost* v, bool passthrough);
 
 extern "C" {
 
-BUNITE_EXPORT int32_t bunite_abi_version(void) { return 8; }
+BUNITE_EXPORT int32_t bunite_abi_version(void) { return 9; }
 
 BUNITE_EXPORT void bunite_set_log_level(int32_t level) {
   if (level < 0) level = 0;
@@ -484,6 +484,7 @@ BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
   return BUNITE_CAP_EVALUATE | BUNITE_CAP_SURFACE_EVENTS |
          BUNITE_CAP_NATIVE_INPUT_TRUSTED |
          BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
+         BUNITE_CAP_MOUSE | BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
 }
 
@@ -552,6 +553,44 @@ BUNITE_EXPORT void bunite_view_scroll(uint32_t view_id, double dx, double dy,
                      ",\"deltaY\":" + std::to_string(dy) +
                      ",\"modifiers\":" + std::to_string(modifiers) + "}";
   cdpCall(v, L"Input.dispatchMouseEvent", json);
+}
+
+BUNITE_EXPORT void bunite_view_mouse(uint32_t view_id, int32_t action,
+                                      double x, double y, int32_t button,
+                                      uint32_t modifiers) {
+  ViewHost* v = getView(view_id);
+  if (!v) return;
+  // CDP mouseMoved / mousePressed / mouseReleased. WV2 produces isTrusted=true
+  // on the page for these (Edge runtime injects below DevTools surface).
+  const char* type = (action == 0) ? "mouseMoved"
+                   : (action == 1) ? "mousePressed" : "mouseReleased";
+  std::string json = "{\"type\":\"" + std::string(type) +
+                     "\",\"x\":" + std::to_string(x) +
+                     ",\"y\":" + std::to_string(y) +
+                     ",\"modifiers\":" + std::to_string(modifiers);
+  if (action != 0) {
+    const char* btn = (button == 2) ? "right" : (button == 1) ? "middle" : "left";
+    json += ",\"button\":\"" + std::string(btn) + "\",\"clickCount\":1";
+  }
+  json += "}";
+  cdpCall(v, L"Input.dispatchMouseEvent", json);
+}
+
+BUNITE_EXPORT void bunite_view_respond_dialog(uint32_t view_id, uint32_t request_id,
+                                               bool accept, const char* text) {
+  ViewHost* v = getView(view_id);
+  if (!v) return;
+  auto it = v->pending_dialogs.find(request_id);
+  if (it == v->pending_dialogs.end()) return;
+  ViewHost::PendingDialog entry = std::move(it->second);
+  v->pending_dialogs.erase(it);
+  if (entry.args && accept) {
+    // prompt: feed user text. WV2 ignores put_ResultText for non-prompt kinds.
+    if (text && *text) entry.args->put_ResultText(utf8ToWide(text).c_str());
+    entry.args->Accept();
+  }
+  // accept=false → no Accept() call → WV2 treats as dismiss (default behavior).
+  if (entry.deferral) entry.deferral->Complete();
 }
 
 BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id) {

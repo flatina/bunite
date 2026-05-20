@@ -884,6 +884,44 @@ static void attachControllerCallbacks(ViewHost* view) {
           }).Get(),
       &tok);
 
+  // ScriptDialogOpening — alert / confirm / prompt / beforeunload. Defer the
+  // event so host can decide via `respondToDialog`.
+  view->webview->add_ScriptDialogOpening(
+      Callback<ICoreWebView2ScriptDialogOpeningEventHandler>(
+          [lifetime, view_id](ICoreWebView2*, ICoreWebView2ScriptDialogOpeningEventArgs* args) -> HRESULT {
+            if (!lifetime || !lifetime->alive.load()) return S_OK;
+            ViewHost* v = getView(view_id);
+            if (!v) return S_OK;
+            ComPtr<ICoreWebView2Deferral> deferral;
+            args->GetDeferral(&deferral);
+            COREWEBVIEW2_SCRIPT_DIALOG_KIND kind = COREWEBVIEW2_SCRIPT_DIALOG_KIND_ALERT;
+            args->get_Kind(&kind);
+            LPWSTR msg_raw = nullptr;
+            args->get_Message(&msg_raw);
+            std::string message = wideToUtf8(msg_raw);
+            if (msg_raw) CoTaskMemFree(msg_raw);
+            LPWSTR def_raw = nullptr;
+            args->get_DefaultText(&def_raw);
+            std::string default_prompt = wideToUtf8(def_raw);
+            if (def_raw) CoTaskMemFree(def_raw);
+            const char* kind_str = (kind == COREWEBVIEW2_SCRIPT_DIALOG_KIND_CONFIRM) ? "confirm"
+                                 : (kind == COREWEBVIEW2_SCRIPT_DIALOG_KIND_PROMPT) ? "prompt"
+                                 : (kind == COREWEBVIEW2_SCRIPT_DIALOG_KIND_BEFOREUNLOAD) ? "beforeunload"
+                                 : "alert";
+            const uint32_t rid = v->next_dialog_request_id++;
+            v->pending_dialogs[rid] = ViewHost::PendingDialog{ args, std::move(deferral) };
+            std::string payload = "{\"requestId\":" + std::to_string(rid) +
+                                  ",\"kind\":\"" + kind_str +
+                                  "\",\"message\":\"" + escapeJsonString(message) + "\"";
+            if (kind == COREWEBVIEW2_SCRIPT_DIALOG_KIND_PROMPT) {
+              payload += ",\"defaultPrompt\":\"" + escapeJsonString(default_prompt) + "\"";
+            }
+            payload += "}";
+            emitWebviewEvent(view_id, "dialog", payload);
+            return S_OK;
+          }).Get(),
+      &tok);
+
   // DocumentTitleChanged — surface for automation surfaceEvents title-change arm.
   view->webview->add_DocumentTitleChanged(
       Callback<ICoreWebView2DocumentTitleChangedEventHandler>(

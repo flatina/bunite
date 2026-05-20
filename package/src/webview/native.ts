@@ -1,7 +1,10 @@
 // <bunite-webview> custom element — registered in every appres:// page via preload.
 
 import type { ClientOf } from "../rpc/index";
-import type { SurfaceCap, EvaluateResult, SurfaceCapabilities, ScreenshotResult, SurfaceEvent } from "../rpc/framework";
+import type {
+  SurfaceCap, EvaluateResult, SurfaceCapabilities, ScreenshotResult,
+  SurfaceEvent, ConsoleEntry, WaitResult,
+} from "../rpc/framework";
 
 declare const host: {
   runtime(): Promise<ClientOf<typeof import("../rpc/framework").RuntimeCap>>;
@@ -273,7 +276,8 @@ class BuniteWebviewElement extends HTMLElement {
       return {
         evaluate: false, crossOriginEval: false, surfaceEvents: false,
         nativeInputTrusted: false, click: false, type: false, press: false,
-        scroll: false, screenshot: false,
+        scroll: false, mouse: false, dialogs: false, console: false,
+        screenshot: false,
       };
     }
     return callSurfaceTyped((s) => s.capabilities({ surfaceId: sid }));
@@ -314,6 +318,47 @@ class BuniteWebviewElement extends HTMLElement {
     const sid = this._surfaceId;
     if (sid == null) return;
     await callSurfaceTyped((s) => s.scroll({ surfaceId: sid, ...args }));
+  }
+
+  async sendMouse(args: {
+    action: "move" | "down" | "up";
+    x: number; y: number;
+    button?: "left" | "middle" | "right";
+    modifiers?: Array<"alt" | "ctrl" | "meta" | "shift">;
+  }): Promise<void> {
+    const sid = this._surfaceId;
+    if (sid == null) return;
+    await callSurfaceTyped((s) => s.mouse({ surfaceId: sid, ...args }));
+  }
+
+  async respondToDialog(requestId: number, accept: boolean, text?: string): Promise<void> {
+    const sid = this._surfaceId;
+    if (sid == null) return;
+    await callSurfaceTyped((s) => s.respondToDialog({ surfaceId: sid, requestId, accept, text }));
+  }
+
+  async setDialogTimeout(ms: number | null): Promise<void> {
+    const sid = this._surfaceId;
+    if (sid == null) return;
+    await callSurfaceTyped((s) => s.setDialogTimeout({ surfaceId: sid, ms }));
+  }
+
+  async waitForSelector(selector: string, timeoutMs?: number): Promise<WaitResult> {
+    const sid = this._surfaceId;
+    if (sid == null) return { ok: false, code: "runtime_error", message: "surface not ready" };
+    return callSurfaceTyped((s) => s.waitForSelector({ surfaceId: sid, selector, timeoutMs }));
+  }
+
+  async waitForFunction(expression: string, opts?: { timeoutMs?: number; pollIntervalMs?: number }): Promise<WaitResult> {
+    const sid = this._surfaceId;
+    if (sid == null) return { ok: false, code: "runtime_error", message: "surface not ready" };
+    return callSurfaceTyped((s) => s.waitForFunction({ surfaceId: sid, expression, ...opts }));
+  }
+
+  async getConsoleBuffer(opts?: { clear?: boolean }): Promise<ConsoleEntry[]> {
+    const sid = this._surfaceId;
+    if (sid == null) return [];
+    return (await callSurfaceTyped((s) => s.getConsoleBuffer({ surfaceId: sid, clear: opts?.clear }))) ?? [];
   }
 
   async screenshot(args?: { format?: "png" | "jpeg"; quality?: number }): Promise<ScreenshotResult> {

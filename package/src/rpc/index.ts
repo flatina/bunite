@@ -101,6 +101,7 @@ export {
   ClipboardCap,
   ShellCap,
   SurfaceCap,
+  PageReportingCap,
   FRAMEWORK_TYPE_IDS,
 } from "./framework";
 
@@ -117,6 +118,15 @@ export type {
   TypeArgs,
   PressArgs,
   ScrollArgs,
+  MouseArgs,
+  DialogEvent,
+  RespondToDialogArgs,
+  SetDialogTimeoutArgs,
+  WaitForSelectorArgs,
+  WaitForFunctionArgs,
+  WaitResult,
+  ConsoleLevel,
+  ConsoleEntry,
   ScreenshotArgs,
   ScreenshotResult,
   EvaluateResult,

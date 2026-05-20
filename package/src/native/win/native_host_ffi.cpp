@@ -20,7 +20,7 @@
 using bunite_win::runOnUiThreadSync;
 using bunite_win::runOnCefUiThreadSync;
 
-static constexpr int32_t BUNITE_ABI_VERSION = 8;
+static constexpr int32_t BUNITE_ABI_VERSION = 9;
 
 namespace {
 
@@ -133,6 +133,16 @@ void registerCdpObserverForView(ViewHost* view) {
   if (!view || !view->browser) return;
   view->devtools_registration =
       view->browser->GetHost()->AddDevToolsMessageObserver(getDevToolsObserver());
+}
+
+void respondToDialogRequest(ViewHost* view, uint32_t request_id,
+                            bool accept, const std::string& text) {
+  if (!view) return;
+  auto it = view->pending_dialogs.find(request_id);
+  if (it == view->pending_dialogs.end()) return;
+  CefRefPtr<CefJSDialogCallback> cb = std::move(it->second);
+  view->pending_dialogs.erase(it);
+  if (cb) cb->Continue(accept, text);
 }
 }  // namespace bunite_win
 
@@ -1123,6 +1133,40 @@ extern "C" BUNITE_EXPORT void bunite_view_scroll(uint32_t view_id, double dx, do
   });
 }
 
+extern "C" BUNITE_EXPORT void bunite_view_mouse(uint32_t view_id, int32_t action,
+                                                  double x, double y, int32_t button,
+                                                  uint32_t modifiers) {
+  bunite_win::postCefUiTask([view_id, action, x, y, button, modifiers]() {
+    auto* view = bunite_win::getViewHostById(view_id);
+    if (!view || !view->browser) return;
+    auto host = view->browser->GetHost();
+    if (!host) return;
+    CefMouseEvent ev{};
+    ev.x = static_cast<int>(x);
+    ev.y = static_cast<int>(y);
+    ev.modifiers = cefModifiers(modifiers);
+    if (action == 0) {
+      // move
+      host->SendMouseMoveEvent(ev, /*mouseLeave=*/false);
+    } else {
+      // down (1) / up (2)
+      CefBrowserHost::MouseButtonType btn = (button == 2) ? MBT_RIGHT
+                                          : (button == 1) ? MBT_MIDDLE : MBT_LEFT;
+      host->SendMouseClickEvent(ev, btn, /*mouseUp=*/action == 2, /*clickCount=*/1);
+    }
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_respond_dialog(uint32_t view_id, uint32_t request_id,
+                                                          bool accept, const char* text) {
+  std::string text_str = text ? text : "";
+  bunite_win::postCefUiTask([view_id, request_id, accept, text_str]() {
+    auto* view = bunite_win::getViewHostById(view_id);
+    if (!view) return;
+    bunite_win::respondToDialogRequest(view, request_id, accept, text_str);
+  });
+}
+
 namespace {
 
 void emitScreenshotError(uint32_t view_id, uint32_t request_id, const char* code, const std::string& msg) {
@@ -1144,6 +1188,7 @@ extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
   return BUNITE_CAP_EVALUATE | BUNITE_CAP_SURFACE_EVENTS |
          BUNITE_CAP_NATIVE_INPUT_TRUSTED |
          BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
+         BUNITE_CAP_MOUSE | BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
 }
 

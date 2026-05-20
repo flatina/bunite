@@ -21,6 +21,13 @@ export function trackSurface(surfaceId: number, record: SurfaceRecord) {
   ids.add(surfaceId);
 }
 
+type DisposeHook = (surfaceId: number) => void;
+const disposeHooks: DisposeHook[] = [];
+
+export function onSurfaceDispose(cb: DisposeHook) {
+  disposeHooks.push(cb);
+}
+
 export function untrackSurface(surfaceId: number) {
   const record = surfaces.get(surfaceId);
   if (!record) return;
@@ -30,6 +37,7 @@ export function untrackSurface(surfaceId: number) {
     ids.delete(surfaceId);
     if (ids.size === 0) hostSurfaceIds.delete(record.hostViewId);
   }
+  for (const cb of disposeHooks) cb(surfaceId);
 }
 
 export function getOwnedSurface(surfaceId: number, ctx: { viewId: number }): SurfaceRecord | null {
@@ -54,7 +62,7 @@ export function removeSurfacesForHostView(hostViewId: number) {
   for (const surfaceId of Array.from(ids)) {
     const record = surfaces.get(surfaceId);
     if (!record) continue;
-    untrackSurface(surfaceId);
+    untrackSurface(surfaceId);  // fires disposeHooks
     record.view.remove();
   }
 }

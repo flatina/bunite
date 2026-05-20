@@ -128,6 +128,9 @@ const CAP_SCROLL               = 1 << 7;
 const CAP_SCREENSHOT           = 1 << 8;
 const CAP_FORMAT_PNG           = 1 << 9;
 const CAP_FORMAT_JPEG          = 1 << 10;
+const CAP_MOUSE                = 1 << 11;
+const CAP_DIALOGS              = 1 << 12;
+const CAP_CONSOLE              = 1 << 13;
 
 function decodeCapabilityBits(bits: number): SurfaceCapabilities {
   const formats: ("png" | "jpeg")[] = [];
@@ -142,6 +145,9 @@ function decodeCapabilityBits(bits: number): SurfaceCapabilities {
     type: !!(bits & CAP_TYPE),
     press: !!(bits & CAP_PRESS),
     scroll: !!(bits & CAP_SCROLL),
+    mouse: !!(bits & CAP_MOUSE),
+    dialogs: !!(bits & CAP_DIALOGS),
+    console: !!(bits & CAP_CONSOLE),
     screenshot: !!(bits & CAP_SCREENSHOT),
     ...(formats.length > 0 ? { formats } : {}),
   };
@@ -394,6 +400,27 @@ export class BrowserView {
     );
   }
 
+  mouse(args: {
+    action: "move" | "down" | "up";
+    x: number; y: number;
+    button?: "left" | "middle" | "right";
+    modifiers?: Modifier[];
+  }) {
+    if (!this.nativeAttached) return;
+    const action = args.action === "move" ? 0 : args.action === "down" ? 1 : 2;
+    const button = args.button === "right" ? 2 : args.button === "middle" ? 1 : 0;
+    getNativeLibrary()?.symbols.bunite_view_mouse(
+      this.id, action, args.x, args.y, button, encodeModifiers(args.modifiers)
+    );
+  }
+
+  respondToDialog(requestId: number, accept: boolean, text?: string) {
+    if (!this.nativeAttached) return;
+    getNativeLibrary()?.symbols.bunite_view_respond_dialog(
+      this.id, requestId, accept, toCString(text ?? "")
+    );
+  }
+
   screenshot(format: "png" | "jpeg", quality: number): Promise<ScreenshotResult> {
     if (!this.nativeAttached) {
       return Promise.resolve({ ok: false, code: "not_supported", message: "native runtime unavailable" });
@@ -529,7 +556,7 @@ export class BrowserView {
   }
 
   on(
-    name: "will-navigate" | "did-navigate" | "dom-ready" | "new-window-open" | "permission-requested" | "title-changed" | "load-start" | "load-finish" | "load-fail",
+    name: "will-navigate" | "did-navigate" | "dom-ready" | "new-window-open" | "permission-requested" | "title-changed" | "load-start" | "load-finish" | "load-fail" | "dialog" | "console-message",
     handler: (event: unknown) => void
   ) {
     const specificName = `${name}-${this.id}`;

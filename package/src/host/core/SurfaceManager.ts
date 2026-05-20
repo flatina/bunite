@@ -1,10 +1,13 @@
 import { BrowserView } from "./BrowserView";
 import {
   trackSurface, untrackSurface, getOwnedSurface,
-  getHostSurfaceIds, getSurfaceRecord,
+  getHostSurfaceIds, getSurfaceRecord, onSurfaceDispose,
   MAX_SURFACES_PER_HOST
 } from "./SurfaceRegistry";
-import { SurfaceCap, type ImplOf, IpcError, type SurfaceEvent } from "../../rpc/index";
+import {
+  SurfaceCap, type ImplOf, IpcError,
+  type SurfaceEvent, type DialogEvent, type ConsoleEntry,
+} from "../../rpc/index";
 import { Stream } from "../../rpc/stream";
 
 function applyHostOffset(hostView: BrowserView, x: number, y: number) {
@@ -25,6 +28,124 @@ export function emitSurfaceEvent(hostViewId: number, surfaceId: number, event: S
   const subs = surfaceEventSubs.get(hostViewId);
   if (!subs) return;
   for (const emit of subs) emit({ surfaceId, event });
+}
+
+type DialogEmit = (event: { surfaceId: number; event: DialogEvent }) => void;
+const dialogSubs = new Map<number, Set<DialogEmit>>();
+
+type ConsoleEmit = (event: { surfaceId: number; entry: ConsoleEntry }) => void;
+const consoleSubs = new Map<number, Set<ConsoleEmit>>();
+
+const CONSOLE_BUFFER_LIMIT = 200;
+const DEFAULT_DIALOG_TIMEOUT_MS = 5000;
+
+type PendingDialog = {
+  requestId: number;
+  originalKind: "alert" | "confirm" | "prompt" | "beforeunload";
+  message: string;
+  timer: ReturnType<typeof setTimeout> | null;
+};
+
+type SurfaceState = {
+  consoleBuffer: ConsoleEntry[];
+  dialogTimeoutMs: number | null;  // null = no auto-dismiss
+  pendingDialogs: Map<number, PendingDialog>;
+};
+
+const surfaceState = new Map<number, SurfaceState>();
+
+function getOrCreateState(surfaceId: number): SurfaceState {
+  let s = surfaceState.get(surfaceId);
+  if (!s) {
+    s = {
+      consoleBuffer: [],
+      dialogTimeoutMs: DEFAULT_DIALOG_TIMEOUT_MS,
+      pendingDialogs: new Map(),
+    };
+    surfaceState.set(surfaceId, s);
+  }
+  return s;
+}
+
+export function disposeSurfaceState(surfaceId: number) {
+  const s = surfaceState.get(surfaceId);
+  if (!s) return;
+  for (const p of s.pendingDialogs.values()) {
+    if (p.timer) clearTimeout(p.timer);
+  }
+  surfaceState.delete(surfaceId);
+}
+
+// Wire dispose to any untrack path (remove + removeSurfacesForHostView).
+onSurfaceDispose(disposeSurfaceState);
+
+export function clearConsoleBuffer(surfaceId: number) {
+  const s = surfaceState.get(surfaceId);
+  if (s) s.consoleBuffer.length = 0;
+}
+
+export function emitDialog(hostViewId: number, surfaceId: number, event: DialogEvent) {
+  const subs = dialogSubs.get(hostViewId);
+  if (!subs) return;
+  for (const emit of subs) emit({ surfaceId, event });
+}
+
+export function emitConsole(hostViewId: number, surfaceId: number, entry: ConsoleEntry) {
+  const state = getOrCreateState(surfaceId);
+  state.consoleBuffer.push(entry);
+  if (state.consoleBuffer.length > CONSOLE_BUFFER_LIMIT) {
+    state.consoleBuffer.splice(0, state.consoleBuffer.length - CONSOLE_BUFFER_LIMIT);
+  }
+  const subs = consoleSubs.get(hostViewId);
+  if (!subs) return;
+  for (const emit of subs) emit({ surfaceId, entry });
+}
+
+/** Called by SurfaceBrowserIPC on native `dialog` event. Stashes pending entry
+ *  + arms the auto-dismiss timer, then broadcasts to subscribers. */
+export function registerDialogRequest(
+  hostViewId: number,
+  surfaceId: number,
+  request: { requestId: number; kind: "alert" | "confirm" | "prompt" | "beforeunload"; message: string; defaultPrompt?: string }
+) {
+  const state = getOrCreateState(surfaceId);
+  const view = getSurfaceRecord(surfaceId)?.view;
+
+  const entry: PendingDialog = {
+    requestId: request.requestId,
+    originalKind: request.kind,
+    message: request.message,
+    timer: null,
+  };
+  if (state.dialogTimeoutMs !== null && view) {
+    entry.timer = setTimeout(() => {
+      if (!state.pendingDialogs.delete(request.requestId)) return;
+      view.respondToDialog(request.requestId, false);
+      emitDialog(hostViewId, surfaceId, {
+        kind: "auto-dismissed",
+        originalKind: entry.originalKind,
+        message: entry.message,
+      });
+    }, state.dialogTimeoutMs);
+  }
+  state.pendingDialogs.set(request.requestId, entry);
+
+  emitDialog(hostViewId, surfaceId, {
+    kind: request.kind,
+    requestId: request.requestId,
+    message: request.message,
+    defaultPrompt: request.defaultPrompt,
+  });
+}
+
+function consumePendingDialog(surfaceId: number, requestId: number): boolean {
+  const state = surfaceState.get(surfaceId);
+  if (!state) return false;
+  const entry = state.pendingDialogs.get(requestId);
+  if (!entry) return false;
+  if (entry.timer) clearTimeout(entry.timer);
+  state.pendingDialogs.delete(requestId);
+  return true;
 }
 
 export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceCap> {
@@ -78,6 +199,7 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       const record = ownedSurface(surfaceId);
       if (!record) return;
       untrackSurface(surfaceId);
+      disposeSurfaceState(surfaceId);
       record.view.remove();
     },
 
@@ -166,10 +288,74 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       record.view.scroll(args);
     },
 
+    mouse: ({ surfaceId, ...args }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return;
+      record.view.mouse(args);
+    },
+
     screenshot: async ({ surfaceId, format = "png", quality = 90 }) => {
       const record = ownedSurface(surfaceId);
       if (!record) return { ok: false as const, code: "not_supported" as const, message: "surface not found" };
       return record.view.screenshot(format, quality);
+    },
+
+    waitForSelector: async ({ surfaceId, selector, timeoutMs = 5000 }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
+      const deadline = Date.now() + timeoutMs;
+      const expr = `!!document.querySelector(${JSON.stringify(selector)})`;
+      while (Date.now() < deadline) {
+        const res = await record.view.evaluate(expr);
+        if (res.ok && res.value === true) return { ok: true as const };
+        if (!res.ok && res.code !== "timeout") {
+          // Propagate cross_origin distinct from runtime_error — consumer
+          // may want to retry with a same-origin sub-surface vs. fix the script.
+          const code = res.code === "cross_origin" ? "cross_origin" as const : "runtime_error" as const;
+          return { ok: false as const, code, message: res.message };
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return { ok: false as const, code: "timeout" as const, message: `selector ${JSON.stringify(selector)} not found within ${timeoutMs}ms` };
+    },
+
+    waitForFunction: async ({ surfaceId, expression, timeoutMs = 5000, pollIntervalMs = 50 }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const res = await record.view.evaluate(expression);
+        if (res.ok && res.value) return { ok: true as const };
+        if (!res.ok && res.code !== "timeout") {
+          const code = res.code === "cross_origin" ? "cross_origin" as const : "runtime_error" as const;
+          return { ok: false as const, code, message: res.message };
+        }
+        await new Promise((r) => setTimeout(r, pollIntervalMs));
+      }
+      return { ok: false as const, code: "timeout" as const, message: `function did not satisfy within ${timeoutMs}ms` };
+    },
+
+    respondToDialog: ({ surfaceId, requestId, accept, text }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return;
+      if (!consumePendingDialog(surfaceId, requestId)) return;  // stale or already auto-dismissed
+      record.view.respondToDialog(requestId, accept, text);
+    },
+
+    setDialogTimeout: ({ surfaceId, ms }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return;
+      const state = getOrCreateState(surfaceId);
+      state.dialogTimeoutMs = ms;
+    },
+
+    getConsoleBuffer: ({ surfaceId, clear }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return [];
+      const state = getOrCreateState(surfaceId);
+      const snapshot = state.consoleBuffer.slice();
+      if (clear) state.consoleBuffer.length = 0;
+      return snapshot;
     },
 
     capabilities: ({ surfaceId }) => {
@@ -178,7 +364,8 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
         return {
           evaluate: false, crossOriginEval: false, surfaceEvents: false,
           nativeInputTrusted: false, click: false, type: false, press: false,
-          scroll: false, screenshot: false,
+          scroll: false, mouse: false, dialogs: false, console: false,
+          screenshot: false,
         };
       }
       return record.view.capabilities();
@@ -199,6 +386,42 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
         if (!set) return;
         set.delete(wrapped);
         if (set.size === 0) surfaceEventSubs.delete(hostViewId);
+      });
+    }),
+
+    dialogs: ({ surfaceId: filterId }) => Stream.from<DialogEvent>((emit, signal) => {
+      let subs = dialogSubs.get(hostViewId);
+      if (!subs) {
+        subs = new Set();
+        dialogSubs.set(hostViewId, subs);
+      }
+      const wrapped: DialogEmit = ({ surfaceId, event }) => {
+        if (surfaceId === filterId) emit(event);
+      };
+      subs.add(wrapped);
+      signal.addEventListener("abort", () => {
+        const set = dialogSubs.get(hostViewId);
+        if (!set) return;
+        set.delete(wrapped);
+        if (set.size === 0) dialogSubs.delete(hostViewId);
+      });
+    }),
+
+    consoleEvents: ({ surfaceId: filterId }) => Stream.from<ConsoleEntry>((emit, signal) => {
+      let subs = consoleSubs.get(hostViewId);
+      if (!subs) {
+        subs = new Set();
+        consoleSubs.set(hostViewId, subs);
+      }
+      const wrapped: ConsoleEmit = ({ surfaceId, entry }) => {
+        if (surfaceId === filterId) emit(entry);
+      };
+      subs.add(wrapped);
+      signal.addEventListener("abort", () => {
+        const set = consoleSubs.get(hostViewId);
+        if (!set) return;
+        set.delete(wrapped);
+        if (set.size === 0) consoleSubs.delete(hostViewId);
       });
     }),
   };

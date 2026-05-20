@@ -38,6 +38,7 @@
 #include "include/cef_command_line.h"
 #include "include/cef_parser.h"
 #include "include/cef_permission_handler.h"
+#include "include/cef_jsdialog_handler.h"
 #include "include/cef_resource_handler.h"
 #include "include/cef_resource_request_handler.h"
 #include "include/cef_scheme.h"
@@ -101,6 +102,11 @@ struct ViewHost {
   // DevTools observer registration — kept alive for the life of the view so
   // CDP method results (screenshot etc.) can route back to bunite handlers.
   CefRefPtr<CefRegistration> devtools_registration;
+
+  // Page-initiated dialog callbacks held until host responds via
+  // `respondToDialogRequest`. CEF holds the page execution while we wait.
+  std::unordered_map<uint32_t, CefRefPtr<CefJSDialogCallback>> pending_dialogs;
+  uint32_t next_dialog_request_id = 1;
 
   // Pending state: applied in OnAfterCreated when browser HWND becomes available.
   bool pending_visible = true;
@@ -219,6 +225,8 @@ void openDevToolsForView(ViewHost* view);                   // [CEF UI thread]
 void closeDevToolsForView(ViewHost* view);                  // [CEF UI thread]
 void toggleDevToolsForView(ViewHost* view);                 // [CEF UI thread]
 void registerCdpObserverForView(ViewHost* view);            // [CEF UI thread]
+void respondToDialogRequest(ViewHost* view, uint32_t request_id,
+                            bool accept, const std::string& text);  // [CEF UI thread]
 bool initializeCefOnUiThread();                             // [UI thread]
 void shutdownCefOnUiThread();                               // [UI thread]
 void cancelPendingPermissionRequestsOnUiThread();           // [CEF UI thread]

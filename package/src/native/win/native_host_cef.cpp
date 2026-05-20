@@ -85,7 +85,8 @@ class BuniteCefClient
     public CefRequestHandler,
     public CefResourceRequestHandler,
     public CefPermissionHandler,
-    public CefDisplayHandler {
+    public CefDisplayHandler,
+    public CefJSDialogHandler {
 public:
   // BuniteCefClient is constructed 1:1 with a `ViewHost*`; `last_title_` is
   // therefore per-view. OnTitleChange runs on the CEF UI thread (single).
@@ -97,6 +98,49 @@ public:
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+  CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
+
+  bool OnJSDialog(CefRefPtr<CefBrowser>, const CefString& /*origin_url*/,
+                  JSDialogType dialog_type, const CefString& message_text,
+                  const CefString& default_prompt_text,
+                  CefRefPtr<CefJSDialogCallback> callback,
+                  bool& suppress_message) override {
+    CEF_REQUIRE_UI_THREAD();
+    const char* kind = (dialog_type == JSDIALOGTYPE_ALERT) ? "alert"
+                     : (dialog_type == JSDIALOGTYPE_CONFIRM) ? "confirm" : "prompt";
+    const uint32_t rid = view_->next_dialog_request_id++;
+    view_->pending_dialogs[rid] = callback;
+    suppress_message = true;  // we control the dialog UX; host sends the answer.
+    std::string payload = "{\"requestId\":" + std::to_string(rid) +
+                          ",\"kind\":\"" + kind +
+                          "\",\"message\":\"" + bunite_win::escapeJsonString(message_text.ToString()) + "\"";
+    if (dialog_type == JSDIALOGTYPE_PROMPT) {
+      payload += ",\"defaultPrompt\":\"" + bunite_win::escapeJsonString(default_prompt_text.ToString()) + "\"";
+    }
+    payload += "}";
+    bunite_win::emitWebviewEvent(view_->id, "dialog", payload);
+    return true;  // handled — CEF will not show its own UI.
+  }
+
+  bool OnBeforeUnloadDialog(CefRefPtr<CefBrowser>, const CefString& message_text,
+                            bool /*is_reload*/,
+                            CefRefPtr<CefJSDialogCallback> callback) override {
+    CEF_REQUIRE_UI_THREAD();
+    const uint32_t rid = view_->next_dialog_request_id++;
+    view_->pending_dialogs[rid] = callback;
+    std::string payload = "{\"requestId\":" + std::to_string(rid) +
+                          ",\"kind\":\"beforeunload\",\"message\":\"" +
+                          bunite_win::escapeJsonString(message_text.ToString()) + "\"}";
+    bunite_win::emitWebviewEvent(view_->id, "dialog", payload);
+    return true;
+  }
+
+  void OnResetDialogState(CefRefPtr<CefBrowser>) override {
+    CEF_REQUIRE_UI_THREAD();
+    // Tab navigation / reload clears any stuck dialogs. Drop the callbacks —
+    // CEF won't deliver them anymore, and the page is already moving on.
+    view_->pending_dialogs.clear();
+  }
 
   bool OnProcessMessageReceived(
     CefRefPtr<CefBrowser> /*browser*/,

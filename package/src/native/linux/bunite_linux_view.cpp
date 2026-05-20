@@ -53,6 +53,36 @@ gboolean on_load_failed_tls(WebKitWebView* /*wv*/, const char* failing_uri,
   return FALSE;  // do not override default certificate failure behavior
 }
 
+gboolean on_script_dialog(WebKitWebView* /*wv*/, WebKitScriptDialog* dialog, gpointer user_data) {
+  const uint32_t view_id = GPOINTER_TO_UINT(user_data);
+  auto* v = findView(view_id);
+  if (!v) return FALSE;
+  WebKitScriptDialogType type = webkit_script_dialog_get_dialog_type(dialog);
+  const char* kind = nullptr;
+  switch (type) {
+    case WEBKIT_SCRIPT_DIALOG_ALERT:        kind = "alert"; break;
+    case WEBKIT_SCRIPT_DIALOG_CONFIRM:      kind = "confirm"; break;
+    case WEBKIT_SCRIPT_DIALOG_PROMPT:       kind = "prompt"; break;
+    case WEBKIT_SCRIPT_DIALOG_BEFORE_UNLOAD_CONFIRM: kind = "beforeunload"; break;
+    default: return FALSE;
+  }
+  // Defer the dialog so the page execution stays paused until host responds.
+  webkit_script_dialog_ref(dialog);
+  const uint32_t rid = v->next_dialog_request_id++;
+  v->pending_dialogs[rid] = dialog;
+  const char* message = webkit_script_dialog_get_message(dialog);
+  std::string payload = "{\"requestId\":" + std::to_string(rid) +
+                        ",\"kind\":\"" + kind +
+                        "\",\"message\":\"" + escapeJsonString(message ? message : "") + "\"";
+  if (type == WEBKIT_SCRIPT_DIALOG_PROMPT) {
+    const char* def = webkit_script_dialog_prompt_get_default_text(dialog);
+    payload += ",\"defaultPrompt\":\"" + escapeJsonString(def ? def : "") + "\"";
+  }
+  payload += "}";
+  emitWebviewEvent(view_id, "dialog", payload);
+  return TRUE;  // we handled it
+}
+
 GtkWidget* on_create(WebKitWebView* wv, WebKitNavigationAction* action, gpointer user_data) {
   const uint32_t view_id = GPOINTER_TO_UINT(user_data);
   WebKitURIRequest* req = webkit_navigation_action_get_request(action);
@@ -101,6 +131,26 @@ ViewState* findView(uint32_t view_id) {
 uint32_t viewIdForWebView(WebKitWebView* wv) {
   if (!wv) return 0;
   return GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(wv), kViewIdKey));
+}
+
+void respondToDialogRequest(uint32_t view_id, uint32_t request_id, bool accept,
+                            const std::string& text) {
+  auto* v = findView(view_id);
+  if (!v) return;
+  auto it = v->pending_dialogs.find(request_id);
+  if (it == v->pending_dialogs.end()) return;
+  WebKitScriptDialog* dialog = it->second;
+  v->pending_dialogs.erase(it);
+  if (!dialog) return;
+  WebKitScriptDialogType type = webkit_script_dialog_get_dialog_type(dialog);
+  if (type == WEBKIT_SCRIPT_DIALOG_CONFIRM || type == WEBKIT_SCRIPT_DIALOG_BEFORE_UNLOAD_CONFIRM) {
+    webkit_script_dialog_confirm_set_confirmed(dialog, accept ? TRUE : FALSE);
+  } else if (type == WEBKIT_SCRIPT_DIALOG_PROMPT) {
+    if (accept) webkit_script_dialog_prompt_set_text(dialog, text.c_str());
+    else webkit_script_dialog_prompt_set_text(dialog, nullptr);
+  }
+  webkit_script_dialog_close(dialog);
+  webkit_script_dialog_unref(dialog);
 }
 
 bool createView(uint32_t view_id, uint32_t window_id,
@@ -158,6 +208,7 @@ bool createView(uint32_t view_id, uint32_t window_id,
   g_signal_connect(wv, "decide-policy", G_CALLBACK(on_decide_policy), GUINT_TO_POINTER(view_id));
   g_signal_connect(wv, "create", G_CALLBACK(on_create), GUINT_TO_POINTER(view_id));
   g_signal_connect(wv, "notify::title", G_CALLBACK(on_title_changed), GUINT_TO_POINTER(view_id));
+  g_signal_connect(wv, "script-dialog", G_CALLBACK(on_script_dialog), GUINT_TO_POINTER(view_id));
 
   GtkWidget* container = GTK_WIDGET(wv);
   if (auto_resize) {

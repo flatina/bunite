@@ -18,7 +18,7 @@ import { BrowserWindow } from "./BrowserWindow";
 import { createSurfaceCapImpl } from "./SurfaceManager";
 import "./SurfaceBrowserIPC";
 import { log, logLevelToInt } from "../log";
-import { RuntimeCap, SurfaceCap, IpcError, type ImplOf } from "../../rpc/index";
+import { RuntimeCap, SurfaceCap, PageReportingCap, IpcError, type ImplOf } from "../../rpc/index";
 
 import type { LogLevel } from "../log";
 
@@ -189,6 +189,22 @@ export class AppRuntime {
       themeWatch: () => notImpl("themeWatch"),
       surface: (_: void, ctx: Parameters<ImplOf<typeof RuntimeCap>["surface"]>[1]) =>
         ctx.exportCap(SurfaceCap, createSurfaceCapImpl(viewId)),
+      reporting: (_: void, ctx: Parameters<ImplOf<typeof RuntimeCap>["reporting"]>[1]) =>
+        ctx.exportCap(PageReportingCap, {
+          reportConsoleBatch: ({ entries }) => {
+            // One queueMicrotask per batch (not per entry) — a 1000-log
+            // spam still translates to 1 microtask + N synchronous emits,
+            // not N microtasks competing for the queue.
+            queueMicrotask(() => {
+              for (const entry of entries) {
+                buniteEventEmitter.emitEvent(
+                  buniteEventEmitter.events.webview.consoleMessage(entry),
+                  viewId
+                );
+              }
+            });
+          },
+        }),
     } satisfies ImplOf<typeof RuntimeCap>;
     return impl;
   }

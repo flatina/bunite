@@ -20,7 +20,7 @@ using bunite_mac::runOnUiThreadSync;
 
 namespace {
 
-constexpr int32_t kBuniteAbiVersion = 8;
+constexpr int32_t kBuniteAbiVersion = 9;
 
 // warn-once — avoid log spam from tight JS call loops.
 #define BUNITE_MAC_TODO(name)                                       \
@@ -664,6 +664,62 @@ extern "C" BUNITE_EXPORT void bunite_view_scroll(uint32_t view_id, double dx, do
   });
 }
 
+extern "C" BUNITE_EXPORT void bunite_view_respond_dialog(uint32_t view_id, uint32_t request_id,
+                                                          bool accept, const char* text) {
+  std::string text_str = text ? text : "";
+  runOnUiThreadSync([=]() {
+    auto* v = bunite_mac::findView(view_id);
+    if (!v) return;
+    auto it = v->pending_dialogs.find(request_id);
+    if (it == v->pending_dialogs.end()) return;
+    auto cb = it->second;
+    v->pending_dialogs.erase(it);
+    if (cb) cb(accept, text_str);
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_mouse(uint32_t view_id, int32_t action,
+                                                  double x, double y, int32_t button,
+                                                  uint32_t modifiers) {
+  runOnUiThreadSync([=]() {
+    auto* v = bunite_mac::findView(view_id);
+    if (!v || !v->webview || !v->webview.window) return;
+    NSWindow* win = v->webview.window;
+    NSPoint loc = viewPointToWindow(v->webview, x, y);
+    // Strip Control bit on mouse events for the same reason as click —
+    // AppKit Ctrl+leftMouseDown maps to secondary-click which enters context
+    // menu modal mode and stalls the cooperative pump.
+    NSEventModifierFlags flags = macModifiers(modifiers) & ~NSEventModifierFlagControl;
+    NSEventType type;
+    if (action == 0) {
+      type = NSEventTypeMouseMoved;
+    } else if (action == 1) {
+      type = macMouseDownType(button);
+    } else {
+      type = macMouseUpType(button);
+    }
+    NSEvent* ev = [NSEvent mouseEventWithType:type
+                                     location:loc modifierFlags:flags
+                                    timestamp:[[NSProcessInfo processInfo] systemUptime]
+                                 windowNumber:win.windowNumber context:nil
+                                  eventNumber:0 clickCount:(action == 0 ? 0 : 1)
+                                     pressure:(action == 1 ? 1.0 : 0.0)];
+    if (!ev) return;
+    // Direct WKWebView dispatch — same modal-tracking concerns as click.
+    if (action == 0) {
+      [v->webview mouseMoved:ev];
+    } else if (action == 1) {
+      if (button == 0) [v->webview mouseDown:ev];
+      else if (button == 1) [v->webview otherMouseDown:ev];
+      else [v->webview rightMouseDown:ev];
+    } else {
+      if (button == 0) [v->webview mouseUp:ev];
+      else if (button == 1) [v->webview otherMouseUp:ev];
+      else [v->webview rightMouseUp:ev];
+    }
+  });
+}
+
 // Screenshot — WKWebView.takeSnapshotWithConfiguration: + NSBitmapImageRep PNG/JPEG.
 namespace {
 
@@ -686,6 +742,7 @@ extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
   return BUNITE_CAP_EVALUATE | BUNITE_CAP_SURFACE_EVENTS |
          BUNITE_CAP_NATIVE_INPUT_TRUSTED |
          BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
+         BUNITE_CAP_MOUSE | BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
 }
 

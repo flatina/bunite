@@ -195,6 +195,7 @@ function definePolyfillClass(): CustomElementConstructor {
         evaluate: reachable, crossOriginEval: false, surfaceEvents: true,
         nativeInputTrusted: false,
         click: reachable, type: reachable, press: reachable, scroll: reachable,
+        mouse: reachable, dialogs: false, console: false,
         screenshot: false,
       };
     }
@@ -248,6 +249,68 @@ function definePolyfillClass(): CustomElementConstructor {
     async sendScroll(args: { dx: number; dy: number; x?: number; y?: number; modifiers?: string[] }) {
       if (!this.isReachable()) return;
       this._iframe!.contentWindow!.scrollBy(args.dx, args.dy);
+    }
+
+    async sendMouse(args: {
+      action: "move" | "down" | "up";
+      x: number; y: number;
+      button?: string;
+      modifiers?: string[];
+    }) {
+      if (!this.isReachable()) return;
+      const doc = this._iframe!.contentDocument!;
+      const target = doc.elementFromPoint(args.x, args.y) ?? doc.body;
+      if (!target) return;
+      const type = args.action === "move" ? "mousemove" : args.action === "down" ? "mousedown" : "mouseup";
+      const init: MouseEventInit = {
+        bubbles: true, cancelable: true, view: this._iframe!.contentWindow,
+        clientX: args.x, clientY: args.y,
+        button: args.button === "right" ? 2 : args.button === "middle" ? 1 : 0,
+        ...this.modifierBag(args.modifiers),
+      };
+      target.dispatchEvent(new MouseEvent(type, init));
+    }
+
+    async respondToDialog(_requestId: number, _accept: boolean, _text?: string) {
+      // iframe sandbox forbids cross-frame dialog interception; nothing to do.
+    }
+
+    async setDialogTimeout(_ms: number | null) { /* no-op */ }
+
+    async waitForSelector(selector: string, timeoutMs = 5000) {
+      if (!this.isReachable()) {
+        return { ok: false as const, code: "runtime_error" as const, message: "iframe content not same-origin" };
+      }
+      const doc = this._iframe!.contentDocument!;
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (doc.querySelector(selector)) return { ok: true as const };
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      return { ok: false as const, code: "timeout" as const, message: `selector ${JSON.stringify(selector)} not found within ${timeoutMs}ms` };
+    }
+
+    async waitForFunction(expression: string, opts?: { timeoutMs?: number; pollIntervalMs?: number }) {
+      if (!this.isReachable()) {
+        return { ok: false as const, code: "runtime_error" as const, message: "iframe content not same-origin" };
+      }
+      const win = this._iframe!.contentWindow as Window & { eval(s: string): unknown };
+      const deadline = Date.now() + (opts?.timeoutMs ?? 5000);
+      const interval = opts?.pollIntervalMs ?? 50;
+      while (Date.now() < deadline) {
+        try {
+          if (win.eval(expression)) return { ok: true as const };
+        } catch (e) {
+          return { ok: false as const, code: "runtime_error" as const, message: (e as Error).message };
+        }
+        await new Promise((r) => setTimeout(r, interval));
+      }
+      return { ok: false as const, code: "timeout" as const, message: `function did not satisfy within ${opts?.timeoutMs ?? 5000}ms` };
+    }
+
+    async getConsoleBuffer(_opts?: { clear?: boolean }) {
+      // iframe polyfill doesn't inject a preload — no console capture available.
+      return [] as { level: string; args: string[]; ts: number }[];
     }
 
     async screenshot(_args?: { format?: "png" | "jpeg"; quality?: number }) {

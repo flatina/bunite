@@ -142,6 +142,80 @@ createWebViewWithConfiguration:(WKWebViewConfiguration*)config
   return nil;
 }
 
+// --- Dialog handlers (alert / confirm / prompt). beforeunload is not
+//     surfaced by WKUIDelegate on macOS — the cancel/proceed decision is made
+//     through the navigation-policy delegate's `decidePolicyForNavigationAction:`
+//     which we already drive via the `will-navigate` allow-list. Hence no
+//     beforeunload arm on this backend.
+
+- (void)webView:(WKWebView*)wv
+  runJavaScriptAlertPanelWithMessage:(NSString*)message
+                    initiatedByFrame:(WKFrameInfo*)frame
+                   completionHandler:(void (^)(void))completionHandler
+{
+  (void)frame;
+  uint32_t view_id = bunite_mac::viewIdForWebView(wv);
+  auto* v = bunite_mac::findView(view_id);
+  if (!v) { completionHandler(); return; }
+  uint32_t rid = v->next_dialog_request_id++;
+  v->pending_dialogs[rid] = ^(bool /*accept*/, const std::string& /*text*/) {
+    completionHandler();
+  };
+  std::string payload = "{\"requestId\":" + std::to_string(rid) +
+    ",\"kind\":\"alert\",\"message\":\"" +
+    bunite_mac::escapeJsonString(message.UTF8String ?: "") + "\"}";
+  // Post emit to next runloop turn so a heavy host-side listener cannot stall
+  // the cooperative pump while the page is awaiting the completion handler.
+  dispatch_async(dispatch_get_main_queue(), ^{
+    bunite_mac::emitWebviewEvent(view_id, "dialog", payload);
+  });
+}
+
+- (void)webView:(WKWebView*)wv
+  runJavaScriptConfirmPanelWithMessage:(NSString*)message
+                      initiatedByFrame:(WKFrameInfo*)frame
+                     completionHandler:(void (^)(BOOL))completionHandler
+{
+  (void)frame;
+  uint32_t view_id = bunite_mac::viewIdForWebView(wv);
+  auto* v = bunite_mac::findView(view_id);
+  if (!v) { completionHandler(NO); return; }
+  uint32_t rid = v->next_dialog_request_id++;
+  v->pending_dialogs[rid] = ^(bool accept, const std::string& /*text*/) {
+    completionHandler(accept ? YES : NO);
+  };
+  std::string payload = "{\"requestId\":" + std::to_string(rid) +
+    ",\"kind\":\"confirm\",\"message\":\"" +
+    bunite_mac::escapeJsonString(message.UTF8String ?: "") + "\"}";
+  dispatch_async(dispatch_get_main_queue(), ^{
+    bunite_mac::emitWebviewEvent(view_id, "dialog", payload);
+  });
+}
+
+- (void)webView:(WKWebView*)wv
+  runJavaScriptTextInputPanelWithPrompt:(NSString*)prompt
+                            defaultText:(NSString*)defaultText
+                       initiatedByFrame:(WKFrameInfo*)frame
+                      completionHandler:(void (^)(NSString*))completionHandler
+{
+  (void)frame;
+  uint32_t view_id = bunite_mac::viewIdForWebView(wv);
+  auto* v = bunite_mac::findView(view_id);
+  if (!v) { completionHandler(nil); return; }
+  uint32_t rid = v->next_dialog_request_id++;
+  v->pending_dialogs[rid] = ^(bool accept, const std::string& text) {
+    completionHandler(accept ? [NSString stringWithUTF8String:text.c_str()] : nil);
+  };
+  std::string payload = "{\"requestId\":" + std::to_string(rid) +
+    ",\"kind\":\"prompt\",\"message\":\"" +
+    bunite_mac::escapeJsonString(prompt.UTF8String ?: "") +
+    "\",\"defaultPrompt\":\"" +
+    bunite_mac::escapeJsonString(defaultText.UTF8String ?: "") + "\"}";
+  dispatch_async(dispatch_get_main_queue(), ^{
+    bunite_mac::emitWebviewEvent(view_id, "dialog", payload);
+  });
+}
+
 - (void)webView:(WKWebView*)wv
 requestMediaCapturePermissionForOrigin:(WKSecurityOrigin*)origin
               initiatedByFrame:(WKFrameInfo*)frame

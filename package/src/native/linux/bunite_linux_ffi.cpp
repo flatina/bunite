@@ -354,6 +354,12 @@ extern "C" BUNITE_EXPORT void bunite_view_click(uint32_t, double, double, int32_
 extern "C" BUNITE_EXPORT void bunite_view_type(uint32_t, const char*) {}
 extern "C" BUNITE_EXPORT void bunite_view_press(uint32_t, int32_t, int32_t, const char*, const char*, const char*, uint32_t, int32_t, bool, int32_t) {}
 extern "C" BUNITE_EXPORT void bunite_view_scroll(uint32_t, double, double, double, double, uint32_t) {}
+extern "C" BUNITE_EXPORT void bunite_view_mouse(uint32_t, int32_t, double, double, int32_t, uint32_t) {}
+
+extern "C" BUNITE_EXPORT void bunite_view_respond_dialog(uint32_t view_id, uint32_t request_id,
+                                                          bool accept, const char* text) {
+  bunite_linux::respondToDialogRequest(view_id, request_id, accept, text ? text : "");
+}
 
 // Screenshot — webkit_web_view_get_snapshot → cairo_surface_t → PNG bytes via
 // cairo_surface_write_to_png_stream → g_base64_encode. JPEG path uses GdkPixbuf
@@ -445,6 +451,7 @@ extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
   auto* v = bunite_linux::findView(view_id);
   if (!v) return 0;
   return BUNITE_CAP_EVALUATE | BUNITE_CAP_SURFACE_EVENTS |
+         BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
 }
 

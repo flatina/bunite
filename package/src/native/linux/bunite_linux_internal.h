@@ -38,6 +38,11 @@ struct ViewState {
   std::string preload_script;
   std::string stored_html;
   std::vector<std::string> navigation_rules;
+
+  // Page-initiated dialogs awaiting host response. WebKitScriptDialog is
+  // held until we mark confirmed/text + emit signal completion.
+  std::unordered_map<uint32_t, WebKitScriptDialog*> pending_dialogs;
+  uint32_t next_dialog_request_id = 1;
 };
 
 struct RuntimeState {
@@ -134,6 +139,7 @@ void destroyWindow(uint32_t window_id);
 
 ViewState* findView(uint32_t view_id);
 uint32_t viewIdForWebView(WebKitWebView* wv);
+void respondToDialogRequest(uint32_t view_id, uint32_t request_id, bool accept, const std::string& text);
 bool createView(uint32_t view_id, uint32_t window_id,
                 const char* url, const char* html, const char* preload, const char* appres_root,
                 const char* navigation_rules_json, const char* preload_origins_json,
