@@ -170,6 +170,7 @@ public:
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override {
     CEF_REQUIRE_UI_THREAD();
     view_->browser = browser;
+    bunite_win::registerCdpObserverForView(view_);
     {
       std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
       g_runtime.browser_to_view_id[browser->GetIdentifier()] = view_->id;

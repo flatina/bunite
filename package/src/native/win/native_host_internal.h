@@ -34,6 +34,7 @@
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "include/cef_client.h"
+#include "include/cef_devtools_message_observer.h"
 #include "include/cef_command_line.h"
 #include "include/cef_parser.h"
 #include "include/cef_permission_handler.h"
@@ -97,6 +98,9 @@ struct ViewHost {
   std::atomic<bool> closing = false;
   CefRefPtr<CefBrowser> browser;
   CefRefPtr<CefClient> client;
+  // DevTools observer registration — kept alive for the life of the view so
+  // CDP method results (screenshot etc.) can route back to bunite handlers.
+  CefRefPtr<CefRegistration> devtools_registration;
 
   // Pending state: applied in OnAfterCreated when browser HWND becomes available.
   bool pending_visible = true;
@@ -214,6 +218,7 @@ void finalizeWindowHost(WindowHost* window);                // [UI thread]
 void openDevToolsForView(ViewHost* view);                   // [CEF UI thread]
 void closeDevToolsForView(ViewHost* view);                  // [CEF UI thread]
 void toggleDevToolsForView(ViewHost* view);                 // [CEF UI thread]
+void registerCdpObserverForView(ViewHost* view);            // [CEF UI thread]
 bool initializeCefOnUiThread();                             // [UI thread]
 void shutdownCefOnUiThread();                               // [UI thread]
 void cancelPendingPermissionRequestsOnUiThread();           // [CEF UI thread]
