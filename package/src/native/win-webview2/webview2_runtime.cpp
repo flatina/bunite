@@ -130,7 +130,19 @@ bool registerWindowClasses() {
                                               0, 0, 0, 0, 0,
                                               HWND_MESSAGE, nullptr,
                                               getCurrentModuleHandle(), nullptr);
-  return g_runtime.message_window != nullptr;
+  if (!g_runtime.message_window) return false;
+
+  // `bun run` passes STARTF_USESHOWWINDOW + SW_HIDE; Win documented behavior
+  // is for the first ShowWindow call to use STARTUPINFO.wShowWindow instead
+  // of the requested nCmdShow. Consume it here on the message window so the
+  // first user-visible window's ShowWindow honors its argument.
+  STARTUPINFOW si{};
+  si.cb = sizeof(si);
+  GetStartupInfoW(&si);
+  if ((si.dwFlags & STARTF_USESHOWWINDOW) && si.wShowWindow == SW_HIDE) {
+    ShowWindow(g_runtime.message_window, SW_HIDE);
+  }
+  return true;
 }
 
 // ---- environment bootstrap -----------------------------------------------
