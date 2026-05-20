@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>bunite — browser automation</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; height: 100vh; display: flex; }
+  .pane { display: flex; flex-direction: column; height: 100vh; }
+  .left { flex: 1; padding: 12px; }
+  .right { width: 380px; padding: 12px; background: #1e293b; overflow-y: auto; border-left: 1px solid #334155; }
+  .urlbar { display: flex; gap: 6px; margin-bottom: 8px; }
+  .urlbar input { flex: 1; padding: 6px 8px; background: #334155; color: #e2e8f0; border: 1px solid #475569; border-radius: 4px; font-family: inherit; }
+  .urlbar button { padding: 6px 14px; background: #3b82f6; color: #fff; border: 0; border-radius: 4px; cursor: pointer; }
+  bunite-webview { display: block; flex: 1; width: 100%; border-radius: 6px; background: #fff; }
+
+  .right h2 { margin: 0 0 8px; font-size: 14px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+  .right section { margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid #334155; }
+  .right section:last-child { border-bottom: 0; }
+  .right label { display: block; font-size: 12px; color: #94a3b8; margin: 4px 0 2px; }
+  .right input { width: 100%; padding: 5px 7px; background: #0f172a; color: #e2e8f0; border: 1px solid #475569; border-radius: 4px; font-family: inherit; }
+  .right .row { display: flex; gap: 6px; }
+  .right .row input { flex: 1; }
+  .right button { width: 100%; margin-top: 6px; padding: 6px; background: #475569; color: #e2e8f0; border: 0; border-radius: 4px; cursor: pointer; font-family: inherit; }
+  .right button:hover { background: #64748b; }
+  .right pre { background: #0f172a; padding: 8px; border-radius: 4px; font-size: 11px; color: #94a3b8; white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow-y: auto; margin: 6px 0 0; }
+  .right img { width: 100%; margin-top: 6px; border-radius: 4px; background: #334155; }
+  .caps span { display: inline-block; padding: 1px 6px; margin: 2px 4px 2px 0; font-size: 11px; border-radius: 3px; background: #334155; color: #94a3b8; }
+  .caps span.on { background: #1e40af; color: #dbeafe; }
+</style></head>
+<body>
+  <div class="pane left">
+    <div class="urlbar">
+      <input id="url" value="appres://app.internal/target.html">
+      <button id="go">Go</button>
+    </div>
+    <bunite-webview id="wv" src="appres://app.internal/target.html"></bunite-webview>
+  </div>
+
+  <div class="pane right">
+    <section>
+      <h2>capabilities</h2>
+      <div id="caps" class="caps"></div>
+    </section>
+
+    <section>
+      <h2>evaluate</h2>
+      <input id="ev-in" value="document.title">
+      <button id="ev-btn">Run</button>
+      <pre id="ev-out"></pre>
+    </section>
+
+    <section>
+      <h2>type (sends to focused element)</h2>
+      <input id="ty-in" value="안녕 hello">
+      <button id="ty-focus">Focus #name then type</button>
+      <button id="ty-btn">Type only</button>
+    </section>
+
+    <section>
+      <h2>click {x, y}</h2>
+      <div class="row">
+        <input id="cx" type="number" value="80">
+        <input id="cy" type="number" value="220">
+      </div>
+      <label><input type="checkbox" id="ck-shift"> shift</label>
+      <label><input type="checkbox" id="ck-dbl"> double-click</label>
+      <button id="cl-btn">Click</button>
+      <button id="cl-find">Click #submit (auto-locate)</button>
+    </section>
+
+    <section>
+      <h2>press</h2>
+      <input id="pr-in" value="Enter">
+      <button id="pr-btn">Press</button>
+    </section>
+
+    <section>
+      <h2>scroll</h2>
+      <div class="row">
+        <input id="sd" type="number" value="200" placeholder="dy">
+      </div>
+      <button id="sc-btn">Scroll dy</button>
+    </section>
+
+    <section>
+      <h2>screenshot</h2>
+      <button id="sh-btn">Capture PNG</button>
+      <img id="sh-img" alt="">
+    </section>
+
+    <section>
+      <h2>title-changed events</h2>
+      <pre id="tlog"></pre>
+    </section>
+  </div>
+
+<script type="module">
+  const wv = document.getElementById("wv");
+  const $ = (id) => document.getElementById(id);
+  const stamp = () => new Date().toISOString().slice(11, 23);
+  const print = (el, s) => { el.textContent = stamp() + " " + s + (el.textContent ? "\n" + el.textContent : ""); };
+
+  document.getElementById("go").addEventListener("click", () => wv.setAttribute("src", $("url").value));
+
+  // capabilities — render bitset as chips.
+  async function refreshCaps() {
+    const c = await wv.capabilities();
+    const keys = ["evaluate","crossOriginEval","titleChanged","nativeInputTrusted","click","type","press","scroll","screenshot"];
+    $("caps").innerHTML = keys.map(k => `<span class="${c[k] ? "on" : ""}">${k}</span>`).join("")
+      + (c.formats ? `<span class="on">[${c.formats.join(",")}]</span>` : "");
+  }
+  wv.addEventListener("did-navigate", refreshCaps);
+  setTimeout(refreshCaps, 800);
+
+  // evaluate
+  $("ev-btn").addEventListener("click", async () => {
+    const r = await wv.evaluate($("ev-in").value);
+    $("ev-out").textContent = JSON.stringify(r, null, 2);
+  });
+
+  // type
+  $("ty-focus").addEventListener("click", async () => {
+    await wv.evaluate("(function(){var i=document.getElementById('name');if(i){i.focus()}return ''})()");
+    await new Promise(r => setTimeout(r, 50));
+    await wv.sendType($("ty-in").value);
+  });
+  $("ty-btn").addEventListener("click", () => wv.sendType($("ty-in").value));
+
+  // click — coord or auto-locate
+  $("cl-btn").addEventListener("click", () => {
+    const mods = $("ck-shift").checked ? ["shift"] : [];
+    const clickCount = $("ck-dbl").checked ? 2 : 1;
+    wv.sendClick({ x: parseFloat($("cx").value), y: parseFloat($("cy").value), modifiers: mods, clickCount });
+  });
+  $("cl-find").addEventListener("click", async () => {
+    const r = await wv.evaluate("(function(){var b=document.getElementById('submit');if(!b)return null;var r=b.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()");
+    if (r.ok && r.value) wv.sendClick(r.value);
+    else $("ev-out").textContent = "submit element not found";
+  });
+
+  // press
+  $("pr-btn").addEventListener("click", () => wv.sendPress($("pr-in").value));
+
+  // scroll
+  $("sc-btn").addEventListener("click", () => wv.sendScroll({ dx: 0, dy: parseFloat($("sd").value), x: 100, y: 100 }));
+
+  // screenshot
+  $("sh-btn").addEventListener("click", async () => {
+    const r = await wv.screenshot({ format: "png" });
+    if (r.ok) {
+      const blob = new Blob([r.data], { type: r.mime });
+      $("sh-img").src = URL.createObjectURL(blob);
+    } else {
+      $("ev-out").textContent = JSON.stringify(r, null, 2);
+    }
+  });
+
+  // titleChanged events
+  wv.addEventListener("title-changed", (e) => print($("tlog"), "title: " + e.detail.title));
+</script>
+</body></html>
