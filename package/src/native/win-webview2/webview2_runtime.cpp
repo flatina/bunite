@@ -282,12 +282,27 @@ LRESULT CALLBACK messageProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 // ---- init / shutdown ----------------------------------------------------
 
+// KILL_ON_JOB_CLOSE — Edge helpers die with bun.exe instead of holding the
+// UDF SingletonLock. Handle leaked intentionally (kernel closes on exit).
+static void reapChildrenOnExit() {
+  HANDLE job = CreateJobObjectW(nullptr, nullptr);
+  if (!job) return;
+  JOBOBJECT_EXTENDED_LIMIT_INFORMATION info{};
+  info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+  if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info, sizeof(info)) ||
+      !AssignProcessToJobObject(job, GetCurrentProcess())) {
+    CloseHandle(job);  // already in a non-nestable job, etc — give up.
+  }
+}
+
 bool initRuntime(const char* engine_dir, bool /*hide_console*/,
                  bool popup_blocking, const char* engine_config_json) {
   buniteApplyEnvLogLevel();
   BUNITE_INFO("webview2: bunite_init enter engine_dir=%s",
               (engine_dir && *engine_dir) ? engine_dir : "(null)");
   if (g_runtime.initialized.load()) return true;
+
+  reapChildrenOnExit();
 
   HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
   if (SUCCEEDED(co)) g_co_initialized = true;

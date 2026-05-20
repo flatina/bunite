@@ -91,12 +91,25 @@ extern "C" BUNITE_EXPORT void bunite_set_log_level(int32_t level) {
   buniteSetLogLevel(static_cast<BuniteLogLevel>(level));
 }
 
+// See webview2_runtime.cpp `reapChildrenOnExit`. Same rationale for process_helper.
+static void reapChildrenOnExit() {
+  HANDLE job = CreateJobObjectW(nullptr, nullptr);
+  if (!job) return;
+  JOBOBJECT_EXTENDED_LIMIT_INFORMATION info{};
+  info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+  if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info, sizeof(info)) ||
+      !AssignProcessToJobObject(job, GetCurrentProcess())) {
+    CloseHandle(job);
+  }
+}
+
 extern "C" BUNITE_EXPORT bool bunite_init(
   const char* cef_dir,
   bool hide_console,
   bool popup_blocking,
   const char* engine_config_json
 ) {
+  reapChildrenOnExit();
   {
     std::lock_guard<std::mutex> lock(g_runtime.lifecycle_mutex);
     if (g_runtime.initialized) {

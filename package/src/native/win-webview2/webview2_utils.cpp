@@ -201,6 +201,10 @@ std::wstring exeDir() {
 }
 
 std::string defaultUserDataFolder() {
+  // Per-app via BUNITE_USER_DATA_DIR — shared path is a SingletonLock.
+  if (const char* env = std::getenv("BUNITE_USER_DATA_DIR"); env && *env) {
+    return std::string(env) + "\\WebView2";
+  }
   wchar_t* base = nullptr;
   if (SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &base) != S_OK || !base) {
     if (base) CoTaskMemFree(base);
