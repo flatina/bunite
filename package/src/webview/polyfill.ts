@@ -1,5 +1,7 @@
 // Iframe fallback for web (no-op if native already registered). HTMLElement deref'd lazily so module is import-safe in Node/Bun.
 
+import type { SurfaceEvent } from "../rpc/framework";
+
 // Default sandbox omits allow-same-origin / allow-top-navigation / allow-modals /
 // allow-popups-to-escape-sandbox — popup escape stays opt-in so a sandboxed page
 // can't launch unsandboxed auxiliary contexts by default.
@@ -48,6 +50,10 @@ function definePolyfillClass(): CustomElementConstructor {
       };
     }
 
+    private emit(event: SurfaceEvent) {
+      this.dispatchEvent(new CustomEvent<SurfaceEvent>("surface-event", { detail: event }));
+    }
+
     private setupTitleObserver() {
       this._titleObserver?.disconnect();
       this._titleObserver = null;
@@ -58,7 +64,7 @@ function definePolyfillClass(): CustomElementConstructor {
         const t = doc.title;
         if (t && t !== this._lastTitle) {
           this._lastTitle = t;
-          this.dispatchEvent(new CustomEvent("title-changed", { detail: { title: t } }));
+          this.emit({ type: "title-change", title: t });
         }
       };
       const observer = new MutationObserver(fire);
@@ -77,7 +83,7 @@ function definePolyfillClass(): CustomElementConstructor {
     }
 
     private dispatchBlocked(url: string) {
-      this.dispatchEvent(new CustomEvent("did-fail-load", { detail: { url, reason: "blocked-scheme" } }));
+      this.emit({ type: "load-fail", url, reason: "blocked-scheme" });
     }
 
     connectedCallback() {
@@ -94,6 +100,7 @@ function definePolyfillClass(): CustomElementConstructor {
           this.dispatchBlocked(src);
         } else {
           iframe.src = src;
+          this.emit({ type: "load-start", url: src });
         }
       }
 
@@ -105,7 +112,8 @@ function definePolyfillClass(): CustomElementConstructor {
         // Suppress the spurious about:blank load that fires after a blocked
         // navigation (or before any explicit navigate).
         if (isBlockedSrc(url)) return;
-        this.dispatchEvent(new CustomEvent("did-navigate", { detail: { url } }));
+        this.emit({ type: "load-finish", url });
+        this.emit({ type: "navigate", url });
         this.setupTitleObserver();
       });
 
@@ -128,6 +136,7 @@ function definePolyfillClass(): CustomElementConstructor {
           return;
         }
         this._iframe.src = newValue ?? "";
+        if (newValue) this.emit({ type: "load-start", url: newValue });
       } else if (name === "sandbox" || name === "unsandboxed") {
         // Sandbox token changes take effect on the next navigation per HTML spec.
         this.applySandbox(this._iframe);
@@ -183,7 +192,7 @@ function definePolyfillClass(): CustomElementConstructor {
     async capabilities() {
       const reachable = this.isReachable();
       return {
-        evaluate: reachable, crossOriginEval: false, titleChanged: reachable,
+        evaluate: reachable, crossOriginEval: false, surfaceEvents: true,
         nativeInputTrusted: false,
         click: reachable, type: reachable, press: reachable, scroll: reachable,
         screenshot: false,
@@ -222,7 +231,7 @@ function definePolyfillClass(): CustomElementConstructor {
       target.dispatchEvent(new InputEvent("input", { bubbles: true, data: text, inputType: "insertText" }));
     }
 
-    async sendPress(key: string, modifiers?: string[]) {
+    async sendPress(key: string, modifiers?: string[], action?: "down" | "up" | "both") {
       if (!this.isReachable()) return;
       const doc = this._iframe!.contentDocument!;
       const target = (doc.activeElement ?? doc.body) as Element | null;
@@ -230,9 +239,10 @@ function definePolyfillClass(): CustomElementConstructor {
       const init: KeyboardEventInit = {
         bubbles: true, cancelable: true, key, ...this.modifierBag(modifiers),
       };
-      target.dispatchEvent(new KeyboardEvent("keydown", init));
-      target.dispatchEvent(new KeyboardEvent("keypress", init));
-      target.dispatchEvent(new KeyboardEvent("keyup", init));
+      const a = action ?? "both";
+      if (a !== "up") target.dispatchEvent(new KeyboardEvent("keydown", init));
+      if (a === "both") target.dispatchEvent(new KeyboardEvent("keypress", init));
+      if (a !== "down") target.dispatchEvent(new KeyboardEvent("keyup", init));
     }
 
     async sendScroll(args: { dx: number; dy: number; x?: number; y?: number; modifiers?: string[] }) {
@@ -259,7 +269,8 @@ function definePolyfillClass(): CustomElementConstructor {
  * - `referrerpolicy="no-referrer"`.
  * - `javascript:` / `data:` / `vbscript:` / `file:` / `about:` schemes blocked
  *   (with WHATWG URL-style normalization to defeat embedded-control bypass);
- *   navigation attempt dispatches `did-fail-load` with `detail.reason === "blocked-scheme"`.
+ *   navigation attempt dispatches `surface-event` with `detail.type === "load-fail"`
+ *   and `detail.reason === "blocked-scheme"`.
  *
  * Opt-out attributes on `<bunite-webview>` (observed — mutations re-apply):
  * - `sandbox="..."` — override the default sandbox token string verbatim.

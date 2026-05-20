@@ -29,7 +29,8 @@ async function createTab(url?: string) {
   webview.hidden = true;
   content.appendChild(webview);
 
-  webview.addEventListener("did-navigate", ((e: CustomEvent<{ url: string }>) => {
+  webview.addEventListener("surface-event", ((e: CustomEvent<{ type: string; url?: string }>) => {
+    if (e.detail.type !== "navigate" || !e.detail.url) return;
     const t = tabs.get(tab.id);
     if (t) {
       t.url = e.detail.url;

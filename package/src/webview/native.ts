@@ -1,7 +1,7 @@
 // <bunite-webview> custom element — registered in every appres:// page via preload.
 
 import type { ClientOf } from "../rpc/index";
-import type { SurfaceCap, EvaluateResult, SurfaceCapabilities, ScreenshotResult } from "../rpc/framework";
+import type { SurfaceCap, EvaluateResult, SurfaceCapabilities, ScreenshotResult, SurfaceEvent } from "../rpc/framework";
 
 declare const host: {
   runtime(): Promise<ClientOf<typeof import("../rpc/framework").RuntimeCap>>;
@@ -135,39 +135,43 @@ class BuniteWebviewElement extends HTMLElement {
     this._unsubNavigate = () => ctrl.abort();
     void (async () => {
       try {
+        // Wait until *this* connection's init resolves, then capture surfaceId
+        // atomically before subscribing. Re-entrant connects abort prior loops
+        // via `ctrl`, so a stale resolve from a previous cycle can't leak in.
         const s = await getSurfaceCap();
-        const stream = s.didNavigate();
+        if (ctrl.signal.aborted) return;
+        await this._waitForSurfaceId(ctrl.signal);
+        const sid = this._surfaceId;
+        if (ctrl.signal.aborted || sid == null) return;
+        const stream = s.surfaceEvents({ surfaceId: sid });
         this._activeStreams.push(stream as { cancel?: () => void });
-        for await (const ev of stream) {
+        for await (const event of stream) {
           if (ctrl.signal.aborted) break;
-          if (ev.surfaceId === this._surfaceId) {
-            this.dispatchEvent(new CustomEvent("did-navigate", { detail: { url: ev.url } }));
-          }
+          this.dispatchEvent(new CustomEvent<SurfaceEvent>("surface-event", { detail: event }));
         }
       } catch (err) {
         if ((globalThis as { __BUNITE_DEBUG__?: boolean }).__BUNITE_DEBUG__) {
-          console.warn("[bunite] didNavigate stream failed", err);
-        }
-      }
-    })();
-    void (async () => {
-      try {
-        const s = await getSurfaceCap();
-        const stream = s.titleChanged();
-        this._activeStreams.push(stream as { cancel?: () => void });
-        for await (const ev of stream) {
-          if (ctrl.signal.aborted) break;
-          if (ev.surfaceId === this._surfaceId) {
-            this.dispatchEvent(new CustomEvent("title-changed", { detail: { title: ev.title } }));
-          }
-        }
-      } catch (err) {
-        if ((globalThis as { __BUNITE_DEBUG__?: boolean }).__BUNITE_DEBUG__) {
-          console.warn("[bunite] titleChanged stream failed", err);
+          console.warn("[bunite] surfaceEvents stream failed", err);
         }
       }
     })();
     this._waitForLayout();
+  }
+
+  private async _waitForSurfaceId(signal: AbortSignal): Promise<void> {
+    while (this._surfaceId == null && !signal.aborted) {
+      const pending = this._initPromise;
+      if (pending) {
+        // Await this exact init attempt; if it rejects, bail (init failed —
+        // we'd otherwise spin forever waiting for a surfaceId that never lands).
+        try { await pending; } catch { return; }
+        // After resolve, _surfaceId may still be null if disconnect raced —
+        // the next loop iteration checks signal.aborted to exit cleanly.
+      } else {
+        // No init in flight yet (waiting for layout). Yield then re-check.
+        await new Promise((r) => setTimeout(r, 16));
+      }
+    }
   }
 
   private _waitForLayout() {
@@ -267,7 +271,7 @@ class BuniteWebviewElement extends HTMLElement {
     const sid = this._surfaceId;
     if (sid == null) {
       return {
-        evaluate: false, crossOriginEval: false, titleChanged: false,
+        evaluate: false, crossOriginEval: false, surfaceEvents: false,
         nativeInputTrusted: false, click: false, type: false, press: false,
         scroll: false, screenshot: false,
       };
@@ -295,11 +299,12 @@ class BuniteWebviewElement extends HTMLElement {
 
   async sendPress(
     key: string,
-    modifiers?: Array<"alt" | "ctrl" | "meta" | "shift">
+    modifiers?: Array<"alt" | "ctrl" | "meta" | "shift">,
+    action?: "down" | "up" | "both"
   ): Promise<void> {
     const sid = this._surfaceId;
     if (sid == null) return;
-    await callSurfaceTyped((s) => s.press({ surfaceId: sid, key, modifiers }));
+    await callSurfaceTyped((s) => s.press({ surfaceId: sid, key, modifiers, action }));
   }
 
   async sendScroll(args: {

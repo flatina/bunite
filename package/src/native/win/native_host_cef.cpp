@@ -134,6 +134,15 @@ public:
     bunite_win::emitWebviewEvent(view_->id, "title-changed", payload);
   }
 
+  void OnAddressChange(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+                       const CefString& url) override {
+    CEF_REQUIRE_UI_THREAD();
+    if (!frame->IsMain()) return;
+    // URL commit point — parity with WV2 SourceChanged / mac didCommitNavigation.
+    // Distinct from load-finish (which is OnLoadEnd).
+    bunite_win::emitWebviewEvent(view_->id, "did-navigate", url.ToString());
+  }
+
   void OnBeforeDevToolsPopup(
     CefRefPtr<CefBrowser>,
     CefWindowInfo&,
@@ -278,6 +287,12 @@ public:
     return true;
   }
 
+  void OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, TransitionType) override {
+    CEF_REQUIRE_UI_THREAD();
+    if (!frame->IsMain()) return;
+    bunite_win::emitWebviewEvent(view_->id, "load-start", frame->GetURL().ToString());
+  }
+
   void OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int) override {
     CEF_REQUIRE_UI_THREAD();
     if (!frame->IsMain()) {
@@ -285,8 +300,22 @@ public:
     }
 
     const std::string url = frame->GetURL().ToString();
-    bunite_win::emitWebviewEvent(view_->id, "did-navigate", url);
+    bunite_win::emitWebviewEvent(view_->id, "load-finish", url);
     bunite_win::emitWebviewEvent(view_->id, "dom-ready", url);
+  }
+
+  void OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+                   ErrorCode errorCode, const CefString& errorText, const CefString& failedUrl) override {
+    CEF_REQUIRE_UI_THREAD();
+    if (!frame->IsMain()) return;
+    // ERR_ABORTED fires on user-initiated navigation cancellation — not a
+    // failure from the consumer's perspective. Filter to align with WV2.
+    if (errorCode == ERR_ABORTED) return;
+    std::string reason = errorText.ToString();
+    if (reason.empty()) reason = "ERR_" + std::to_string(static_cast<int>(errorCode));
+    std::string payload = "{\"url\":\"" + bunite_win::escapeJsonString(failedUrl.ToString()) +
+                          "\",\"reason\":\"" + bunite_win::escapeJsonString(reason) + "\"}";
+    bunite_win::emitWebviewEvent(view_->id, "load-fail", payload);
   }
 
   bool OnShowPermissionPrompt(

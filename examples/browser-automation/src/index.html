@@ -90,7 +90,7 @@
     </section>
 
     <section>
-      <h2>title-changed events</h2>
+      <h2>surface events</h2>
       <pre id="tlog"></pre>
     </section>
   </div>
@@ -106,11 +106,10 @@
   // capabilities — render bitset as chips.
   async function refreshCaps() {
     const c = await wv.capabilities();
-    const keys = ["evaluate","crossOriginEval","titleChanged","nativeInputTrusted","click","type","press","scroll","screenshot"];
+    const keys = ["evaluate","crossOriginEval","surfaceEvents","nativeInputTrusted","click","type","press","scroll","screenshot"];
     $("caps").innerHTML = keys.map(k => `<span class="${c[k] ? "on" : ""}">${k}</span>`).join("")
       + (c.formats ? `<span class="on">[${c.formats.join(",")}]</span>` : "");
   }
-  wv.addEventListener("did-navigate", refreshCaps);
   setTimeout(refreshCaps, 800);
 
   // evaluate
@@ -156,7 +155,14 @@
     }
   });
 
-  // titleChanged events
-  wv.addEventListener("title-changed", (e) => print($("tlog"), "title: " + e.detail.title));
+  // surface events — single stream, discriminated union.
+  wv.addEventListener("surface-event", (e) => {
+    const ev = e.detail;
+    if (ev.type === "navigate") { print($("tlog"), "navigate: " + ev.url); refreshCaps(); }
+    else if (ev.type === "load-start")  print($("tlog"), "load-start: " + ev.url);
+    else if (ev.type === "load-finish") print($("tlog"), "load-finish: " + ev.url);
+    else if (ev.type === "load-fail")   print($("tlog"), "load-fail: " + ev.url + (ev.reason ? " (" + ev.reason + ")" : ""));
+    else if (ev.type === "title-change") print($("tlog"), "title: " + ev.title);
+  });
 </script>
 </body></html>

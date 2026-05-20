@@ -20,7 +20,7 @@ using bunite_mac::runOnUiThreadSync;
 
 namespace {
 
-constexpr int32_t kBuniteAbiVersion = 7;
+constexpr int32_t kBuniteAbiVersion = 8;
 
 // warn-once — avoid log spam from tight JS call loops.
 #define BUNITE_MAC_TODO(name)                                       \
@@ -614,7 +614,8 @@ extern "C" BUNITE_EXPORT void bunite_view_type(uint32_t view_id, const char* tex
 
 extern "C" BUNITE_EXPORT void bunite_view_press(uint32_t view_id, int32_t /*windows_vk_code*/,
                                                   int32_t mac_key_code, const char* /*key*/, const char* /*code*/,
-                                                  const char* character, uint32_t modifiers) {
+                                                  const char* character, uint32_t modifiers,
+                                                  int32_t action, bool /*extended*/, int32_t /*location*/) {
   std::string char_str = character ? character : "";
   runOnUiThreadSync([=]() {
     auto* v = bunite_mac::findView(view_id);
@@ -622,21 +623,24 @@ extern "C" BUNITE_EXPORT void bunite_view_press(uint32_t view_id, int32_t /*wind
     NSString* chars = char_str.empty() ? @"" : [NSString stringWithUTF8String:char_str.c_str()];
     NSEventModifierFlags flags = macModifiers(modifiers);
     NSWindow* win = v->webview.window;
-    NSEvent* down = [NSEvent keyEventWithType:NSEventTypeKeyDown
+    if (action != 1) {
+      NSEvent* down = [NSEvent keyEventWithType:NSEventTypeKeyDown
+                                       location:NSZeroPoint modifierFlags:flags
+                                      timestamp:[[NSProcessInfo processInfo] systemUptime]
+                                   windowNumber:win.windowNumber context:nil
+                                     characters:chars charactersIgnoringModifiers:chars
+                                      isARepeat:NO keyCode:(unsigned short)mac_key_code];
+      if (down) [v->webview keyDown:down];
+    }
+    if (action != 0) {
+      NSEvent* up = [NSEvent keyEventWithType:NSEventTypeKeyUp
                                      location:NSZeroPoint modifierFlags:flags
                                     timestamp:[[NSProcessInfo processInfo] systemUptime]
                                  windowNumber:win.windowNumber context:nil
                                    characters:chars charactersIgnoringModifiers:chars
                                     isARepeat:NO keyCode:(unsigned short)mac_key_code];
-    NSEvent* up = [NSEvent keyEventWithType:NSEventTypeKeyUp
-                                   location:NSZeroPoint modifierFlags:flags
-                                  timestamp:[[NSProcessInfo processInfo] systemUptime]
-                               windowNumber:win.windowNumber context:nil
-                                 characters:chars charactersIgnoringModifiers:chars
-                                  isARepeat:NO keyCode:(unsigned short)mac_key_code];
-    // Direct WKWebView dispatch — same translation/modal concerns as click.
-    if (down) [v->webview keyDown:down];
-    if (up)   [v->webview keyUp:up];
+      if (up) [v->webview keyUp:up];
+    }
   });
 }
 
@@ -679,7 +683,7 @@ extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
   // matters for AppKit responder routing, not for the DOM trust flag).
   auto* v = bunite_mac::findView(view_id);
   if (!v) return 0;
-  return BUNITE_CAP_EVALUATE | BUNITE_CAP_TITLE_CHANGED |
+  return BUNITE_CAP_EVALUATE | BUNITE_CAP_SURFACE_EVENTS |
          BUNITE_CAP_NATIVE_INPUT_TRUSTED |
          BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;

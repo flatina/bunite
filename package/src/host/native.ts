@@ -110,7 +110,7 @@ type NativeSymbols = {
   bunite_view_press: (
     viewId: number, windowsVkCode: number, macKeyCode: number,
     key: CStringPointer, code: CStringPointer, character: CStringPointer,
-    modifiers: number
+    modifiers: number, action: number, extended: boolean, location: number
   ) => void;
   bunite_view_scroll: (
     viewId: number, dx: number, dy: number,
@@ -316,7 +316,7 @@ const nativeSymbolDefinitions = {
     returns: FFIType.void
   },
   bunite_view_press: {
-    args: [FFIType.u32, FFIType.i32, FFIType.i32, FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.u32],
+    args: [FFIType.u32, FFIType.i32, FFIType.i32, FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.u32, FFIType.i32, FFIType.bool, FFIType.i32],
     returns: FFIType.void
   },
   bunite_view_scroll: {
@@ -568,6 +568,28 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
             );
             break;
           }
+          case "load-start":
+            buniteEventEmitter.emitEvent(
+              buniteEventEmitter.events.webview.loadStart({ detail: payload }),
+              viewId
+            );
+            break;
+          case "load-finish":
+            buniteEventEmitter.emitEvent(
+              buniteEventEmitter.events.webview.loadFinish({ detail: payload }),
+              viewId
+            );
+            break;
+          case "load-fail": {
+            const parsed = maybeParsePayload(payload) as { url?: string; reason?: string };
+            buniteEventEmitter.emitEvent(
+              buniteEventEmitter.events.webview.loadFail({
+                url: parsed.url ?? "", reason: parsed.reason,
+              }),
+              viewId
+            );
+            break;
+          }
         }
       },
       {
@@ -717,7 +739,7 @@ export async function initNativeRuntime(
     throw new Error(`bunite: failed to load native library at ${artifacts.nativeLibPath}.`);
   }
 
-  const EXPECTED_ABI = 7;
+  const EXPECTED_ABI = 8;
   const nativeAbi = nativeLibrary.symbols.bunite_abi_version();
   if (nativeAbi !== EXPECTED_ABI) {
     throw new Error(

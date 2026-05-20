@@ -352,7 +352,7 @@ extern "C" BUNITE_EXPORT void bunite_view_remove(uint32_t view_id) {
 // Capability `click/type/press/scroll: false` is honest; calls are silent no-ops.
 extern "C" BUNITE_EXPORT void bunite_view_click(uint32_t, double, double, int32_t, int32_t, uint32_t) {}
 extern "C" BUNITE_EXPORT void bunite_view_type(uint32_t, const char*) {}
-extern "C" BUNITE_EXPORT void bunite_view_press(uint32_t, int32_t, int32_t, const char*, const char*, const char*, uint32_t) {}
+extern "C" BUNITE_EXPORT void bunite_view_press(uint32_t, int32_t, int32_t, const char*, const char*, const char*, uint32_t, int32_t, bool, int32_t) {}
 extern "C" BUNITE_EXPORT void bunite_view_scroll(uint32_t, double, double, double, double, uint32_t) {}
 
 // Screenshot — webkit_web_view_get_snapshot → cairo_surface_t → PNG bytes via
@@ -444,7 +444,7 @@ extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
   // WebKitGTK — input dispatch impossible on GTK4+Wayland; screenshot via cairo.
   auto* v = bunite_linux::findView(view_id);
   if (!v) return 0;
-  return BUNITE_CAP_EVALUATE | BUNITE_CAP_TITLE_CHANGED |
+  return BUNITE_CAP_EVALUATE | BUNITE_CAP_SURFACE_EVENTS |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
 }
 

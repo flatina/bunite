@@ -109,6 +109,17 @@ export type {
   DialogOpenFileOpts,
   DialogSaveFileOpts,
   DialogMessageOpts,
+  SurfaceCapabilities,
+  SurfaceEvent,
+  SurfaceMask,
+  Modifier,
+  ClickArgs,
+  TypeArgs,
+  PressArgs,
+  ScrollArgs,
+  ScreenshotArgs,
+  ScreenshotResult,
+  EvaluateResult,
 } from "./framework";
 
 export type {

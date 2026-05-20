@@ -156,15 +156,42 @@ if (caps.screenshot) {
   }
 }
 
-// titleChanged stream — set title and observe via event.
+// surfaceEvents — five-arm lifecycle stream via BrowserView event surface.
 let titleFired = false;
+let loadStartFired = false;
+let loadFinishFired = false;
 v.on("title-changed", (event) => {
   const detail = String((event as { data?: { detail?: string } }).data?.detail ?? "");
   if (detail === "changed-by-test") titleFired = true;
 });
+v.on("load-start", () => { loadStartFired = true; });
+v.on("load-finish", () => { loadFinishFired = true; });
 await v.evaluate("document.title='changed-by-test'");
 await sleep(300);
-ok("titleChanged event fires on document.title write", titleFired);
+ok("title-change event fires on document.title write", titleFired);
+
+// Trigger a fresh navigation so load-start / load-finish emit on this run.
+// `view.reload()` re-runs the full load lifecycle on the embedded appres://
+// document — all four backends fire start + commit + finish hooks for reload.
+v.reload();
+await sleep(1500);
+ok("load-start event fires on navigation", loadStartFired);
+ok("load-finish event fires on navigation", loadFinishFired);
+
+// load-fail arm — navigate to an unreachable host so the backend produces a
+// failure terminator. Use an RFC 6761 invalid TLD so DNS resolution itself
+// fails deterministically across networks.
+let loadFailFired = false;
+let loadFailUrl = "";
+v.on("load-fail", (event: unknown) => {
+  loadFailFired = true;
+  const d = (event as { data?: { url?: string; reason?: string } }).data;
+  loadFailUrl = d?.url ?? "";
+});
+v.loadURL("https://does-not-resolve.invalid/automation-check-fail");
+await sleep(3500);
+ok("load-fail event fires on unresolved host", loadFailFired,
+   loadFailFired ? loadFailUrl : "");
 }
 
 win.show();

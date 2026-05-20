@@ -1,6 +1,7 @@
 #include "webview2_internal.h"
 
 #include <algorithm>
+#include <unordered_map>
 
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
@@ -9,6 +10,14 @@ using Microsoft::WRL::Make;
 namespace bunite_webview2 {
 
 RuntimeState g_runtime;
+
+// Pending nav URI by (view_id, nav_id) — NavigationCompleted's get_Source()
+// returns the previous committed URL on provisional failure, so we stash the
+// URI at NavigationStarting and look it up on completion.
+static std::unordered_map<uint64_t, std::string> g_nav_uris;
+static uint64_t navKey(uint32_t view_id, uint64_t nav_id) {
+  return (static_cast<uint64_t>(view_id) << 56) ^ nav_id;
+}
 
 static HINSTANCE g_module = nullptr;
 static bool g_co_initialized = false;
@@ -786,6 +795,8 @@ static void attachControllerCallbacks(ViewHost* view) {
 
   // NavigationStarting — emit "will-navigate" (parity with CEF/mac/linux,
   // which fire regardless of allow), then cancel if nav rules say block.
+  // Also emit "load-start" for the surfaceEvents stream + stash URI for
+  // NavigationCompleted lookup (failure case: get_Source() returns prior URL).
   view->webview->add_NavigationStarting(
       Callback<ICoreWebView2NavigationStartingEventHandler>(
           [lifetime, view_id](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
@@ -797,30 +808,71 @@ static void attachControllerCallbacks(ViewHost* view) {
             std::string url = wideToUtf8(uri_raw);
             if (uri_raw) CoTaskMemFree(uri_raw);
             emitWebviewEvent(v->id, "will-navigate", url);
-            if (!shouldAllowNavigation(v, url)) args->put_Cancel(TRUE);
+            if (!shouldAllowNavigation(v, url)) {
+              args->put_Cancel(TRUE);
+              return S_OK;
+            }
+            UINT64 nav_id = 0;
+            args->get_NavigationId(&nav_id);
+            g_nav_uris[navKey(view_id, nav_id)] = url;
+            emitWebviewEvent(v->id, "load-start", url);
             return S_OK;
           }).Get(),
       &tok);
 
-  // NavigationCompleted — surfaced as did-navigate + dom-ready (CEF parity).
+  // SourceChanged — URL commit point; map to did-navigate (surfaceEvents
+  // `navigate` arm). Distinct from NavigationCompleted which fires later.
+  view->webview->add_SourceChanged(
+      Callback<ICoreWebView2SourceChangedEventHandler>(
+          [lifetime, view_id](ICoreWebView2* wv, ICoreWebView2SourceChangedEventArgs*) -> HRESULT {
+            if (!lifetime || !lifetime->alive.load()) return S_OK;
+            LPWSTR src_raw = nullptr;
+            if (wv) wv->get_Source(&src_raw);
+            std::string url = wideToUtf8(src_raw);
+            if (src_raw) CoTaskMemFree(src_raw);
+            emitWebviewEvent(view_id, "did-navigate", url);
+            return S_OK;
+          }).Get(),
+      &tok);
+
+  // NavigationCompleted — load lifecycle terminator. Success → load-finish
+  // + dom-ready; failure → load-fail with WebErrorStatus as reason. Use the
+  // URI we stashed at NavigationStarting — get_Source() returns the prior
+  // committed URL on provisional-navigation failure.
   view->webview->add_NavigationCompleted(
       Callback<ICoreWebView2NavigationCompletedEventHandler>(
           [lifetime, view_id](ICoreWebView2* wv, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
             if (!lifetime || !lifetime->alive.load()) return S_OK;
             BOOL ok = FALSE;
             args->get_IsSuccess(&ok);
-            if (!ok) return S_OK;
-            LPWSTR src_raw = nullptr;
-            if (wv) wv->get_Source(&src_raw);
-            std::string url = wideToUtf8(src_raw);
-            if (src_raw) CoTaskMemFree(src_raw);
-            emitWebviewEvent(view_id, "did-navigate", url);
-            emitWebviewEvent(view_id, "dom-ready", url);
+            UINT64 nav_id = 0;
+            args->get_NavigationId(&nav_id);
+            std::string url;
+            auto it = g_nav_uris.find(navKey(view_id, nav_id));
+            if (it != g_nav_uris.end()) {
+              url = std::move(it->second);
+              g_nav_uris.erase(it);
+            } else {
+              LPWSTR src_raw = nullptr;
+              if (wv) wv->get_Source(&src_raw);
+              url = wideToUtf8(src_raw);
+              if (src_raw) CoTaskMemFree(src_raw);
+            }
+            if (ok) {
+              emitWebviewEvent(view_id, "load-finish", url);
+              emitWebviewEvent(view_id, "dom-ready", url);
+            } else {
+              COREWEBVIEW2_WEB_ERROR_STATUS status = COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
+              args->get_WebErrorStatus(&status);
+              std::string payload = "{\"url\":\"" + escapeJsonString(url) +
+                                    "\",\"reason\":\"WebErrorStatus_" + std::to_string(static_cast<int>(status)) + "\"}";
+              emitWebviewEvent(view_id, "load-fail", payload);
+            }
             return S_OK;
           }).Get(),
       &tok);
 
-  // DocumentTitleChanged — surface for automation `titleChanged` stream.
+  // DocumentTitleChanged — surface for automation surfaceEvents title-change arm.
   view->webview->add_DocumentTitleChanged(
       Callback<ICoreWebView2DocumentTitleChangedEventHandler>(
           [lifetime, view_id](ICoreWebView2* wv, IUnknown*) -> HRESULT {

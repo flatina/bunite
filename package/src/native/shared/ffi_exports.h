@@ -16,6 +16,14 @@ extern "C" {
 #endif
 
 /** ABI version. Bump on any breaking change to symbol set / signatures.
+ *  v8 (2026-05): `bunite_view_press` gains `action` (down/up/both), `extended`
+ *                (Win 0xE0 scancode prefix), `location` (DOM KeyboardEvent
+ *                location, 0/1/2/3) params. Webview event names expand to
+ *                include `load-start` / `load-finish` / `load-fail`. Capability
+ *                bit 2 renamed `TITLE_CHANGED` → `SURFACE_EVENTS` — value
+ *                unchanged but semantic is now "unified surfaceEvents stream
+ *                supported". A surface fires `load-finish` OR `load-fail` per
+ *                navigation, never both.
  *  v7 (2026-05): adds `bunite_view_screenshot` + `bunite_view_capabilities`
  *                + capability bitset (`BuniteCapBit`).
  *  v6 (2026-05): adds input dispatch — `bunite_view_click/type/press/scroll`.
@@ -148,7 +156,16 @@ BUNITE_EXPORT void bunite_view_type(uint32_t view_id, const char* text);
  *  from Win VK because DOM `KeyboardEvent.code` is derived from this on WebKit.
  *  `key` / `code` are DOM `KeyboardEvent.key` / `.code` strings, passed to CDP so
  *  the page sees the correct values. `character` is UTF-8 for the CHAR event;
- *  empty = skip char. 0 vk codes = skip the virtual-key down/up. */
+ *  empty = skip char. 0 vk codes = skip the virtual-key down/up.
+ *  `action`: 0=down only, 1=up only, 2=both (default). For Playwright-style
+ *  modifier-held wrap (keydown → click → keyup). CHAR follows Playwright rule:
+ *  emitted with down only when character is non-empty.
+ *  `extended`: Win scancode 0xE0 prefix — Numpad-Enter AND nav-cluster
+ *  (Arrow/Home/End/Insert/Delete/PageUp/PageDown/Meta/ContextMenu). Drives CEF
+ *  `native_key_code`. Other backends ignore.
+ *  `location`: DOM `KeyboardEvent.location` (0=standard, 1=left mod, 2=right
+ *  mod, 3=numpad). WV2 CDP forwards as `location`. Most extended keys are
+ *  location 0 — only NumpadEnter is location 3 here. */
 BUNITE_EXPORT void bunite_view_press(
 	uint32_t view_id,
 	int32_t windows_vk_code,
@@ -156,7 +173,10 @@ BUNITE_EXPORT void bunite_view_press(
 	const char* key,
 	const char* code,
 	const char* character,
-	uint32_t modifiers
+	uint32_t modifiers,
+	int32_t action,
+	bool extended,
+	int32_t location
 );
 /** Scroll at (x, y). dx/dy in CSS px; positive = right/down. */
 BUNITE_EXPORT void bunite_view_scroll(
@@ -174,7 +194,7 @@ BUNITE_EXPORT void bunite_view_scroll(
 enum BuniteCapBit {
 	BUNITE_CAP_EVALUATE             = 1u << 0,
 	BUNITE_CAP_CROSS_ORIGIN_EVAL    = 1u << 1,
-	BUNITE_CAP_TITLE_CHANGED        = 1u << 2,
+	BUNITE_CAP_SURFACE_EVENTS       = 1u << 2,
 	BUNITE_CAP_NATIVE_INPUT_TRUSTED = 1u << 3,
 	BUNITE_CAP_CLICK                = 1u << 4,
 	BUNITE_CAP_TYPE                 = 1u << 5,

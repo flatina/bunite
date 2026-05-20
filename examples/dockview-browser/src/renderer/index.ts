@@ -47,8 +47,8 @@ class BrowserPanel implements IContentRenderer {
       if (!url.includes("://")) url = `https://${url}`;
       wv.navigate(url);
     });
-    wv.addEventListener("did-navigate", ((e: CustomEvent<{ url: string }>) => {
-      urlInput.value = e.detail.url;
+    wv.addEventListener("surface-event", ((e: CustomEvent<{ type: string; url?: string }>) => {
+      if (e.detail.type === "navigate" && e.detail.url) urlInput.value = e.detail.url;
     }) as EventListener);
   }
 }

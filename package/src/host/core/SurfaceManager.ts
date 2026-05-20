@@ -4,7 +4,7 @@ import {
   getHostSurfaceIds, getSurfaceRecord,
   MAX_SURFACES_PER_HOST
 } from "./SurfaceRegistry";
-import { SurfaceCap, type ImplOf, IpcError } from "../../rpc/index";
+import { SurfaceCap, type ImplOf, IpcError, type SurfaceEvent } from "../../rpc/index";
 import { Stream } from "../../rpc/stream";
 
 function applyHostOffset(hostView: BrowserView, x: number, y: number) {
@@ -18,22 +18,13 @@ export function onSurfaceInit(cb: SurfaceInitCallback) {
   initCallbacks.push(cb);
 }
 
-type DidNavigateEmit = (event: { surfaceId: number; url: string }) => void;
-const didNavigateSubs = new Map<number, Set<DidNavigateEmit>>();
+type SurfaceEventEmit = (event: { surfaceId: number; event: SurfaceEvent }) => void;
+const surfaceEventSubs = new Map<number, Set<SurfaceEventEmit>>();
 
-export function emitDidNavigate(hostViewId: number, surfaceId: number, url: string) {
-  const subs = didNavigateSubs.get(hostViewId);
+export function emitSurfaceEvent(hostViewId: number, surfaceId: number, event: SurfaceEvent) {
+  const subs = surfaceEventSubs.get(hostViewId);
   if (!subs) return;
-  for (const emit of subs) emit({ surfaceId, url });
-}
-
-type TitleChangedEmit = (event: { surfaceId: number; title: string }) => void;
-const titleChangedSubs = new Map<number, Set<TitleChangedEmit>>();
-
-export function emitTitleChanged(hostViewId: number, surfaceId: number, title: string) {
-  const subs = titleChangedSubs.get(hostViewId);
-  if (!subs) return;
-  for (const emit of subs) emit({ surfaceId, title });
+  for (const emit of subs) emit({ surfaceId, event });
 }
 
 export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceCap> {
@@ -163,10 +154,10 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       record.view.type(text);
     },
 
-    press: ({ surfaceId, key, modifiers }) => {
+    press: ({ surfaceId, key, modifiers, action }) => {
       const record = ownedSurface(surfaceId);
       if (!record) return;
-      record.view.press(key, modifiers);
+      record.view.press(key, modifiers, action);
     },
 
     scroll: ({ surfaceId, ...args }) => {
@@ -185,7 +176,7 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       const record = ownedSurface(surfaceId);
       if (!record) {
         return {
-          evaluate: false, crossOriginEval: false, titleChanged: false,
+          evaluate: false, crossOriginEval: false, surfaceEvents: false,
           nativeInputTrusted: false, click: false, type: false, press: false,
           scroll: false, screenshot: false,
         };
@@ -193,33 +184,21 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       return record.view.capabilities();
     },
 
-    didNavigate: () => Stream.from<{ surfaceId: number; url: string }>((emit, signal) => {
-      let subs = didNavigateSubs.get(hostViewId);
+    surfaceEvents: ({ surfaceId: filterId }) => Stream.from<SurfaceEvent>((emit, signal) => {
+      let subs = surfaceEventSubs.get(hostViewId);
       if (!subs) {
         subs = new Set();
-        didNavigateSubs.set(hostViewId, subs);
+        surfaceEventSubs.set(hostViewId, subs);
       }
-      subs.add(emit);
+      const wrapped: SurfaceEventEmit = ({ surfaceId, event }) => {
+        if (surfaceId === filterId) emit(event);
+      };
+      subs.add(wrapped);
       signal.addEventListener("abort", () => {
-        const set = didNavigateSubs.get(hostViewId);
+        const set = surfaceEventSubs.get(hostViewId);
         if (!set) return;
-        set.delete(emit);
-        if (set.size === 0) didNavigateSubs.delete(hostViewId);
-      });
-    }),
-
-    titleChanged: () => Stream.from<{ surfaceId: number; title: string }>((emit, signal) => {
-      let subs = titleChangedSubs.get(hostViewId);
-      if (!subs) {
-        subs = new Set();
-        titleChangedSubs.set(hostViewId, subs);
-      }
-      subs.add(emit);
-      signal.addEventListener("abort", () => {
-        const set = titleChangedSubs.get(hostViewId);
-        if (!set) return;
-        set.delete(emit);
-        if (set.size === 0) titleChangedSubs.delete(hostViewId);
+        set.delete(wrapped);
+        if (set.size === 0) surfaceEventSubs.delete(hostViewId);
       });
     }),
   };

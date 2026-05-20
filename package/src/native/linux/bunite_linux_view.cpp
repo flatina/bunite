@@ -18,16 +18,39 @@ void emit_url(uint32_t view_id, const char* name, WebKitWebView* wv) {
 void on_load_changed(WebKitWebView* wv, WebKitLoadEvent event, gpointer user_data) {
   const uint32_t view_id = GPOINTER_TO_UINT(user_data);
   switch (event) {
+    case WEBKIT_LOAD_STARTED:
+      emit_url(view_id, "load-start", wv);
+      break;
     case WEBKIT_LOAD_COMMITTED:
       emit_url(view_id, "did-navigate", wv);
       queueViewRedraw(wv);
       break;
     case WEBKIT_LOAD_FINISHED:
+      emit_url(view_id, "load-finish", wv);
       emit_url(view_id, "dom-ready", wv);
       queueViewRedraw(wv);
       break;
     default: break;
   }
+}
+
+gboolean on_load_failed(WebKitWebView* /*wv*/, WebKitLoadEvent /*ev*/, const char* failing_uri,
+                        GError* error, gpointer user_data) {
+  const uint32_t view_id = GPOINTER_TO_UINT(user_data);
+  std::string payload = "{\"url\":\"" + escapeJsonString(failing_uri ? failing_uri : "") +
+                        "\",\"reason\":\"" + escapeJsonString(error && error->message ? error->message : "") + "\"}";
+  emitWebviewEvent(view_id, "load-fail", payload);
+  return FALSE;  // let WebKit show its default error page
+}
+
+gboolean on_load_failed_tls(WebKitWebView* /*wv*/, const char* failing_uri,
+                            GTlsCertificate* /*cert*/, GTlsCertificateFlags /*errors*/,
+                            gpointer user_data) {
+  const uint32_t view_id = GPOINTER_TO_UINT(user_data);
+  std::string payload = "{\"url\":\"" + escapeJsonString(failing_uri ? failing_uri : "") +
+                        "\",\"reason\":\"tls-certificate-error\"}";
+  emitWebviewEvent(view_id, "load-fail", payload);
+  return FALSE;  // do not override default certificate failure behavior
 }
 
 GtkWidget* on_create(WebKitWebView* wv, WebKitNavigationAction* action, gpointer user_data) {
@@ -130,6 +153,8 @@ bool createView(uint32_t view_id, uint32_t window_id,
   registerAppresScheme(webkit_web_view_get_context(wv));
 
   g_signal_connect(wv, "load-changed", G_CALLBACK(on_load_changed), GUINT_TO_POINTER(view_id));
+  g_signal_connect(wv, "load-failed", G_CALLBACK(on_load_failed), GUINT_TO_POINTER(view_id));
+  g_signal_connect(wv, "load-failed-with-tls-errors", G_CALLBACK(on_load_failed_tls), GUINT_TO_POINTER(view_id));
   g_signal_connect(wv, "decide-policy", G_CALLBACK(on_decide_policy), GUINT_TO_POINTER(view_id));
   g_signal_connect(wv, "create", G_CALLBACK(on_create), GUINT_TO_POINTER(view_id));
   g_signal_connect(wv, "notify::title", G_CALLBACK(on_title_changed), GUINT_TO_POINTER(view_id));

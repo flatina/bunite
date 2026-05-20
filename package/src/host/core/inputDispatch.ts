@@ -26,12 +26,19 @@ export interface ResolvedKey {
   code: string;
   /** Text payload for the CHAR / insertText event; empty = skip char. */
   character: string;
+  /** Win scancode 0xE0 prefix: nav cluster (Arrow/Insert/Delete/Home/End/
+   *  PageUp/PageDown/Meta/ContextMenu) AND Numpad-Enter. Distinct from
+   *  `location` — most extended keys are NOT numpad (location 0). */
+  extended: boolean;
+  /** DOM `KeyboardEvent.location`: 0=standard, 1=left mod, 2=right mod,
+   *  3=numpad. WV2 CDP uses this; CEF derives from scancode 0xE0 prefix. */
+  location: 0 | 1 | 2 | 3;
 }
 
 /** Maps a DOM `KeyboardEvent.key` value to backend-neutral identifiers. */
 export function resolveKey(domKey: string): ResolvedKey {
   if (domKey.length === 0) {
-    return { windowsVkCode: 0, macKeyCode: 0, key: "", code: "", character: "" };
+    return { windowsVkCode: 0, macKeyCode: 0, key: "", code: "", character: "", extended: false, location: 0 };
   }
 
   // Named key (Enter, Tab, ArrowLeft …).
@@ -45,6 +52,8 @@ export function resolveKey(domKey: string): ResolvedKey {
       // Space/Tab/Enter generate text in CDP automatically; we pass an explicit
       // character so DOM `keypress` fires consistently across engines.
       character: named.character ?? "",
+      extended: named.ext === true,
+      location: named.loc ?? 0,
     };
   }
 
@@ -60,6 +69,8 @@ export function resolveKey(domKey: string): ResolvedKey {
         key: domKey,
         code: `Key${String.fromCharCode(upper)}`,
         character: domKey,
+        extended: false,
+        location: 0,
       };
     }
     // ASCII 0-9.
@@ -70,40 +81,45 @@ export function resolveKey(domKey: string): ResolvedKey {
         key: domKey,
         code: `Digit${domKey}`,
         character: domKey,
+        extended: false,
+        location: 0,
       };
     }
     // Other printable codepoint — char event only, no virtual key.
-    return { windowsVkCode: 0, macKeyCode: 0, key: domKey, code: "", character: domKey };
+    return { windowsVkCode: 0, macKeyCode: 0, key: domKey, code: "", character: domKey, extended: false, location: 0 };
   }
 
   // Multi-codepoint string we don't recognise as a named key — pass-through.
-  return { windowsVkCode: 0, macKeyCode: 0, key: domKey, code: "", character: "" };
+  return { windowsVkCode: 0, macKeyCode: 0, key: domKey, code: "", character: "", extended: false, location: 0 };
 }
 
-// Win32 VK_* + Quartz Event Services kVK_* + DOM code + literal character.
-// Stage B subset; extend by appending entries. Sources:
+// Win32 VK_* + Quartz Event Services kVK_* + DOM code + literal character +
+// LPARAM extended-key flag. `ext: true` for nav-cluster keys (separate from
+// numpad equivalents) and Numpad-Enter — Chromium derives `KeyboardEvent.code`
+// from LPARAM scancode + extended bit. Sources:
 //   learn.microsoft.com/windows/win32/inputdev/virtual-key-codes
-//   developer.apple.com/library/.../HIToolbox/Events.h kVK_*
-type NamedKey = { win: number; mac: number; code: string; character?: string };
+//   chromium/ui/events/keycodes/dom/keycode_converter_data.inc
+type NamedKey = { win: number; mac: number; code: string; character?: string; ext?: true; loc?: 1 | 2 | 3 };
 const NAMED_KEYS: Record<string, NamedKey> = {
-  Backspace:  { win: 0x08, mac: 0x33, code: "Backspace" },
-  Tab:        { win: 0x09, mac: 0x30, code: "Tab", character: "\t" },
-  Enter:      { win: 0x0D, mac: 0x24, code: "Enter", character: "\r" },
-  Escape:     { win: 0x1B, mac: 0x35, code: "Escape" },
-  " ":        { win: 0x20, mac: 0x31, code: "Space", character: " " },
-  Space:      { win: 0x20, mac: 0x31, code: "Space", character: " " },
-  PageUp:     { win: 0x21, mac: 0x74, code: "PageUp" },
-  PageDown:   { win: 0x22, mac: 0x79, code: "PageDown" },
-  End:        { win: 0x23, mac: 0x77, code: "End" },
-  Home:       { win: 0x24, mac: 0x73, code: "Home" },
-  ArrowLeft:  { win: 0x25, mac: 0x7B, code: "ArrowLeft" },
-  ArrowUp:    { win: 0x26, mac: 0x7E, code: "ArrowUp" },
-  ArrowRight: { win: 0x27, mac: 0x7C, code: "ArrowRight" },
-  ArrowDown:  { win: 0x28, mac: 0x7D, code: "ArrowDown" },
-  Insert:     { win: 0x2D, mac: 0x72, code: "Insert" },
-  Delete:     { win: 0x2E, mac: 0x75, code: "Delete" },
-  Meta:       { win: 0x5B, mac: 0x37, code: "MetaLeft" },
-  ContextMenu:{ win: 0x5D, mac: 0x6E, code: "ContextMenu" },
+  Backspace:    { win: 0x08, mac: 0x33, code: "Backspace" },
+  Tab:          { win: 0x09, mac: 0x30, code: "Tab", character: "\t" },
+  Enter:        { win: 0x0D, mac: 0x24, code: "Enter", character: "\r" },
+  NumpadEnter:  { win: 0x0D, mac: 0x4C, code: "NumpadEnter", character: "\r", ext: true, loc: 3 },
+  Escape:       { win: 0x1B, mac: 0x35, code: "Escape" },
+  " ":          { win: 0x20, mac: 0x31, code: "Space", character: " " },
+  Space:        { win: 0x20, mac: 0x31, code: "Space", character: " " },
+  PageUp:       { win: 0x21, mac: 0x74, code: "PageUp", ext: true },
+  PageDown:     { win: 0x22, mac: 0x79, code: "PageDown", ext: true },
+  End:          { win: 0x23, mac: 0x77, code: "End", ext: true },
+  Home:         { win: 0x24, mac: 0x73, code: "Home", ext: true },
+  ArrowLeft:    { win: 0x25, mac: 0x7B, code: "ArrowLeft", ext: true },
+  ArrowUp:      { win: 0x26, mac: 0x7E, code: "ArrowUp", ext: true },
+  ArrowRight:   { win: 0x27, mac: 0x7C, code: "ArrowRight", ext: true },
+  ArrowDown:    { win: 0x28, mac: 0x7D, code: "ArrowDown", ext: true },
+  Insert:       { win: 0x2D, mac: 0x72, code: "Insert", ext: true },
+  Delete:       { win: 0x2E, mac: 0x75, code: "Delete", ext: true },
+  Meta:         { win: 0x5B, mac: 0x37, code: "MetaLeft", ext: true },
+  ContextMenu:  { win: 0x5D, mac: 0x6E, code: "ContextMenu", ext: true },
   F1:  { win: 0x70, mac: 0x7A, code: "F1" },
   F2:  { win: 0x71, mac: 0x78, code: "F2" },
   F3:  { win: 0x72, mac: 0x63, code: "F3" },

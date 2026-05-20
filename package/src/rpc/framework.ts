@@ -78,7 +78,7 @@ export type SurfaceMask = { x: number; y: number; w: number; h: number };
 export interface SurfaceCapabilities {
   evaluate: boolean;
   crossOriginEval: boolean;
-  titleChanged: boolean;
+  surfaceEvents: boolean;
   /** Stage A: always false. Set true when SendInput focus choreography lands. */
   nativeInputTrusted: boolean;
   click: boolean;
@@ -89,6 +89,18 @@ export interface SurfaceCapabilities {
   /** Present only when `screenshot` is true. */
   formats?: ("png" | "jpeg")[];
 }
+
+/** Surface lifecycle event arm. Backends emit a subset honestly — SPA
+ *  `history.pushState` fires only `navigate`; classic navigation fires
+ *  `load-start` → `navigate` → `load-finish` (order varies per backend hook
+ *  sequence and isn't a strict invariant). A navigation produces `load-finish`
+ *  OR `load-fail`, never both. */
+export type SurfaceEvent =
+  | { type: "navigate"; url: string }
+  | { type: "load-start"; url: string }
+  | { type: "load-finish"; url: string }
+  | { type: "load-fail"; url: string; reason?: string }
+  | { type: "title-change"; title: string };
 
 export type EvaluateResult =
   | { ok: true; value: unknown }
@@ -106,7 +118,14 @@ export interface ClickArgs {
   modifiers?: Modifier[];
 }
 export interface TypeArgs { surfaceId: number; text: string }
-export interface PressArgs { surfaceId: number; key: string; modifiers?: Modifier[] }
+export interface PressArgs {
+  surfaceId: number;
+  key: string;
+  modifiers?: Modifier[];
+  /** "both" (default) emits down→char→up; "down" / "up" emit only that half.
+   *  For Playwright-style modifier-held wrap: keydown → click → keyup. */
+  action?: "down" | "up" | "both";
+}
 export interface ScrollArgs {
   surfaceId: number;
   dx: number;
@@ -151,8 +170,7 @@ export const SurfaceCap = defineCap("bunite.Surface", {
   press: call<PressArgs, void>(),
   scroll: call<ScrollArgs, void>(),
   screenshot: call<ScreenshotArgs, ScreenshotResult>(),
-  didNavigate: stream<void, { surfaceId: number; url: string }>(),
-  titleChanged: stream<void, { surfaceId: number; title: string }>(),
+  surfaceEvents: stream<{ surfaceId: number }, SurfaceEvent>(),
 });
 
 export const RuntimeCap = defineCap("bunite.Runtime", {

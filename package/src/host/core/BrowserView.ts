@@ -119,7 +119,7 @@ setEvaluateResultHandler((viewId, raw: NativeEvaluateResult) => {
 // Bit positions match the native enum in `ffi_exports.h` (BuniteCapBit).
 const CAP_EVALUATE             = 1 << 0;
 const CAP_CROSS_ORIGIN_EVAL    = 1 << 1;
-const CAP_TITLE_CHANGED        = 1 << 2;
+const CAP_SURFACE_EVENTS       = 1 << 2;
 const CAP_NATIVE_INPUT_TRUSTED = 1 << 3;
 const CAP_CLICK                = 1 << 4;
 const CAP_TYPE                 = 1 << 5;
@@ -136,7 +136,7 @@ function decodeCapabilityBits(bits: number): SurfaceCapabilities {
   return {
     evaluate: !!(bits & CAP_EVALUATE),
     crossOriginEval: !!(bits & CAP_CROSS_ORIGIN_EVAL),
-    titleChanged: !!(bits & CAP_TITLE_CHANGED),
+    surfaceEvents: !!(bits & CAP_SURFACE_EVENTS),
     nativeInputTrusted: !!(bits & CAP_NATIVE_INPUT_TRUSTED),
     click: !!(bits & CAP_CLICK),
     type: !!(bits & CAP_TYPE),
@@ -373,13 +373,14 @@ export class BrowserView {
     getNativeLibrary()?.symbols.bunite_view_type(this.id, toCString(text));
   }
 
-  press(key: string, modifiers?: Modifier[]) {
+  press(key: string, modifiers?: Modifier[], action?: "down" | "up" | "both") {
     if (!this.nativeAttached) return;
     const r = resolveKey(key);
+    const a = action === "down" ? 0 : action === "up" ? 1 : 2;
     getNativeLibrary()?.symbols.bunite_view_press(
       this.id, r.windowsVkCode, r.macKeyCode,
       toCString(r.key), toCString(r.code), toCString(r.character),
-      encodeModifiers(modifiers)
+      encodeModifiers(modifiers), a, r.extended, r.location
     );
   }
 
@@ -528,7 +529,7 @@ export class BrowserView {
   }
 
   on(
-    name: "will-navigate" | "did-navigate" | "dom-ready" | "new-window-open" | "permission-requested" | "title-changed",
+    name: "will-navigate" | "did-navigate" | "dom-ready" | "new-window-open" | "permission-requested" | "title-changed" | "load-start" | "load-finish" | "load-fail",
     handler: (event: unknown) => void
   ) {
     const specificName = `${name}-${this.id}`;

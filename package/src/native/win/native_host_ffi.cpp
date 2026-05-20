@@ -18,7 +18,7 @@
 using bunite_win::runOnUiThreadSync;
 using bunite_win::runOnCefUiThreadSync;
 
-static constexpr int32_t BUNITE_ABI_VERSION = 7;
+static constexpr int32_t BUNITE_ABI_VERSION = 8;
 
 namespace {
 
@@ -973,25 +973,32 @@ extern "C" BUNITE_EXPORT void bunite_view_type(uint32_t view_id, const char* tex
 extern "C" BUNITE_EXPORT void bunite_view_press(uint32_t view_id, int32_t windows_vk_code,
                                                   int32_t /*mac_key_code*/,
                                                   const char* /*key*/, const char* /*code*/,
-                                                  const char* character, uint32_t modifiers) {
+                                                  const char* character, uint32_t modifiers,
+                                                  int32_t action, bool extended, int32_t /*location*/) {
   std::string char_str = character ? character : "";
-  bunite_win::postCefUiTask([view_id, windows_vk_code, char_str, modifiers]() {
+  bunite_win::postCefUiTask([view_id, windows_vk_code, char_str, modifiers, action, extended]() {
     auto* view = bunite_win::getViewHostById(view_id);
     if (!view || !view->browser) return;
     auto host = view->browser->GetHost();
     if (!host) return;
     uint32_t mod = cefModifiers(modifiers);
+    // Chromium's KeycodeConverter::NativeKeycodeToDomCode expects raw scancode
+    // with 0xE0 prefix when extended (see chromium ui/events dom_code_data.inc).
+    // Not LPARAM — Chromium's Win backend keys off scancode|(extended ? 0xE000 : 0).
+    UINT scancode = windows_vk_code ? MapVirtualKeyW(static_cast<UINT>(windows_vk_code), MAPVK_VK_TO_VSC) : 0;
+    int32_t native = static_cast<int32_t>(extended ? (0xE000u | scancode) : scancode);
 
-    // 3-event sequence: RAWKEYDOWN + CHAR + KEYUP — DOM keydown/keypress/keyup parity.
-    if (windows_vk_code != 0) {
+    if (action != 1 && windows_vk_code != 0) {
       CefKeyEvent down{};
       down.type = KEYEVENT_RAWKEYDOWN;
       down.windows_key_code = windows_vk_code;
-      down.native_key_code = windows_vk_code;
+      down.native_key_code = native;
       down.modifiers = mod;
       host->SendKeyEvent(down);
     }
-    if (!char_str.empty()) {
+    // CHAR rides with the down half (Playwright convention) — emitted only
+    // when we're sending the down (action=both or down).
+    if (action != 1 && !char_str.empty()) {
       std::wstring wide(char_str.size(), 0);
       int n = MultiByteToWideChar(CP_UTF8, 0, char_str.c_str(), static_cast<int>(char_str.size()),
                                   wide.data(), static_cast<int>(wide.size()));
@@ -1011,11 +1018,11 @@ extern "C" BUNITE_EXPORT void bunite_view_press(uint32_t view_id, int32_t window
         host->SendKeyEvent(ce);
       }
     }
-    if (windows_vk_code != 0) {
+    if (action != 0 && windows_vk_code != 0) {
       CefKeyEvent up{};
       up.type = KEYEVENT_KEYUP;
       up.windows_key_code = windows_vk_code;
-      up.native_key_code = windows_vk_code;
+      up.native_key_code = native;
       up.modifiers = mod;
       host->SendKeyEvent(up);
     }
@@ -1166,7 +1173,7 @@ extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
   // manifest-dependent OS-version helper.
   auto* view = bunite_win::getViewHostById(view_id);
   if (!view) return 0;
-  return BUNITE_CAP_EVALUATE | BUNITE_CAP_TITLE_CHANGED |
+  return BUNITE_CAP_EVALUATE | BUNITE_CAP_SURFACE_EVENTS |
          BUNITE_CAP_NATIVE_INPUT_TRUSTED |
          BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;

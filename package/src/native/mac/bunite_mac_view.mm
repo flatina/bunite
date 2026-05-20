@@ -49,12 +49,47 @@ decidePolicyForNavigationAction:(WKNavigationAction*)action
   decisionHandler(allow ? WKNavigationActionPolicyAllow : WKNavigationActionPolicyCancel);
 }
 
+- (void)webView:(WKWebView*)wv didStartProvisionalNavigation:(WKNavigation*)nav {
+  (void)nav;
+  uint32_t view_id = bunite_mac::viewIdForWebView(wv);
+  NSString* url = wv.URL.absoluteString ?: @"";
+  bunite_mac::emitWebviewEvent(view_id, "load-start", url.UTF8String);
+}
+
+- (void)webView:(WKWebView*)wv didCommitNavigation:(WKNavigation*)nav {
+  (void)nav;
+  uint32_t view_id = bunite_mac::viewIdForWebView(wv);
+  NSString* url = wv.URL.absoluteString ?: @"";
+  // URL commit point — surfaceEvents `navigate` arm. WKWebView fires this
+  // when the document begins loading after server response (post-redirect).
+  bunite_mac::emitWebviewEvent(view_id, "did-navigate", url.UTF8String);
+}
+
 - (void)webView:(WKWebView*)wv didFinishNavigation:(WKNavigation*)nav {
   (void)nav;
   uint32_t view_id = bunite_mac::viewIdForWebView(wv);
   NSString* url = wv.URL.absoluteString ?: @"";
-  bunite_mac::emitWebviewEvent(view_id, "did-navigate", url.UTF8String);
+  bunite_mac::emitWebviewEvent(view_id, "load-finish", url.UTF8String);
   bunite_mac::emitWebviewEvent(view_id, "dom-ready", url.UTF8String);
+}
+
+- (void)webView:(WKWebView*)wv didFailNavigation:(WKNavigation*)nav withError:(NSError*)error {
+  (void)nav;
+  uint32_t view_id = bunite_mac::viewIdForWebView(wv);
+  NSString* url = wv.URL.absoluteString ?: @"";
+  std::string payload = "{\"url\":\"" + bunite_mac::escapeJsonString(url.UTF8String ?: "") +
+                        "\",\"reason\":\"" + bunite_mac::escapeJsonString(error.localizedDescription.UTF8String ?: "") + "\"}";
+  bunite_mac::emitWebviewEvent(view_id, "load-fail", payload);
+}
+
+- (void)webView:(WKWebView*)wv didFailProvisionalNavigation:(WKNavigation*)nav withError:(NSError*)error {
+  (void)nav;
+  uint32_t view_id = bunite_mac::viewIdForWebView(wv);
+  NSString* failingUrl = ((NSURL*)error.userInfo[NSURLErrorFailingURLErrorKey]).absoluteString
+                       ?: (wv.URL.absoluteString ?: @"");
+  std::string payload = "{\"url\":\"" + bunite_mac::escapeJsonString(failingUrl.UTF8String ?: "") +
+                        "\",\"reason\":\"" + bunite_mac::escapeJsonString(error.localizedDescription.UTF8String ?: "") + "\"}";
+  bunite_mac::emitWebviewEvent(view_id, "load-fail", payload);
 }
 
 @end

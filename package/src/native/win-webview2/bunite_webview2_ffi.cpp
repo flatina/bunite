@@ -12,7 +12,7 @@ void setViewInputPassthrough(ViewHost* v, bool passthrough);
 
 extern "C" {
 
-BUNITE_EXPORT int32_t bunite_abi_version(void) { return 7; }
+BUNITE_EXPORT int32_t bunite_abi_version(void) { return 8; }
 
 BUNITE_EXPORT void bunite_set_log_level(int32_t level) {
   if (level < 0) level = 0;
@@ -420,7 +420,8 @@ BUNITE_EXPORT void bunite_view_type(uint32_t view_id, const char* text) {
 
 BUNITE_EXPORT void bunite_view_press(uint32_t view_id, int32_t windows_vk_code,
                                       int32_t /*mac_key_code*/, const char* key, const char* code,
-                                      const char* character, uint32_t modifiers) {
+                                      const char* character, uint32_t modifiers,
+                                      int32_t action, bool /*extended*/, int32_t location) {
   ViewHost* v = getView(view_id);
   if (!v) return;
   std::string char_str = character ? character : "";
@@ -434,14 +435,17 @@ BUNITE_EXPORT void bunite_view_press(uint32_t view_id, int32_t windows_vk_code,
     if (windows_vk_code != 0) out += ",\"windowsVirtualKeyCode\":" + std::to_string(windows_vk_code);
     if (!key_str.empty())  out += ",\"key\":\""  + escapeJsonString(key_str)  + "\"";
     if (!code_str.empty()) out += ",\"code\":\"" + escapeJsonString(code_str) + "\"";
+    // CDP `location`: 0 standard, 1 left mod, 2 right mod, 3 numpad.
+    if (location > 0) out += ",\"location\":" + std::to_string(location);
     if (include_text && !char_str.empty())
       out += ",\"text\":\"" + escapeJsonString(char_str) + "\"";
     out += "}";
     return out;
   };
 
-  cdpCall(v, L"Input.dispatchKeyEvent", buildPart("keyDown", /*include_text=*/true));
-  cdpCall(v, L"Input.dispatchKeyEvent", buildPart("keyUp",   /*include_text=*/false));
+  // Playwright convention: CHAR `text` rides with keyDown for printable keys.
+  if (action != 1) cdpCall(v, L"Input.dispatchKeyEvent", buildPart("keyDown", /*include_text=*/true));
+  if (action != 0) cdpCall(v, L"Input.dispatchKeyEvent", buildPart("keyUp",   /*include_text=*/false));
 }
 
 }  // extern "C" — temporarily exit so C++ helpers below can return std::string.
@@ -477,7 +481,7 @@ BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
   // browser-process CDP where isTrusted=false).
   ViewHost* v = getView(view_id);
   if (!v) return 0;
-  return BUNITE_CAP_EVALUATE | BUNITE_CAP_TITLE_CHANGED |
+  return BUNITE_CAP_EVALUATE | BUNITE_CAP_SURFACE_EVENTS |
          BUNITE_CAP_NATIVE_INPUT_TRUSTED |
          BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
