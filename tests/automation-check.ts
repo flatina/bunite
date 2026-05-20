@@ -1,12 +1,16 @@
-// Manual verification of the SurfaceCap automation surface (Stage B+C).
-// Run: `bun tests/automation-check.ts` from the repo root with native built.
+// SurfaceCap automation-surface verification (Stage B+C). Opens a window with
+// a self-contained test page, exercises every automation method against the
+// engine selected by `BUNITE_ENGINE` (default `webview2`), writes the
+// screenshot next to this script, prints PASS/FAIL, then quits.
 //
-// Opens a window with a self-contained test page, exercises every automation
-// method, prints PASS/FAIL per step, writes a screenshot to disk, then quits.
-// Keep the window in the foreground during the run — CDP input dispatch on
-// WebView2 doesn't *require* focus, but visually verifying the events helps.
+//   bun tests/automation-check.ts                        # WebView2 (default)
+//   BUNITE_ENGINE=cef bun tests/automation-check.ts      # CEF (needs runtime)
+//
+// On a WebView2 run the window does not need to be foreground — CDP input
+// bypasses focus. Keep it visible only if you want to watch.
 
 import { AppRuntime, BrowserWindow } from "../package/src/host/index";
+import { join } from "node:path";
 
 const HTML = `<!doctype html>
 <html><head><meta charset="utf-8"><title>boot</title></head>
@@ -18,9 +22,14 @@ const HTML = `<!doctype html>
   <script>
     var log = document.getElementById("log");
     var append = function (s) { log.textContent += s + "\\n"; };
-    document.getElementById("btn").addEventListener("click", function () { append("[click] at " + Date.now()); });
+    document.getElementById("btn").addEventListener("click", function (e) {
+      append("[click] shift=" + e.shiftKey + " ctrl=" + e.ctrlKey + " alt=" + e.altKey + " trusted=" + e.isTrusted);
+    });
+    document.getElementById("btn").addEventListener("dblclick", function () { append("[dblclick]"); });
     document.getElementById("input").addEventListener("input", function (e) { append("[input] '" + e.target.value + "'"); });
-    document.addEventListener("keydown", function (e) { append("[keydown] " + e.key + " (code=" + e.code + ")"); });
+    document.addEventListener("keydown", function (e) {
+      append("[keydown] " + e.key + " (code=" + e.code + ") shift=" + e.shiftKey + " ctrl=" + e.ctrlKey + " trusted=" + e.isTrusted);
+    });
     document.addEventListener("scroll", function () { append("[scroll] y=" + window.scrollY); }, { passive: true });
     document.title = "automation-ready";
   </script>
@@ -61,13 +70,25 @@ ok("evaluate 1+1 → 2", r1.ok === true && r1.value === 2, r1);
 const r2 = await v.evaluate("document.title");
 ok("evaluate document.title", r2.ok === true && typeof r2.value === "string", r2);
 
+// Evaluate's wrapper inlines the script as `(<expr>)`, so statements
+// (`var`, `const`, multi-statement `;`) are syntax errors. Use IIFE.
+const RESET_INPUT = "(function(){var i=document.getElementById('input');i.value='';i.focus();return ''})()";
+const RESET_LOG = "(function(){document.getElementById('log').textContent='';return ''})()";
+
 if (caps.type) {
-  await v.evaluate("document.getElementById('input').focus()");
+  await v.evaluate(RESET_INPUT);
   await sleep(50);
   v.type("hi");
   await sleep(200);
   const r3 = await v.evaluate("document.getElementById('input').value") as { ok: boolean; value?: unknown };
   ok("type 'hi' → input.value === 'hi'", r3.ok === true && r3.value === "hi", r3);
+  // CJK — CDP Input.insertText injects final text without IME composition.
+  await v.evaluate(RESET_INPUT);
+  await sleep(50);
+  v.type("안녕");
+  await sleep(200);
+  const r3b = await v.evaluate("document.getElementById('input').value") as { ok: boolean; value?: unknown };
+  ok("type '안녕' → input.value === '안녕'", r3b.ok === true && r3b.value === "안녕", r3b);
 }
 
 if (caps.click) {
@@ -78,19 +99,37 @@ if (caps.click) {
   ) as { ok: boolean; value?: unknown };
   if (rect.ok && rect.value && typeof rect.value === "object") {
     const { x, y } = rect.value as { x: number; y: number };
-    await v.evaluate("document.getElementById('log').textContent=''");
+    // single click + isTrusted check (CEF should be true, WebView2/mac false)
+    await v.evaluate(RESET_LOG);
     v.click({ x, y });
     await sleep(200);
     const r5 = await v.evaluate("document.getElementById('log').textContent") as { ok: boolean; value?: unknown };
-    const hit = r5.ok && typeof r5.value === "string" && r5.value.includes("[click]");
-    ok(`click at button (${x.toFixed(0)},${y.toFixed(0)}) → '[click]' in log`, hit, r5.value);
+    const log = (r5.value as string | undefined) ?? "";
+    ok(`click at button → '[click]' in log`, log.includes("[click]"), log);
+    const trustedExpected = caps.nativeInputTrusted;
+    ok(`click isTrusted matches nativeInputTrusted (${trustedExpected})`,
+       log.includes(`trusted=${trustedExpected}`), log);
+    // ctrl modifier propagates
+    await v.evaluate(RESET_LOG);
+    v.click({ x, y, modifiers: ["ctrl"] });
+    await sleep(200);
+    const rm = await v.evaluate("document.getElementById('log').textContent") as { ok: boolean; value?: unknown };
+    ok("click with ctrl modifier → ctrl=true in event",
+       typeof rm.value === "string" && rm.value.includes("ctrl=true"), rm.value);
+    // double-click → dblclick fires
+    await v.evaluate(RESET_LOG);
+    v.click({ x, y, clickCount: 2 });
+    await sleep(300);
+    const rd = await v.evaluate("document.getElementById('log').textContent") as { ok: boolean; value?: unknown };
+    ok("click clickCount=2 → [dblclick] in log",
+       typeof rd.value === "string" && rd.value.includes("[dblclick]"), rd.value);
   } else {
     ok("click prep: get button rect", false, rect);
   }
 }
 
 if (caps.press) {
-  await v.evaluate("document.getElementById('log').textContent=''; document.body.focus()");
+  await v.evaluate("(function(){document.getElementById('log').textContent='';document.body.focus();return ''})()");
   v.press("Enter");
   await sleep(150);
   const r6 = await v.evaluate("document.getElementById('log').textContent") as { ok: boolean; value?: unknown };
@@ -99,7 +138,7 @@ if (caps.press) {
 }
 
 if (caps.scroll) {
-  await v.evaluate("document.getElementById('log').textContent=''; window.scrollTo(0,0)");
+  await v.evaluate("(function(){document.getElementById('log').textContent='';window.scrollTo(0,0);return ''})()");
   v.scroll({ dx: 0, dy: 200, x: 100, y: 100 });
   await sleep(200);
   const r7 = await v.evaluate("window.scrollY") as { ok: boolean; value?: unknown };
@@ -109,8 +148,9 @@ if (caps.scroll) {
 if (caps.screenshot) {
   const shot = await v.screenshot("png", 90);
   if (shot.ok) {
-    await Bun.write("automation-shot.png", shot.data);
-    ok(`screenshot png → ${shot.data.byteLength} bytes (automation-shot.png)`, shot.data.byteLength > 1000);
+    const outPath = join(import.meta.dir, "automation-shot.png");
+    await Bun.write(outPath, shot.data);
+    ok(`screenshot png → ${shot.data.byteLength} bytes (${outPath})`, shot.data.byteLength > 1000);
   } else {
     ok("screenshot png", false, shot);
   }
