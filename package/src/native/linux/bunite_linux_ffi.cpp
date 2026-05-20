@@ -374,18 +374,15 @@ void emitLinuxShotError(uint32_t view_id, uint32_t request_id, const char* code,
   bunite_linux::emitWebviewEvent(view_id, "screenshot-result", payload);
 }
 
-cairo_status_t cairo_buf_writer(void* closure, const unsigned char* data, unsigned int len) {
-  auto* buf = static_cast<std::vector<unsigned char>*>(closure);
-  buf->insert(buf->end(), data, data + len);
-  return CAIRO_STATUS_SUCCESS;
-}
-
+// WebKitGTK 2.52+ snapshot returns GdkTexture (was cairo_surface_t pre-2.52).
+// PNG: gdk_texture_save_to_png_bytes — built-in. JPEG: bridge through GdkPixbuf
+// via gdk_pixbuf_get_from_texture (non-deprecated GTK4 path).
 void on_snapshot_done(GObject* source, GAsyncResult* res, gpointer user_data) {
   auto* ctx = static_cast<LinuxShotCtx*>(user_data);
   WebKitWebView* wv = WEBKIT_WEB_VIEW(source);
   GError* err = nullptr;
-  cairo_surface_t* surface = webkit_web_view_get_snapshot_finish(wv, res, &err);
-  if (!surface) {
+  GdkTexture* texture = webkit_web_view_get_snapshot_finish(wv, res, &err);
+  if (!texture) {
     emitLinuxShotError(ctx->view_id, ctx->request_id, "runtime_error",
                        err ? err->message : "snapshot returned nil");
     if (err) g_error_free(err);
@@ -394,36 +391,39 @@ void on_snapshot_done(GObject* source, GAsyncResult* res, gpointer user_data) {
   }
 
   std::vector<unsigned char> bytes;
-  cairo_status_t st = CAIRO_STATUS_SUCCESS;
   std::string mime;
-  if (ctx->format == "jpeg" || ctx->format == "jpg") {
-    // No native cairo JPEG; render surface to GdkPixbuf via cairo, save JPEG buffer.
-    int w = cairo_image_surface_get_width(surface);
-    int h = cairo_image_surface_get_height(surface);
-    GdkPixbuf* pix = gdk_pixbuf_get_from_surface(surface, 0, 0, w, h);
-    if (!pix) { st = CAIRO_STATUS_NO_MEMORY; }
-    else {
+  const bool jpeg = (ctx->format == "jpeg" || ctx->format == "jpg");
+  if (jpeg) {
+    GdkPixbuf* pix = gdk_pixbuf_get_from_texture(texture);
+    if (pix) {
       gchar* raw = nullptr; gsize raw_len = 0;
-      char qbuf[8]; snprintf(qbuf, sizeof(qbuf), "%d", ctx->quality < 0 ? 90 : (ctx->quality > 100 ? 100 : ctx->quality));
+      char qbuf[8]; snprintf(qbuf, sizeof(qbuf), "%d",
+                              ctx->quality < 0 ? 90 : (ctx->quality > 100 ? 100 : ctx->quality));
       GError* perr = nullptr;
       if (gdk_pixbuf_save_to_buffer(pix, &raw, &raw_len, "jpeg", &perr, "quality", qbuf, nullptr)) {
         bytes.assign(raw, raw + raw_len);
         g_free(raw);
-      } else {
-        if (perr) { st = CAIRO_STATUS_WRITE_ERROR; g_error_free(perr); }
+      } else if (perr) {
+        g_error_free(perr);
       }
       g_object_unref(pix);
     }
     mime = "image/jpeg";
     ctx->format = "jpeg";
   } else {
-    st = cairo_surface_write_to_png_stream(surface, cairo_buf_writer, &bytes);
+    GBytes* png = gdk_texture_save_to_png_bytes(texture);
+    if (png) {
+      gsize n = 0;
+      const auto* p = static_cast<const unsigned char*>(g_bytes_get_data(png, &n));
+      bytes.assign(p, p + n);
+      g_bytes_unref(png);
+    }
     mime = "image/png";
     ctx->format = "png";
   }
-  cairo_surface_destroy(surface);
+  g_object_unref(texture);
 
-  if (st != CAIRO_STATUS_SUCCESS || bytes.empty()) {
+  if (bytes.empty()) {
     emitLinuxShotError(ctx->view_id, ctx->request_id, "runtime_error", "encode failed");
     delete ctx;
     return;
