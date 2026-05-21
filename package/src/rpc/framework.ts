@@ -115,6 +115,9 @@ export interface SurfaceCapabilities {
   /** `listFrames` works + `evaluate({frameId})` reaches the target frame's
    *  isolated world. Frame-targeted input dispatch is not yet implemented. */
   frames: boolean;
+  /** Backend can intercept downloads and emit lifecycle events. When `false`,
+   *  every download attempt emits `{kind: "blocked", reason: "not_supported"}`. */
+  downloads: boolean;
 }
 
 export interface AxNode {
@@ -167,6 +170,26 @@ export interface Frame {
 export type ListFramesResult =
   | { ok: true; frames: Frame[] }
   | { ok: false; code: "not_supported" | "runtime_error"; message: string };
+
+export type DownloadPolicy = "auto" | "ask" | "block";
+
+export type DownloadEvent =
+  | { kind: "started"; id: string; url: string; suggestedFilename: string; mimeType?: string; sizeBytes?: number }
+  | { kind: "progress"; id: string; receivedBytes: number; totalBytes?: number }
+  | { kind: "completed"; id: string; localPath: string }
+  | { kind: "failed"; id: string; reason: string }
+  | { kind: "blocked"; id: string; url: string; reason: "host-policy" | "backend-block" | "mime-blocked" | "not_supported" };
+
+export type WaitForDownloadResult =
+  | { ok: true; id: string; suggestedFilename: string; url: string; mimeType?: string; sizeBytes?: number; localPath: string }
+  | { ok: false; code: "timeout" | "blocked" | "failed" | "not_supported"; message: string };
+
+export interface SetDownloadPolicyArgs {
+  surfaceId: number;
+  policy: DownloadPolicy;
+  /** Absolute path. When omitted, backend keeps current dir (or temp). */
+  downloadDir?: string;
+}
 
 /** Surface lifecycle event arm before the surface pipeline stamps `epoch`. */
 export type SurfaceEventBase =
@@ -350,6 +373,9 @@ export const SurfaceCap = defineCap("bunite.Surface", {
   accessibilitySnapshot: call<AccessibilitySnapshotArgs, AccessibilitySnapshotResult>(),
   getBoundingRect: call<BoundingRectArgs, BoundingRectResult>({ idempotent: true }),
   listFrames: call<{ surfaceId: number }, ListFramesResult>({ idempotent: true }),
+  downloadEvents: stream<{ surfaceId: number }, DownloadEvent>(),
+  waitForDownload: call<{ surfaceId: number; timeoutMs?: number }, WaitForDownloadResult>(),
+  setDownloadPolicy: call<SetDownloadPolicyArgs, void>(),
 });
 
 export const RuntimeCap = defineCap("bunite.Runtime", {

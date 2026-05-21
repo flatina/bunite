@@ -290,6 +290,7 @@ const CAP_CONSOLE              = 1 << 13;
 const CAP_AX                   = 1 << 15;
 const CAP_BOUNDING_RECT        = 1 << 16;
 const CAP_FRAMES               = 1 << 17;
+const CAP_DOWNLOADS            = 1 << 18;
 
 function decodeCapabilityBits(bits: number): SurfaceCapabilities {
   const formats: ("png" | "jpeg")[] = [];
@@ -311,6 +312,7 @@ function decodeCapabilityBits(bits: number): SurfaceCapabilities {
     accessibilitySnapshot: !!(bits & CAP_AX),
     getBoundingRect: !!(bits & CAP_BOUNDING_RECT),
     frames: !!(bits & CAP_FRAMES),
+    downloads: !!(bits & CAP_DOWNLOADS),
     ...(formats.length > 0 ? { formats } : {}),
   };
 }
@@ -517,6 +519,14 @@ export class BrowserView {
         lib?.symbols.bunite_view_evaluate(this.id, requestId, toCString(script));
       }
     });
+  }
+
+  setDownloadPolicy(policy: "auto" | "ask" | "block", downloadDir?: string) {
+    if (!this.nativeAttached) return;
+    const policyCode = policy === "auto" ? 0 : policy === "ask" ? 1 : 2;
+    getNativeLibrary()?.symbols.bunite_view_set_download_policy(
+      this.id, policyCode, toCString(downloadDir ?? "")
+    );
   }
 
   listFrames(): Promise<ListFramesResult> {
@@ -760,7 +770,7 @@ export class BrowserView {
   }
 
   on(
-    name: "will-navigate" | "did-navigate" | "dom-ready" | "new-window-open" | "permission-requested" | "title-changed" | "load-start" | "load-finish" | "load-fail" | "dialog" | "console-message",
+    name: "will-navigate" | "did-navigate" | "dom-ready" | "new-window-open" | "permission-requested" | "title-changed" | "load-start" | "load-finish" | "load-fail" | "dialog" | "console-message" | "download-event",
     handler: (event: unknown) => void
   ) {
     const specificName = `${name}-${this.id}`;

@@ -771,6 +771,12 @@ extern "C" BUNITE_EXPORT void bunite_view_evaluate_in_frame(uint32_t view_id, ui
   bunite_mac::emitWebviewEvent(view_id, "evaluate-result", payload);
 }
 
+extern "C" BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t /*view_id*/, int32_t /*policy*/, const char* /*download_dir*/) {
+  // WKDownload integration deferred — downloads are intercepted by WKWebView's
+  // default UI handler. The cap bit is 0 on this backend, so consumers shouldn't
+  // call this; treat as no-op.
+}
+
 extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
                                                        const char* format, int32_t quality) {
   std::string fmt = format ? format : "png";

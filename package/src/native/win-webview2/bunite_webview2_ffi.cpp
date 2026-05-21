@@ -503,7 +503,16 @@ BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
          BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
          BUNITE_CAP_MOUSE | BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG |
-         BUNITE_CAP_AX | BUNITE_CAP_BOUNDING_RECT | BUNITE_CAP_FRAMES;
+         BUNITE_CAP_AX | BUNITE_CAP_BOUNDING_RECT | BUNITE_CAP_FRAMES |
+         BUNITE_CAP_DOWNLOADS;
+}
+
+BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t view_id, int32_t policy, const char* download_dir) {
+  ViewHost* v = getView(view_id);
+  if (!v) return;
+  if (policy < 0 || policy > 2) policy = 2;
+  v->download_policy.store(policy);
+  v->download_dir = download_dir ? download_dir : "";
 }
 
 namespace {

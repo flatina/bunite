@@ -7,7 +7,7 @@ import {
 import {
   SurfaceCap, type ImplOf, IpcError,
   type SurfaceEvent, type SurfaceEventBase, type DialogEvent, type ConsoleEntry,
-  type NavigationState,
+  type NavigationState, type DownloadEvent, type WaitForDownloadResult,
 } from "../../rpc/index";
 import { Stream } from "../../rpc/stream";
 
@@ -59,6 +59,54 @@ const dialogSubs = new Map<number, Set<DialogEmit>>();
 type ConsoleEmit = (event: { surfaceId: number; entry: ConsoleEntry }) => void;
 const consoleSubs = new Map<number, Set<ConsoleEmit>>();
 
+type DownloadEmit = (event: { surfaceId: number; event: DownloadEvent }) => void;
+const downloadSubs = new Map<number, Set<DownloadEmit>>();
+type DownloadWaiter = {
+  /** Resolved on the next `completed` event (or `failed`/`blocked`). */
+  resolve: (r: WaitForDownloadResult) => void;
+  /** Captured at registration; only events with `id` started after this are eligible. */
+  pendingId: string | null;
+};
+const downloadWaiters = new Map<number, DownloadWaiter[]>();
+const downloadStartedMeta = new Map<number, Map<string, { url: string; suggestedFilename: string; mimeType?: string; sizeBytes?: number }>>();
+
+export function emitDownload(hostViewId: number, surfaceId: number, event: DownloadEvent) {
+  if (event.kind === "started") {
+    let bySurface = downloadStartedMeta.get(surfaceId);
+    if (!bySurface) { bySurface = new Map(); downloadStartedMeta.set(surfaceId, bySurface); }
+    bySurface.set(event.id, { url: event.url, suggestedFilename: event.suggestedFilename, mimeType: event.mimeType, sizeBytes: event.sizeBytes });
+    const queue = downloadWaiters.get(surfaceId);
+    if (queue) for (const w of queue) if (w.pendingId === null) { w.pendingId = event.id; break; }
+  }
+  const subs = downloadSubs.get(hostViewId);
+  if (subs) for (const emit of subs) emit({ surfaceId, event });
+  if (event.kind === "completed" || event.kind === "failed" || event.kind === "blocked") {
+    const queue = downloadWaiters.get(surfaceId);
+    if (queue) {
+      // First match by id (started → terminal pair). Else for blocked-without-started
+      // (policy=block emits only blocked), bind to the first waiting waiter.
+      let idx = queue.findIndex((w) => w.pendingId === event.id);
+      if (idx < 0 && event.kind === "blocked") idx = queue.findIndex((w) => w.pendingId === null);
+      if (idx >= 0) {
+        const [waiter] = queue.splice(idx, 1);
+        if (event.kind === "completed") {
+          const meta = downloadStartedMeta.get(surfaceId)?.get(event.id);
+          waiter.resolve({
+            ok: true, id: event.id, localPath: event.localPath,
+            url: meta?.url ?? "", suggestedFilename: meta?.suggestedFilename ?? "",
+            mimeType: meta?.mimeType, sizeBytes: meta?.sizeBytes,
+          });
+        } else if (event.kind === "failed") {
+          waiter.resolve({ ok: false, code: "failed", message: event.reason });
+        } else {
+          waiter.resolve({ ok: false, code: "blocked", message: event.reason });
+        }
+      }
+    }
+    downloadStartedMeta.get(surfaceId)?.delete(event.id);
+  }
+}
+
 const CONSOLE_BUFFER_LIMIT = 200;
 const DEFAULT_DIALOG_TIMEOUT_MS = 5000;
 
@@ -98,11 +146,16 @@ function getOrCreateState(surfaceId: number): SurfaceState {
 
 export function disposeSurfaceState(surfaceId: number) {
   const s = surfaceState.get(surfaceId);
-  if (!s) return;
-  for (const p of s.pendingDialogs.values()) {
-    if (p.timer) clearTimeout(p.timer);
+  if (s) {
+    for (const p of s.pendingDialogs.values()) if (p.timer) clearTimeout(p.timer);
+    surfaceState.delete(surfaceId);
   }
-  surfaceState.delete(surfaceId);
+  const waiters = downloadWaiters.get(surfaceId);
+  if (waiters) {
+    for (const w of waiters) w.resolve({ ok: false, code: "not_supported", message: "surface destroyed" });
+    downloadWaiters.delete(surfaceId);
+  }
+  downloadStartedMeta.delete(surfaceId);
 }
 
 // Wire dispose to any untrack path (remove + removeSurfacesForHostView).
@@ -394,7 +447,7 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
           nativeInputTrusted: false, click: false, type: false, press: false,
           scroll: false, mouse: false, dialogs: false, console: false,
           screenshot: false, accessibilitySnapshot: false, getBoundingRect: false,
-          frames: false,
+          frames: false, downloads: false,
         };
       }
       return record.view.capabilities();
@@ -473,6 +526,45 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       const record = ownedSurface(surfaceId);
       if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
       return record.view.listFrames();
+    },
+
+    downloadEvents: ({ surfaceId: filterId }) => Stream.from<DownloadEvent>((emit, signal) => {
+      let subs = downloadSubs.get(hostViewId);
+      if (!subs) { subs = new Set(); downloadSubs.set(hostViewId, subs); }
+      const wrapped: DownloadEmit = ({ surfaceId, event }) => {
+        if (surfaceId === filterId) emit(event);
+      };
+      subs.add(wrapped);
+      signal.addEventListener("abort", () => {
+        const set = downloadSubs.get(hostViewId);
+        if (!set) return;
+        set.delete(wrapped);
+        if (set.size === 0) downloadSubs.delete(hostViewId);
+      });
+    }),
+
+    waitForDownload: async ({ surfaceId, timeoutMs = 30000 }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return { ok: false as const, code: "not_supported" as const, message: "surface not found" };
+      return new Promise<WaitForDownloadResult>((resolve) => {
+        const waiter: DownloadWaiter = { resolve: (r) => { clearTimeout(timer); resolve(r); }, pendingId: null };
+        let queue = downloadWaiters.get(surfaceId);
+        if (!queue) { queue = []; downloadWaiters.set(surfaceId, queue); }
+        queue.push(waiter);
+        const timer = setTimeout(() => {
+          const q = downloadWaiters.get(surfaceId);
+          if (!q) return;
+          const idx = q.indexOf(waiter);
+          if (idx >= 0) q.splice(idx, 1);
+          resolve({ ok: false, code: "timeout", message: `no download started within ${timeoutMs}ms` });
+        }, timeoutMs);
+      });
+    },
+
+    setDownloadPolicy: ({ surfaceId, policy, downloadDir }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return;
+      record.view.setDownloadPolicy(policy, downloadDir);
     },
 
     consoleEvents: ({ surfaceId: filterId }) => Stream.from<ConsoleEntry>((emit, signal) => {

@@ -133,6 +133,9 @@ type NativeSymbols = {
   bunite_view_evaluate_in_frame: (
     viewId: number, requestId: number, script: CStringPointer, frameId: CStringPointer
   ) => void;
+  bunite_view_set_download_policy: (
+    viewId: number, policy: number, downloadDir: CStringPointer
+  ) => void;
   bunite_view_capabilities: (viewId: number) => number;
   bunite_view_load_url: (viewId: number, url: CStringPointer) => void;
   bunite_view_load_html: (viewId: number, html: CStringPointer) => void;
@@ -361,6 +364,10 @@ const nativeSymbolDefinitions = {
     args: [FFIType.u32, FFIType.u32, FFIType.cstring, FFIType.cstring],
     returns: FFIType.void
   },
+  bunite_view_set_download_policy: {
+    args: [FFIType.u32, FFIType.i32, FFIType.cstring],
+    returns: FFIType.void
+  },
   bunite_view_capabilities: {
     args: [FFIType.u32],
     returns: FFIType.u32
@@ -463,6 +470,23 @@ export type NativeListFramesResult = {
 let listFramesResultHandler: ((viewId: number, result: NativeListFramesResult) => void) | null = null;
 export function setListFramesResultHandler(handler: (viewId: number, result: NativeListFramesResult) => void) {
   listFramesResultHandler = handler;
+}
+
+export type NativeDownloadEvent = {
+  kind: "started" | "progress" | "completed" | "failed" | "blocked";
+  id: string;
+  url?: string;
+  suggestedFilename?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  receivedBytes?: number;
+  totalBytes?: number;
+  localPath?: string;
+  reason?: string;
+};
+let downloadEventHandler: ((viewId: number, event: NativeDownloadEvent) => void) | null = null;
+export function setDownloadEventHandler(handler: (viewId: number, event: NativeDownloadEvent) => void) {
+  downloadEventHandler = handler;
 }
 
 // Per-view deferred resolvers for "view-ready" (OnAfterCreated).
@@ -627,6 +651,15 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
           case "list-frames-result": {
             const parsed = maybeParsePayload(payload) as NativeListFramesResult;
             listFramesResultHandler?.(viewId, parsed);
+            break;
+          }
+          case "download-event": {
+            const parsed = maybeParsePayload(payload) as NativeDownloadEvent;
+            downloadEventHandler?.(viewId, parsed);
+            buniteEventEmitter.emitEvent(
+              buniteEventEmitter.events.webview.downloadEvent(parsed),
+              viewId
+            );
             break;
           }
           case "title-changed": {

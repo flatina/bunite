@@ -279,7 +279,7 @@ class BuniteWebviewElement extends HTMLElement {
         nativeInputTrusted: false, click: false, type: false, press: false,
         scroll: false, mouse: false, dialogs: false, console: false,
         screenshot: false, accessibilitySnapshot: false, getBoundingRect: false,
-        frames: false,
+        frames: false, downloads: false,
       };
     }
     return callSurfaceTyped((s) => s.capabilities({ surfaceId: sid }));

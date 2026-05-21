@@ -88,6 +88,10 @@ struct ViewHost {
   std::atomic<bool> ready{false};
   std::atomic<bool> closing{false};
 
+  // Download policy: 0=auto, 1=ask, 2=block. Default block (current behavior).
+  std::atomic<int32_t> download_policy{2};
+  std::string download_dir;  // optional; falls back to backend default temp dir.
+
   // Pending page-initiated dialogs (alert/confirm/prompt/beforeunload).
   // ScriptDialogOpening hands us a `Deferral` we Complete() on host response.
   struct PendingDialog {

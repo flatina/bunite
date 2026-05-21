@@ -480,6 +480,10 @@ extern "C" BUNITE_EXPORT void bunite_view_evaluate_in_frame(uint32_t view_id, ui
   bunite_linux::emitWebviewEvent(view_id, "evaluate-result", payload);
 }
 
+extern "C" BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t /*view_id*/, int32_t /*policy*/, const char* /*download_dir*/) {
+  // WebKitDownload integration deferred. The cap bit is 0; consumers shouldn't call.
+}
+
 extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
                                                        const char* format, int32_t quality) {
   std::string fmt = format ? format : "png";

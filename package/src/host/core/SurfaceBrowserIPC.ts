@@ -1,5 +1,5 @@
 import {
-  onSurfaceInit, emitSurfaceEvent, emitConsole,
+  onSurfaceInit, emitSurfaceEvent, emitConsole, emitDownload,
   registerDialogRequest, disposeSurfaceState, clearConsoleBuffer,
 } from "./SurfaceManager";
 
@@ -38,6 +38,9 @@ onSurfaceInit((surfaceId, hostViewId, view) => {
     // PageReportingCap impl already wraps the whole batch in a single
     // microtask — no extra deferral needed at the listener level.
     emitConsole(hostViewId, surfaceId, event.data);
+  });
+  view.on("download-event", (event: any) => {
+    emitDownload(hostViewId, surfaceId, event.data);
   });
 });
 

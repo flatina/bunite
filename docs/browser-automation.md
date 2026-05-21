@@ -48,6 +48,7 @@
 | `getBoundingRect(selector, opts?)` | `Promise<BoundingRectResult>` | `document.querySelector(...).getBoundingClientRect()` + viewport intersect. `opts.frameId` queries inside that frame. |
 | `listFrames()` | `Promise<ListFramesResult>` | Enumerate frames (CDP `Page.getFrameTree`). Chromium-backed only; mac/linux return `not_supported`. |
 | `evaluate(script, opts?)` | `Promise<EvaluateResult>` | `opts.frameId` evaluates inside the target frame's isolated world — page main-world JS variables are not visible; DOM access works. |
+| `setDownloadPolicy(policy, downloadDir?)` | `Promise<void>` | `policy`: `"auto"` allows + emits lifecycle, `"block"` (default) cancels + emits `blocked`, `"ask"` is reserved (treated as block until implemented). |
 | `screenshot(args?)` | `Promise<ScreenshotResult>` | `{format?: "png" \| "jpeg", quality?}`. |
 
 `Modifier = "alt" | "ctrl" | "meta" | "shift"`.
@@ -127,6 +128,7 @@ The same pattern works for any modifier (Shift / Alt / Meta) when you need the p
 | `accessibilitySnapshot` | ✔ | ✔ | ✘ | ✘ |
 | `getBoundingRect` | ✔ | ✔ | ✔ | ✔ |
 | `frames` (`listFrames`, `evaluate({frameId})`) | ✔ | ✔ | ✘ | ✘ |
+| `downloads` (`setDownloadPolicy`, `downloadEvents`, `waitForDownload`) | ✔ | ✔ | ✘ | ✘ |
 
 † On CEF, `scroll` and `screenshot` route through Chrome DevTools Protocol (`Input.dispatchMouseEvent` / `Page.captureScreenshot`) — native `SendMouseWheelEvent` doesn't reach the page in windowed mode, and `PrintWindow` misses hardware-composited surfaces.
 

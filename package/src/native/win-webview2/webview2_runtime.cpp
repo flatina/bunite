@@ -997,13 +997,15 @@ static void attachControllerCallbacks(ViewHost* view) {
           }).Get(),
       &tok);
 
-  // DownloadStarting (ICoreWebView2_4) — suppress by default.
+  // DownloadStarting (ICoreWebView2_4) — policy-driven: block | auto | ask.
+  // Default block preserves the original behavior.
   ComPtr<ICoreWebView2_4> wv4;
   view->webview->QueryInterface(IID_PPV_ARGS(&wv4));
   if (wv4) {
+    static std::atomic<uint32_t> g_download_seq{1};
     wv4->add_DownloadStarting(
         Callback<ICoreWebView2DownloadStartingEventHandler>(
-            [lifetime, view_id](ICoreWebView2*, ICoreWebView2DownloadStartingEventArgs* args) -> HRESULT {
+            [lifetime, view_id, view](ICoreWebView2*, ICoreWebView2DownloadStartingEventArgs* args) -> HRESULT {
               if (!lifetime || !lifetime->alive.load()) return S_OK;
               ComPtr<ICoreWebView2DownloadOperation> op;
               args->get_DownloadOperation(&op);
@@ -1011,9 +1013,87 @@ static void attachControllerCallbacks(ViewHost* view) {
               if (op) op->get_Uri(&uri_raw);
               std::string url = wideToUtf8(uri_raw);
               if (uri_raw) CoTaskMemFree(uri_raw);
-              args->put_Cancel(TRUE);
-              std::string payload = "{\"url\":\"" + escapeJsonString(url) + "\"}";
-              emitWebviewEvent(view_id, "download-blocked", payload);
+              int32_t policy = view->download_policy.load();
+              const std::string id = "wv2-" + std::to_string(g_download_seq.fetch_add(1));
+              // Only policy=0 (auto) allows. `ask` (1) is reserved and falls
+              // back to block until implemented.
+              if (policy != 0) {
+                args->put_Cancel(TRUE);
+                std::string payload = "{\"kind\":\"blocked\",\"id\":\"" + id +
+                                      "\",\"url\":\"" + escapeJsonString(url) +
+                                      "\",\"reason\":\"host-policy\"}";
+                emitWebviewEvent(view_id, "download-event", payload);
+                return S_OK;
+              }
+              // auto: don't cancel; report started + progress + completed.
+              LPWSTR sugg_raw = nullptr;
+              if (op) op->get_ContentDisposition(&sugg_raw);  // fallback
+              LPWSTR result_path_raw = nullptr;
+              args->get_ResultFilePath(&result_path_raw);
+              std::string suggested = result_path_raw ? wideToUtf8(result_path_raw) : "";
+              // strip dir, keep filename only.
+              auto slash = suggested.find_last_of("/\\");
+              if (slash != std::string::npos) suggested = suggested.substr(slash + 1);
+              if (sugg_raw) CoTaskMemFree(sugg_raw);
+              // Optional host downloadDir override.
+              std::string overrideDir = view->download_dir;
+              if (!overrideDir.empty() && result_path_raw) {
+                std::string base = suggested.empty() ? "download" : suggested;
+                std::string custom = overrideDir;
+                if (!custom.empty() && custom.back() != '\\' && custom.back() != '/') custom.push_back('\\');
+                custom += base;
+                args->put_ResultFilePath(utf8ToWide(custom).c_str());
+              }
+              if (result_path_raw) CoTaskMemFree(result_path_raw);
+              int64_t total = 0;
+              if (op) op->get_TotalBytesToReceive(&total);
+              std::string startPayload = "{\"kind\":\"started\",\"id\":\"" + id +
+                                         "\",\"url\":\"" + escapeJsonString(url) +
+                                         "\",\"suggestedFilename\":\"" + escapeJsonString(suggested) + "\"";
+              if (total > 0) startPayload += ",\"sizeBytes\":" + std::to_string(total);
+              startPayload += "}";
+              emitWebviewEvent(view_id, "download-event", startPayload);
+              if (op) {
+                EventRegistrationToken btok{};
+                op->add_BytesReceivedChanged(
+                    Callback<ICoreWebView2BytesReceivedChangedEventHandler>(
+                        [lifetime, view_id, id, op](ICoreWebView2DownloadOperation*, IUnknown*) -> HRESULT {
+                          if (!lifetime || !lifetime->alive.load()) return S_OK;
+                          INT64 rec = 0; op->get_BytesReceived(&rec);
+                          INT64 tot = 0; op->get_TotalBytesToReceive(&tot);
+                          std::string payload = "{\"kind\":\"progress\",\"id\":\"" + id +
+                                                "\",\"receivedBytes\":" + std::to_string(rec);
+                          if (tot > 0) payload += ",\"totalBytes\":" + std::to_string(tot);
+                          payload += "}";
+                          emitWebviewEvent(view_id, "download-event", payload);
+                          return S_OK;
+                        }).Get(),
+                    &btok);
+                EventRegistrationToken stok{};
+                op->add_StateChanged(
+                    Callback<ICoreWebView2StateChangedEventHandler>(
+                        [lifetime, view_id, id, op](ICoreWebView2DownloadOperation*, IUnknown*) -> HRESULT {
+                          if (!lifetime || !lifetime->alive.load()) return S_OK;
+                          COREWEBVIEW2_DOWNLOAD_STATE state;
+                          op->get_State(&state);
+                          if (state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED) {
+                            LPWSTR path_raw = nullptr; op->get_ResultFilePath(&path_raw);
+                            std::string path = wideToUtf8(path_raw);
+                            if (path_raw) CoTaskMemFree(path_raw);
+                            std::string payload = "{\"kind\":\"completed\",\"id\":\"" + id +
+                                                  "\",\"localPath\":\"" + escapeJsonString(path) + "\"}";
+                            emitWebviewEvent(view_id, "download-event", payload);
+                          } else if (state == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED) {
+                            COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON reason;
+                            op->get_InterruptReason(&reason);
+                            std::string payload = "{\"kind\":\"failed\",\"id\":\"" + id +
+                                                  "\",\"reason\":\"interrupted-" + std::to_string(reason) + "\"}";
+                            emitWebviewEvent(view_id, "download-event", payload);
+                          }
+                          return S_OK;
+                        }).Get(),
+                    &stok);
+              }
               return S_OK;
             }).Get(),
         &tok);

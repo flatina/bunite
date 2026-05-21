@@ -86,7 +86,8 @@ class BuniteCefClient
     public CefResourceRequestHandler,
     public CefPermissionHandler,
     public CefDisplayHandler,
-    public CefJSDialogHandler {
+    public CefJSDialogHandler,
+    public CefDownloadHandler {
 public:
   // BuniteCefClient is constructed 1:1 with a `ViewHost*`; `last_title_` is
   // therefore per-view. OnTitleChange runs on the CEF UI thread (single).
@@ -99,6 +100,66 @@ public:
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
+  CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
+
+  bool OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item,
+                        const CefString& suggested_name,
+                        CefRefPtr<CefBeforeDownloadCallback> callback) override {
+    CEF_REQUIRE_UI_THREAD();
+    int32_t policy = view_->download_policy.load();
+    std::string id = "cef-" + std::to_string(item->GetId());
+    std::string url = item->GetURL().ToString();
+    std::string mime = item->GetMimeType().ToString();
+    int64_t total = item->GetTotalBytes();
+    std::string suggested = suggested_name.ToString();
+    // Only policy=0 (auto) allows. `ask` (1) is reserved → block until impl.
+    if (policy != 0) {
+      std::string payload = "{\"kind\":\"blocked\",\"id\":\"" + id +
+                            "\",\"url\":\"" + bunite_win::escapeJsonString(url) +
+                            "\",\"reason\":\"host-policy\"}";
+      bunite_win::emitWebviewEvent(view_->id, "download-event", payload);
+      return true;  // not calling callback->Continue → cancels.
+    }
+    // auto: build target path. If host set download_dir, use it; else CEF defaults to user Downloads.
+    std::string target = view_->download_dir;
+    if (!target.empty()) {
+      if (target.back() != '\\' && target.back() != '/') target.push_back('\\');
+      target += suggested;
+    }
+    callback->Continue(target, false);  // false = no Save-As dialog.
+    std::string payload = "{\"kind\":\"started\",\"id\":\"" + id +
+                          "\",\"url\":\"" + bunite_win::escapeJsonString(url) +
+                          "\",\"suggestedFilename\":\"" + bunite_win::escapeJsonString(suggested) +
+                          "\",\"mimeType\":\"" + bunite_win::escapeJsonString(mime) + "\"";
+    if (total > 0) payload += ",\"sizeBytes\":" + std::to_string(total);
+    payload += "}";
+    bunite_win::emitWebviewEvent(view_->id, "download-event", payload);
+    return true;
+  }
+
+  void OnDownloadUpdated(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item,
+                         CefRefPtr<CefDownloadItemCallback> /*callback*/) override {
+    CEF_REQUIRE_UI_THREAD();
+    std::string id = "cef-" + std::to_string(item->GetId());
+    if (item->IsComplete()) {
+      std::string path = item->GetFullPath().ToString();
+      std::string payload = "{\"kind\":\"completed\",\"id\":\"" + id +
+                            "\",\"localPath\":\"" + bunite_win::escapeJsonString(path) + "\"}";
+      bunite_win::emitWebviewEvent(view_->id, "download-event", payload);
+    } else if (item->IsCanceled()) {
+      std::string payload = "{\"kind\":\"failed\",\"id\":\"" + id +
+                            "\",\"reason\":\"canceled\"}";
+      bunite_win::emitWebviewEvent(view_->id, "download-event", payload);
+    } else if (item->IsInProgress()) {
+      int64_t rec = item->GetReceivedBytes();
+      int64_t tot = item->GetTotalBytes();
+      std::string payload = "{\"kind\":\"progress\",\"id\":\"" + id +
+                            "\",\"receivedBytes\":" + std::to_string(rec);
+      if (tot > 0) payload += ",\"totalBytes\":" + std::to_string(tot);
+      payload += "}";
+      bunite_win::emitWebviewEvent(view_->id, "download-event", payload);
+    }
+  }
 
   bool OnJSDialog(CefRefPtr<CefBrowser>, const CefString& /*origin_url*/,
                   JSDialogType dialog_type, const CefString& message_text,

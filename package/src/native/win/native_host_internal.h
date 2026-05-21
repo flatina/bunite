@@ -108,6 +108,10 @@ struct ViewHost {
   std::unordered_map<uint32_t, CefRefPtr<CefJSDialogCallback>> pending_dialogs;
   uint32_t next_dialog_request_id = 1;
 
+  // Download policy: 0=auto, 1=ask, 2=block. Default block.
+  std::atomic<int32_t> download_policy{2};
+  std::string download_dir;
+
   // Pending state: applied in OnAfterCreated when browser HWND becomes available.
   bool pending_visible = true;
   bool pending_bring_to_front = false;

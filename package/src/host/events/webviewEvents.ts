@@ -15,5 +15,17 @@ export default {
   dialog: (data: { requestId: number; kind: "alert" | "confirm" | "prompt" | "beforeunload"; message: string; defaultPrompt?: string }) =>
     new BuniteEvent("dialog", data),
   consoleMessage: (data: { level: "log" | "warn" | "error" | "info" | "debug"; args: string[]; ts: number }) =>
-    new BuniteEvent("console-message", data)
+    new BuniteEvent("console-message", data),
+  downloadEvent: (data: {
+    kind: "started" | "progress" | "completed" | "failed" | "blocked";
+    id: string;
+    url?: string;
+    suggestedFilename?: string;
+    mimeType?: string;
+    sizeBytes?: number;
+    receivedBytes?: number;
+    totalBytes?: number;
+    localPath?: string;
+    reason?: string;
+  }) => new BuniteEvent("download-event", data),
 };

@@ -17,9 +17,10 @@ extern "C" {
 
 /** ABI version. Bump on any breaking change to symbol set / signatures.
  *  v10: agent surface deltas — `bunite_view_accessibility_snapshot`,
- *       `bunite_view_list_frames`, `bunite_view_evaluate_in_frame`. New events
- *       `accessibility-result`, `list-frames-result`. Capability bits `AX`
- *       (1<<15), `BOUNDING_RECT` (1<<16), `FRAMES` (1<<17). */
+ *       `bunite_view_list_frames`, `bunite_view_evaluate_in_frame`,
+ *       `bunite_view_set_download_policy`. New events `accessibility-result`,
+ *       `list-frames-result`, `download-event`. Capability bits `AX` (1<<15),
+ *       `BOUNDING_RECT` (1<<16), `FRAMES` (1<<17), `DOWNLOADS` (1<<18). */
 BUNITE_EXPORT int32_t bunite_abi_version(void);
 BUNITE_EXPORT void bunite_set_log_level(int32_t level);
 BUNITE_EXPORT bool bunite_init(
@@ -225,6 +226,7 @@ enum BuniteCapBit {
 	BUNITE_CAP_AX                   = 1u << 15,
 	BUNITE_CAP_BOUNDING_RECT        = 1u << 16,
 	BUNITE_CAP_FRAMES               = 1u << 17,
+	BUNITE_CAP_DOWNLOADS            = 1u << 18,
 };
 BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id);
 
@@ -274,6 +276,18 @@ BUNITE_EXPORT void bunite_view_evaluate_in_frame(
 	uint32_t request_id,
 	const char* script,
 	const char* frame_id
+);
+
+/** Set per-view download policy. `policy`: 0=auto (allow + emit lifecycle),
+ *  1=ask (not implemented for v10, treated as block), 2=block (default).
+ *  `download_dir` (utf-8) optionally overrides backend default save dir.
+ *  Lifecycle events emit as `download-event` payloads
+ *    { kind: "started"|"progress"|"completed"|"failed"|"blocked", id, ...fields }
+ *  See `DownloadEvent` (TS) for the per-kind field set. */
+BUNITE_EXPORT void bunite_view_set_download_policy(
+	uint32_t view_id,
+	int32_t policy,
+	const char* download_dir
 );
 
 BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id);

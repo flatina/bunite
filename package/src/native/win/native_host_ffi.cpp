@@ -1190,7 +1190,19 @@ extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
          BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
          BUNITE_CAP_MOUSE | BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG |
-         BUNITE_CAP_AX | BUNITE_CAP_BOUNDING_RECT | BUNITE_CAP_FRAMES;
+         BUNITE_CAP_AX | BUNITE_CAP_BOUNDING_RECT | BUNITE_CAP_FRAMES |
+         BUNITE_CAP_DOWNLOADS;
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t view_id, int32_t policy, const char* download_dir) {
+  bunite_win::postCefUiTask([view_id, policy, dir = std::string(download_dir ? download_dir : "")]() {
+    auto* view = bunite_win::getViewHostById(view_id);
+    if (!view) return;
+    int32_t p = policy;
+    if (p < 0 || p > 2) p = 2;
+    view->download_policy.store(p);
+    view->download_dir = dir;
+  });
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
