@@ -125,14 +125,30 @@ type DownloadWaiter = {
 };
 const downloadWaiters = new Map<number, DownloadWaiter[]>();
 const downloadStartedMeta = new Map<number, Map<string, { url: string; suggestedFilename: string; mimeType?: string; sizeBytes?: number }>>();
+// Recent started events that no waiter has claimed yet — lets a `waitForDownload`
+// registered *after* the started event still bind. Per-surface, trimmed to 30s.
+const recentUnownedStarts = new Map<number, { id: string; ts: number }[]>();
 
 export function emitDownload(hostViewId: number, surfaceId: number, event: DownloadEvent) {
   if (event.kind === "started") {
     let bySurface = downloadStartedMeta.get(surfaceId);
     if (!bySurface) { bySurface = new Map(); downloadStartedMeta.set(surfaceId, bySurface); }
     bySurface.set(event.id, { url: event.url, suggestedFilename: event.suggestedFilename, mimeType: event.mimeType, sizeBytes: event.sizeBytes });
+    // Track unowned started events so a waitForDownload registering AFTER the
+    // started event can still bind. Trimmed to recent 30s on each insert.
+    let recents = recentUnownedStarts.get(surfaceId);
+    if (!recents) { recents = []; recentUnownedStarts.set(surfaceId, recents); }
+    const now = Date.now();
+    recents.push({ id: event.id, ts: now });
+    while (recents.length && now - recents[0].ts > 30_000) recents.shift();
     const queue = downloadWaiters.get(surfaceId);
-    if (queue) for (const w of queue) if (w.pendingId === null) { w.pendingId = event.id; break; }
+    if (queue) for (const w of queue) if (w.pendingId === null) {
+      w.pendingId = event.id;
+      // Take the unowned entry out — it's now bound.
+      const idx = recents.findIndex((r) => r.id === event.id);
+      if (idx >= 0) recents.splice(idx, 1);
+      break;
+    }
   }
   const subs = downloadSubs.get(hostViewId);
   if (subs) for (const emit of subs) emit({ surfaceId, event });
@@ -212,6 +228,7 @@ export function disposeSurfaceState(surfaceId: number) {
     downloadWaiters.delete(surfaceId);
   }
   downloadStartedMeta.delete(surfaceId);
+  recentUnownedStarts.delete(surfaceId);
 }
 
 // Wire dispose to any untrack path (remove + removeSurfacesForHostView).
@@ -602,8 +619,17 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
     waitForDownload: async ({ surfaceId, timeoutMs = 30000 }) => {
       const record = ownedSurface(surfaceId);
       if (!record) return { ok: false as const, code: "not_supported" as const, message: "surface not found" };
+      if (!record.view.capabilities().downloads) {
+        return { ok: false as const, code: "not_supported" as const, message: "downloads not supported on this backend" };
+      }
       return new Promise<WaitForDownloadResult>((resolve) => {
-        const waiter: DownloadWaiter = { resolve: (r) => { clearTimeout(timer); resolve(r); }, pendingId: null };
+        // If a `started` already arrived without a waiter, consume it.
+        const recents = recentUnownedStarts.get(surfaceId);
+        const claimed = recents?.shift();
+        const waiter: DownloadWaiter = {
+          resolve: (r) => { clearTimeout(timer); resolve(r); },
+          pendingId: claimed?.id ?? null,
+        };
         let queue = downloadWaiters.get(surfaceId);
         if (!queue) { queue = []; downloadWaiters.set(surfaceId, queue); }
         queue.push(waiter);
@@ -620,6 +646,7 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
     setDownloadPolicy: ({ surfaceId, policy, downloadDir }) => {
       const record = ownedSurface(surfaceId);
       if (!record) return;
+      if (!record.view.capabilities().downloads) return;  // mac/linux silent no-op signal — caller should gate on cap.
       record.view.setDownloadPolicy(policy, downloadDir);
     },
 

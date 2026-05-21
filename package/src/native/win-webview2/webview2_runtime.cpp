@@ -1026,12 +1026,14 @@ static void attachControllerCallbacks(ViewHost* view) {
                     [lifetime, view_id, new_view_id, url, args, deferral, cleanupPopup](HRESULT hr, ICoreWebView2Controller* controller) -> HRESULT {
                       if (!lifetime || !lifetime->alive.load()) {
                         if (deferral) deferral->Complete();
+                        if (controller) controller->Close();  // close the orphan controller too.
                         cleanupPopup();
                         return S_OK;
                       }
                       auto* popup = getView(new_view_id);
                       if (!popup || FAILED(hr) || !controller) {
                         if (deferral) deferral->Complete();
+                        if (controller) controller->Close();  // popup was dismissed during creation — close the orphan.
                         cleanupPopup();
                         return S_OK;
                       }
@@ -1090,13 +1092,14 @@ static void attachControllerCallbacks(ViewHost* view) {
               if (uri_raw) CoTaskMemFree(uri_raw);
               int32_t policy = view->download_policy.load();
               const std::string id = "wv2-" + std::to_string(g_download_seq.fetch_add(1));
-              // Only policy=0 (auto) allows. `ask` (1) is reserved and falls
-              // back to block until implemented.
+              // Only policy=0 (auto) allows. `ask` (1) falls back to block
+              // until implemented — distinguish via blocked.reason.
               if (policy != 0) {
                 args->put_Cancel(TRUE);
+                const char* reason = (policy == 1) ? "ask-not-implemented" : "host-policy";
                 std::string payload = "{\"kind\":\"blocked\",\"id\":\"" + id +
                                       "\",\"url\":\"" + escapeJsonString(url) +
-                                      "\",\"reason\":\"host-policy\"}";
+                                      "\",\"reason\":\"" + reason + "\"}";
                 emitWebviewEvent(view_id, "download-event", payload);
                 return S_OK;
               }
@@ -1129,7 +1132,11 @@ static void attachControllerCallbacks(ViewHost* view) {
               startPayload += "}";
               emitWebviewEvent(view_id, "download-event", startPayload);
               if (op) {
-                EventRegistrationToken btok{};
+                // Tokens kept in a shared struct so the StateChanged terminal
+                // branch can self-unregister both handlers — breaks the
+                // op→handler→op ComPtr ref cycle that otherwise leaks per download.
+                struct Tokens { EventRegistrationToken b{}; EventRegistrationToken s{}; };
+                auto toks = std::make_shared<Tokens>();
                 op->add_BytesReceivedChanged(
                     Callback<ICoreWebView2BytesReceivedChangedEventHandler>(
                         [lifetime, view_id, id, op](ICoreWebView2DownloadOperation*, IUnknown*) -> HRESULT {
@@ -1143,15 +1150,16 @@ static void attachControllerCallbacks(ViewHost* view) {
                           emitWebviewEvent(view_id, "download-event", payload);
                           return S_OK;
                         }).Get(),
-                    &btok);
-                EventRegistrationToken stok{};
+                    &toks->b);
                 op->add_StateChanged(
                     Callback<ICoreWebView2StateChangedEventHandler>(
-                        [lifetime, view_id, id, op](ICoreWebView2DownloadOperation*, IUnknown*) -> HRESULT {
+                        [lifetime, view_id, id, op, toks](ICoreWebView2DownloadOperation*, IUnknown*) -> HRESULT {
                           if (!lifetime || !lifetime->alive.load()) return S_OK;
                           COREWEBVIEW2_DOWNLOAD_STATE state;
                           op->get_State(&state);
+                          bool terminal = false;
                           if (state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED) {
+                            terminal = true;
                             LPWSTR path_raw = nullptr; op->get_ResultFilePath(&path_raw);
                             std::string path = wideToUtf8(path_raw);
                             if (path_raw) CoTaskMemFree(path_raw);
@@ -1159,15 +1167,20 @@ static void attachControllerCallbacks(ViewHost* view) {
                                                   "\",\"localPath\":\"" + escapeJsonString(path) + "\"}";
                             emitWebviewEvent(view_id, "download-event", payload);
                           } else if (state == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED) {
+                            terminal = true;
                             COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON reason;
                             op->get_InterruptReason(&reason);
                             std::string payload = "{\"kind\":\"failed\",\"id\":\"" + id +
                                                   "\",\"reason\":\"interrupted-" + std::to_string(reason) + "\"}";
                             emitWebviewEvent(view_id, "download-event", payload);
                           }
+                          if (terminal) {
+                            op->remove_BytesReceivedChanged(toks->b);
+                            op->remove_StateChanged(toks->s);
+                          }
                           return S_OK;
                         }).Get(),
-                    &stok);
+                    &toks->s);
               }
               return S_OK;
             }).Get(),

@@ -139,7 +139,6 @@ export interface AxNode {
   invalid?: boolean;
   required?: boolean;
   selected?: boolean;
-  rect?: { x: number; y: number; width: number; height: number };
   children?: AxNode[];
 }
 
@@ -147,8 +146,6 @@ export interface AccessibilitySnapshotArgs {
   surfaceId: number;
   /** Drop nodes with `ignored:true` (and reparent their children). Default true. */
   interestingOnly?: boolean;
-  /** Reserved. Currently ignored — only main frame is snapshotted. */
-  frameId?: string;
 }
 export type AccessibilitySnapshotResult =
   | { ok: true; tree: AxNode }
@@ -157,9 +154,14 @@ export type AccessibilitySnapshotResult =
 export interface BoundingRectArgs {
   surfaceId: number;
   selector: string;
+  /** When set, `rect` is FRAME-LOCAL (the iframe's own viewport). Use frame-local
+   *  coords for further `evaluate({frameId})` ops; do not pass to `click({x,y})`
+   *  which expects page-viewport coords. */
   frameId?: string;
 }
 export type BoundingRectResult =
+  /** `visible` = rect has size AND intersects the frame's viewport. opacity /
+   *  visibility:hidden / occlusion are NOT checked — agent must `evaluate` for those. */
   | { ok: true; rect: { x: number; y: number; width: number; height: number }; visible: boolean }
   | { ok: false; code: "not_found" | "runtime_error" | "cross_origin" | "not_supported"; message: string };
 
@@ -182,7 +184,7 @@ export type DownloadEvent =
   | { kind: "progress"; id: string; receivedBytes: number; totalBytes?: number }
   | { kind: "completed"; id: string; localPath: string }
   | { kind: "failed"; id: string; reason: string }
-  | { kind: "blocked"; id: string; url: string; reason: "host-policy" | "backend-block" | "mime-blocked" | "not_supported" };
+  | { kind: "blocked"; id: string; url: string; reason: "host-policy" | "backend-block" | "mime-blocked" | "not_supported" | "ask-not-implemented" };
 
 export type WaitForDownloadResult =
   | { ok: true; id: string; suggestedFilename: string; url: string; mimeType?: string; sizeBytes?: number; localPath: string }

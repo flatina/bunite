@@ -112,11 +112,13 @@ public:
     std::string mime = item->GetMimeType().ToString();
     int64_t total = item->GetTotalBytes();
     std::string suggested = suggested_name.ToString();
-    // Only policy=0 (auto) allows. `ask` (1) is reserved → block until impl.
+    // Only policy=0 (auto) allows. `ask` (1) falls back to block — distinguished
+    // via blocked.reason so callers can detect the unsupported policy path.
     if (policy != 0) {
+      const char* reason = (policy == 1) ? "ask-not-implemented" : "host-policy";
       std::string payload = "{\"kind\":\"blocked\",\"id\":\"" + id +
                             "\",\"url\":\"" + bunite_win::escapeJsonString(url) +
-                            "\",\"reason\":\"host-policy\"}";
+                            "\",\"reason\":\"" + reason + "\"}";
       bunite_win::emitWebviewEvent(view_->id, "download-event", payload);
       return true;  // not calling callback->Continue → cancels.
     }

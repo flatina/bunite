@@ -613,9 +613,9 @@ BUNITE_EXPORT void bunite_view_evaluate_in_frame(uint32_t view_id, uint32_t requ
     emitWebviewEvent(view_id, "evaluate-result", payload);
     return;
   }
-  std::string isoParams = "{\"frameId\":\"" + frameId + "\",\"worldName\":\"bunite-eval\"}";
+  std::string isoParams = "{\"frameId\":\"" + escapeJsonString(frameId) + "\",\"worldName\":\"bunite-eval\"}";
   cdpCallWithResult(v, L"Page.createIsolatedWorld", isoParams,
-      [view_id, request_id, script, v](bool ok, std::string isoResult) {
+      [view_id, request_id, script](bool ok, std::string isoResult) {
         if (!ok) {
           std::string payload = "{\"requestId\":" + std::to_string(request_id) +
                                 ",\"ok\":false,\"code\":\"runtime_error\","
@@ -631,10 +631,19 @@ BUNITE_EXPORT void bunite_view_evaluate_in_frame(uint32_t view_id, uint32_t requ
           emitWebviewEvent(view_id, "evaluate-result", payload);
           return;
         }
+        // Re-lookup — the async gap could have torn down the view.
+        ViewHost* v2 = getView(view_id);
+        if (!v2 || !v2->webview) {
+          std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                ",\"ok\":false,\"code\":\"not_supported\","
+                                "\"message\":\"view destroyed\"}";
+          emitWebviewEvent(view_id, "evaluate-result", payload);
+          return;
+        }
         std::string evalParams = "{\"expression\":\"" + escapeJsonString(script) +
                                  "\",\"contextId\":" + std::to_string(contextId) +
                                  ",\"returnByValue\":true,\"awaitPromise\":true}";
-        cdpCallWithResult(v, L"Runtime.evaluate", evalParams,
+        cdpCallWithResult(v2, L"Runtime.evaluate", evalParams,
             [view_id, request_id](bool ok2, std::string evalResult) {
               if (!ok2) {
                 std::string payload = "{\"requestId\":" + std::to_string(request_id) +
@@ -644,9 +653,11 @@ BUNITE_EXPORT void bunite_view_evaluate_in_frame(uint32_t view_id, uint32_t requ
                 return;
               }
               // Normalize CDP shape to the flat `{requestId, ok, value/code/message}`
-              // that the host's evaluate-result handler expects. Substring-based —
-              // edge cases (value containing the literal "exceptionDetails":) misclassify.
-              auto excPos = evalResult.find("\"exceptionDetails\"");
+              // that the host's evaluate-result handler expects. exceptionDetails
+              // at the top level is preceded by `},` — distinguishes from a value
+              // that happens to contain the literal token inside a string.
+              auto excPos = evalResult.find("},\"exceptionDetails\"");
+              if (excPos == std::string::npos) excPos = evalResult.find("}, \"exceptionDetails\"");
               if (excPos != std::string::npos) {
                 std::string payload = "{\"requestId\":" + std::to_string(request_id) +
                                       ",\"ok\":false,\"code\":\"runtime_error\","

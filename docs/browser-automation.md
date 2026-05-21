@@ -45,7 +45,7 @@
 | `getConsoleBuffer(opts?)` | `Promise<ConsoleEntry[]>` | Snapshot of host-side console ring buffer (200 entries). `{clear: true}` empties after read. |
 | `getNavigationState()` | `Promise<NavigationState>` | `{lastLoadEpoch, isLoading, currentUrl}`. Use `lastLoadEpoch` to race-close waits on `surface-event` arms. |
 | `accessibilitySnapshot(opts?)` | `Promise<AccessibilitySnapshotResult>` | CDP `Accessibility.getFullAXTree` (Chromium-backed only). `{interestingOnly?}` defaults true (drops ignored nodes). |
-| `getBoundingRect(selector, opts?)` | `Promise<BoundingRectResult>` | `document.querySelector(...).getBoundingClientRect()` + viewport intersect. `opts.frameId` queries inside that frame. |
+| `getBoundingRect(selector, opts?)` | `Promise<BoundingRectResult>` | `getBoundingClientRect()` + viewport intersect. `visible` = rect size > 0 AND intersects the (frame's) viewport — opacity / visibility:hidden / occlusion are NOT checked. With `opts.frameId`, `rect` is **frame-local**; do not feed into page-relative click coords without iframe-offset translation. |
 | `listFrames()` | `Promise<ListFramesResult>` | Enumerate frames (CDP `Page.getFrameTree`). Chromium-backed only; mac/linux return `not_supported`. |
 | `evaluate(script, opts?)` | `Promise<EvaluateResult>` | `opts.frameId` evaluates inside the target frame's isolated world — page main-world JS variables are not visible; DOM access works. |
 | `setDownloadPolicy(policy, downloadDir?)` | `Promise<void>` | `policy`: `"auto"` allows + emits lifecycle, `"block"` (default) cancels + emits `blocked`, `"ask"` is reserved (treated as block until implemented). |

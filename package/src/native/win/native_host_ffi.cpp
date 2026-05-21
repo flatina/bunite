@@ -1226,6 +1226,10 @@ void applyPopupAccept(ViewHost* view, uint32_t host_window_id, double x, double 
       static_cast<LONG>(x + w), static_cast<LONG>(y + h)
     };
   }
+  // Re-emit view-ready so the TS-side BrowserView.adopt resolves its
+  // `_readyPromise` (the original view-ready from OnAfterCreated fired before
+  // the TS resolver was registered).
+  emitWebviewEvent(view->id, "view-ready", "");
 }
 
 }  // namespace bunite_win
@@ -1377,7 +1381,7 @@ extern "C" BUNITE_EXPORT void bunite_view_evaluate_in_frame(uint32_t view_id, ui
       return;
     }
     // Step 1: create an isolated world in the target frame.
-    std::string isoParams = "{\"frameId\":\"" + frameId + "\",\"worldName\":\"bunite-eval\"}";
+    std::string isoParams = "{\"frameId\":\"" + bunite_win::escapeJsonString(frameId) + "\",\"worldName\":\"bunite-eval\"}";
     cefCdpCall(view, "Page.createIsolatedWorld", isoParams,
         [view_id, request_id, script](bool ok, std::string isoResult) {
           if (!ok) {

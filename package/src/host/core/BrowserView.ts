@@ -101,6 +101,8 @@ function convertAxTree(cdpResult: { nodes?: any[] } | undefined, interestingOnly
   if (flat.length === 0) return { nodeId: "", role: "", name: "" };
   const byId = new Map<string, any>();
   for (const n of flat) if (n?.nodeId != null) byId.set(String(n.nodeId), n);
+  // Root = node without a parentId (rather than relying on flat[0] ordering).
+  const root = flat.find((n) => n?.parentId == null) ?? flat[0];
   // Walk childIds skipping ignored nodes (when filtering) and produce a flat list
   // of "interesting" descendants for the given node.
   const seen = new Set<string>();
@@ -148,8 +150,7 @@ function convertAxTree(cdpResult: { nodes?: any[] } | undefined, interestingOnly
     if (kids.length > 0) out.children = kids;
     return out;
   };
-  // Root node skips ignored-filter (always include even if ignored).
-  return build(flat[0]);
+  return build(root);
 }
 
 type FramesPending = { viewId: number; resolve: (result: ListFramesResult) => void };
@@ -164,7 +165,7 @@ function rejectFramesForView(viewId: number) {
   for (const [reqId, entry] of framesResolvers) {
     if (entry.viewId === viewId) {
       framesResolvers.delete(reqId);
-      entry.resolve({ ok: false, code: "not_supported", message: "view destroyed" });
+      entry.resolve({ ok: false, code: "runtime_error", message: "view destroyed" });
     }
   }
 }
@@ -550,7 +551,16 @@ export class BrowserView {
       return Promise.resolve({ ok: false, code: "not_supported", message: "native runtime unavailable" });
     }
     return new Promise<EvaluateResult>((resolve) => {
-      const requestId = registerEvaluateRequest(this.id, resolve);
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const wrappedResolve = (r: EvaluateResult) => { if (timer) clearTimeout(timer); resolve(r); };
+      const requestId = registerEvaluateRequest(this.id, wrappedResolve);
+      // 30s timeout — two-hop CDP path (createIsolatedWorld → Runtime.evaluate)
+      // can silently hang if the frame is destroyed mid-flight.
+      timer = setTimeout(() => {
+        if (evaluateResolvers.delete(requestId)) {
+          resolve({ ok: false, code: "timeout", message: "evaluate timed out after 30s" });
+        }
+      }, 30_000);
       const lib = getNativeLibrary();
       if (frameId) {
         lib?.symbols.bunite_view_evaluate_in_frame(this.id, requestId, toCString(script), toCString(frameId));
@@ -801,7 +811,8 @@ export class BrowserView {
     rejectFramesForView(this.id);
     this.nativeAttached = false;
     for (const eventName of [
-      "will-navigate", "did-navigate", "dom-ready", "new-window-open", "permission-requested", "title-changed"
+      "will-navigate", "did-navigate", "dom-ready", "new-window-open", "permission-requested", "title-changed",
+      "load-start", "load-finish", "load-fail", "dialog", "console-message", "download-event", "popup-requested",
     ]) {
       buniteEventEmitter.removeAllListeners(`${eventName}-${this.id}`);
     }
