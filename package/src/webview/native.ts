@@ -5,7 +5,10 @@ import type {
   SurfaceCap, EvaluateResult, SurfaceCapabilities, ScreenshotResult,
   SurfaceEvent, ConsoleEntry, WaitResult, NavigationState,
   AccessibilitySnapshotResult, BoundingRectResult, ListFramesResult,
+  DownloadEvent, DownloadPolicy, WaitForDownloadResult,
 } from "../rpc/framework";
+
+declare const __buniteWebviewId: number;
 
 declare const host: {
   runtime(): Promise<ClientOf<typeof import("../rpc/framework").RuntimeCap>>;
@@ -139,17 +142,24 @@ class BuniteWebviewElement extends HTMLElement {
     this._unsubNavigate = () => ctrl.abort();
     void (async () => {
       try {
-        // Wait until *this* connection's init resolves, then capture surfaceId
-        // atomically before subscribing. Re-entrant connects abort prior loops
-        // via `ctrl`, so a stale resolve from a previous cycle can't leak in.
         const s = await getSurfaceCap();
         if (ctrl.signal.aborted) return;
         await this._waitForSurfaceId(ctrl.signal);
         const sid = this._surfaceId;
         if (ctrl.signal.aborted || sid == null) return;
-        const stream = s.surfaceEvents({ surfaceId: sid });
-        this._activeStreams.push(stream as { cancel?: () => void });
-        for await (const event of stream) {
+        const surfStream = s.surfaceEvents({ surfaceId: sid });
+        this._activeStreams.push(surfStream as { cancel?: () => void });
+        const dlStream = s.downloadEvents({ surfaceId: sid });
+        this._activeStreams.push(dlStream as { cancel?: () => void });
+        (async () => {
+          try {
+            for await (const event of dlStream) {
+              if (ctrl.signal.aborted) break;
+              this.dispatchEvent(new CustomEvent<DownloadEvent>("download-event", { detail: event }));
+            }
+          } catch { /* stream torn down */ }
+        })();
+        for await (const event of surfStream) {
           if (ctrl.signal.aborted) break;
           this.dispatchEvent(new CustomEvent<SurfaceEvent>("surface-event", { detail: event }));
         }
@@ -387,6 +397,22 @@ class BuniteWebviewElement extends HTMLElement {
     return callSurfaceTyped((s) => s.listFrames({ surfaceId: sid }));
   }
 
+  async setDownloadPolicy(policy: DownloadPolicy, downloadDir?: string): Promise<void> {
+    const sid = this._surfaceId;
+    if (sid == null) return;
+    await callSurface((s) => s.setDownloadPolicy({ surfaceId: sid, policy, downloadDir }));
+  }
+
+  async waitForDownload(opts?: { timeoutMs?: number }): Promise<WaitForDownloadResult> {
+    const sid = this._surfaceId;
+    if (sid == null) return { ok: false, code: "not_supported", message: "surface not ready" };
+    return callSurfaceTyped((s) => s.waitForDownload({ surfaceId: sid, timeoutMs: opts?.timeoutMs }));
+  }
+
+  async dismissPopup(newSurfaceId: number): Promise<void> {
+    await callSurface((s) => s.dismissPopup({ newSurfaceId }));
+  }
+
   async screenshot(args?: { format?: "png" | "jpeg"; quality?: number }): Promise<ScreenshotResult> {
     const sid = this._surfaceId;
     if (sid == null) return { ok: false, code: "not_supported", message: "surface not ready" };
@@ -400,11 +426,71 @@ class BuniteWebviewElement extends HTMLElement {
     void callSurface((s) => s.setHidden({ surfaceId: sid, hidden }));
   }
 
+  private _setupSyncCtrl() {
+    this._syncCtrl = new OverlaySyncController(this, (rect) => {
+      const sid = this._surfaceId;
+      if (sid == null) return;
+      const isZero = rect.width === 0 && rect.height === 0;
+      if (isZero) {
+        if (!this._syncHidden) {
+          this._syncHidden = true;
+          this._applySurfaceHidden();
+        }
+        return;
+      }
+      if (this._syncHidden) {
+        this._syncHidden = false;
+        this._applySurfaceHidden();
+      }
+      void callSurface((s) => s.resize({
+        surfaceId: sid, x: rect.x, y: rect.y, w: rect.width, h: rect.height,
+      }));
+    });
+    this._syncCtrl.start();
+  }
+
   private initSurface() {
     if (this._surfaceId != null || this._initPromise != null) return;
 
     const dpr = window.devicePixelRatio || 1;
     const r = this.getBoundingClientRect();
+    const adoptAttr = this.getAttribute("adopt-popup-id");
+    const adoptId = adoptAttr ? Number(adoptAttr) : NaN;
+    if (Number.isFinite(adoptId)) {
+      // Popup adoption — bind a backend-minted surface (received via the parent
+      // page's `surface-event` `popup` arm) to this element.
+      const initPromise = getSurfaceCap().then(async (s) => {
+        const res = await s.acceptPopup({
+          newSurfaceId: adoptId,
+          hostViewId: __buniteWebviewId,
+          bounds: {
+            x: Math.round(r.x * dpr),
+            y: Math.round(r.y * dpr),
+            width: Math.round(r.width * dpr),
+            height: Math.round(r.height * dpr),
+          },
+        });
+        if (!res.ok) throw new Error(`acceptPopup failed: ${res.code}: ${res.message}`);
+        return { surfaceId: adoptId };
+      }) as Promise<SurfaceInitResponse>;
+      this._initPromise = initPromise;
+      initPromise.then((response) => {
+        if (this._initPromise !== initPromise) return;
+        if (this._aborted) {
+          void callSurface((s) => s.remove({ surfaceId: response.surfaceId }));
+          return;
+        }
+        this._surfaceId = response.surfaceId;
+        this._setupSyncCtrl();
+      }).catch((err) => {
+        if ((globalThis as { __BUNITE_DEBUG__?: boolean }).__BUNITE_DEBUG__) {
+          console.warn("[bunite] adopt-popup-id init failed", err);
+        }
+        this._initPromise = null;
+      });
+      return;
+    }
+
     const src = this._pendingSrc || this.getAttribute("src") || "";
     this._pendingSrc = null;
 
@@ -441,28 +527,7 @@ class BuniteWebviewElement extends HTMLElement {
           }
         }
 
-        this._syncCtrl = new OverlaySyncController(this, (rect) => {
-          const sid = this._surfaceId;
-          if (sid == null) return;
-
-          const isZero = rect.width === 0 && rect.height === 0;
-          if (isZero) {
-            if (!this._syncHidden) {
-              this._syncHidden = true;
-              this._applySurfaceHidden();
-            }
-            return;
-          }
-          if (this._syncHidden) {
-            this._syncHidden = false;
-            this._applySurfaceHidden();
-          }
-
-          void callSurface((s) => s.resize({
-            surfaceId: sid, x: rect.x, y: rect.y, w: rect.width, h: rect.height,
-          }));
-        });
-        this._syncCtrl.start();
+        this._setupSyncCtrl();
       })
       .catch(() => {})
       .finally(() => {

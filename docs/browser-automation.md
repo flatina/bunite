@@ -49,6 +49,8 @@
 | `listFrames()` | `Promise<ListFramesResult>` | Enumerate frames (CDP `Page.getFrameTree`). Chromium-backed only; mac/linux return `not_supported`. |
 | `evaluate(script, opts?)` | `Promise<EvaluateResult>` | `opts.frameId` evaluates inside the target frame's isolated world — page main-world JS variables are not visible; DOM access works. |
 | `setDownloadPolicy(policy, downloadDir?)` | `Promise<void>` | `policy`: `"auto"` allows + emits lifecycle, `"block"` (default) cancels + emits `blocked`, `"ask"` is reserved (treated as block until implemented). |
+| `waitForDownload(opts?)` | `Promise<WaitForDownloadResult>` | Resolves on next download started after the call (`{timeoutMs?}` default 30000). |
+| `dismissPopup(newSurfaceId)` | `Promise<void>` | Close a popup-minted surface received via `surface-event` `popup` arm. Adoption: render `<bunite-webview adopt-popup-id="N">` instead. |
 | `screenshot(args?)` | `Promise<ScreenshotResult>` | `{format?: "png" \| "jpeg", quality?}`. |
 
 `Modifier = "alt" | "ctrl" | "meta" | "shift"`.
@@ -89,7 +91,9 @@ type ConsoleEntry = {
 
 **Dialog flow**: backend pauses page execution → emits `DialogEvent` → consumer calls `respondToDialog(requestId, accept, text?)` → page resumes. If no response within `setDialogTimeout` (default 5s), an `auto-dismissed` arm fires and the page proceeds with the default (cancel / no input). `setDialogTimeout(null)` disables the safety net.
 
-**Popup flow**: backend intercepts `window.open` / `target="_blank"` / `cmd-click` → eager-mints the new surface (preserves `window.opener`) → emits `popup` arm with `newSurfaceId`. Host has 5s to call `runtime.surface().acceptPopup({newSurfaceId, hostViewId, bounds})` (attaches to a target host BrowserView) or `dismissPopup({newSurfaceId})` (closes); auto-dismiss fires on timeout. mac/linux currently fall through to engine-default popup handling (no `popup` arm emitted) — capability bit reflects this.
+**Popup flow**: backend intercepts `window.open` / `target="_blank"` / `cmd-click` → eager-mints the new surface (preserves `window.opener`) → emits `popup` arm with `newSurfaceId`. Host has 5s to adopt — either render `<bunite-webview adopt-popup-id="123">` (element drives `acceptPopup` with its own bounds + this page as host) or call `runtime.surface().acceptPopup({newSurfaceId, hostViewId, bounds})` directly. `dismissPopup({newSurfaceId})` closes; auto-dismiss fires on timeout. mac/linux currently fall through to engine-default popup handling (no `popup` arm emitted) — capability bit reflects this.
+
+**Download flow**: per-surface `setDownloadPolicy("auto", "<dir>")` arms the lifecycle pipe. Subsequent downloads dispatch `download-event` CustomEvents (`{kind: "started"|"progress"|"completed"|"failed"|"blocked", id, ...}`). `waitForDownload({timeoutMs?})` resolves on the next `started` → terminal pair. Default policy is `"block"` (engine cancels + emits `blocked` with `reason: "host-policy"`).
 
 Invariants:
 
