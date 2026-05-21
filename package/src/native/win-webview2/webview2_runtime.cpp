@@ -764,6 +764,19 @@ void destroyView(uint32_t id) {
     vs.erase(std::remove(vs.begin(), vs.end(), v), vs.end());
   }
 
+  // Remove DevTools event-receiver tokens before tearing down the webview to
+  // avoid AVs on event delivery after controller release.
+  if (v->oopif_event_tokens_registered && v->webview) {
+    ComPtr<ICoreWebView2DevToolsProtocolEventReceiver> attached_r, detached_r;
+    if (SUCCEEDED(v->webview->GetDevToolsProtocolEventReceiver(L"Target.attachedToTarget", &attached_r))) {
+      attached_r->remove_DevToolsProtocolEventReceived(v->target_attached_token);
+    }
+    if (SUCCEEDED(v->webview->GetDevToolsProtocolEventReceiver(L"Target.detachedFromTarget", &detached_r))) {
+      detached_r->remove_DevToolsProtocolEventReceived(v->target_detached_token);
+    }
+    v->oopif_event_tokens_registered = false;
+  }
+
   // Defer Close() → container destroy → delete across three pump ticks. Edge
   // gets at least one tick after Close() to settle before its parent HWND
   // vanishes; see shutdownRuntime's staged drains for the same reason.

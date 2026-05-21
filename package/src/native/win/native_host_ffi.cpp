@@ -45,6 +45,48 @@ public:
     if (result && result_size) r.assign(static_cast<const char*>(result), result_size);
     cb(success, std::move(r));
   }
+  void OnDevToolsEvent(CefRefPtr<CefBrowser> browser,
+                       const CefString& method,
+                       const void* params,
+                       size_t params_size) override {
+    std::string m = method.ToString();
+    if (m != "Target.attachedToTarget" && m != "Target.detachedFromTarget") return;
+    std::string p;
+    if (params && params_size) p.assign(static_cast<const char*>(params), params_size);
+    CefRefPtr<CefValue> val = CefParseJSON(p, JSON_PARSER_RFC);
+    if (!val || val->GetType() != VTYPE_DICTIONARY) return;
+    auto d = val->GetDictionary();
+    uint32_t view_id = 0;
+    {
+      std::lock_guard<std::mutex> lk(g_runtime.object_mutex);
+      auto it = g_runtime.browser_to_view_id.find(browser->GetIdentifier());
+      if (it == g_runtime.browser_to_view_id.end()) return;
+      view_id = it->second;
+    }
+    auto* view = bunite_win::getViewHostById(view_id);
+    if (!view) return;
+    if (m == "Target.attachedToTarget") {
+      std::string session_id = d->HasKey("sessionId") ? d->GetString("sessionId").ToString() : "";
+      if (session_id.empty()) return;
+      auto info = d->HasKey("targetInfo") ? d->GetDictionary("targetInfo") : nullptr;
+      if (!info) return;
+      std::string type = info->HasKey("type") ? info->GetString("type").ToString() : "";
+      std::string target_id = info->HasKey("targetId") ? info->GetString("targetId").ToString() : "";
+      // For iframe targets in modern Chromium, targetId is the devtools frame
+      // token — identical to Page.FrameId. Spike-verified per OOPIF plan.
+      if (type != "iframe" || target_id.empty()) return;
+      std::lock_guard<std::mutex> lk(view->oopif_sessions_mutex);
+      view->oopif_sessions[target_id] = session_id;
+    } else {
+      std::string session_id = d->HasKey("sessionId") ? d->GetString("sessionId").ToString() : "";
+      if (session_id.empty()) return;
+      std::lock_guard<std::mutex> lk(view->oopif_sessions_mutex);
+      for (auto it = view->oopif_sessions.begin(); it != view->oopif_sessions.end(); ) {
+        if (it->second == session_id) it = view->oopif_sessions.erase(it);
+        else ++it;
+      }
+    }
+  }
   void OnDevToolsAgentDetached(CefRefPtr<CefBrowser>) override {
     // Pending method results are dropped by CEF on detach (browser crash,
     // process restart). Fire all callbacks with a failure result to prevent
@@ -62,6 +104,29 @@ public:
 CefRefPtr<CefDevToolsMessageObserver> getDevToolsObserver() {
   static CefRefPtr<CefDevToolsMessageObserver> obs = new BuniteDevToolsObserver();
   return obs;
+}
+
+// Raw-id space for SendDevToolsMessage (sessionId-routed calls). High range
+// avoids collision with CEF's internal counter used by ExecuteDevToolsMethod.
+std::atomic<int> g_raw_cdp_id_counter{0x40000000};
+int nextRawCdpId() { return ++g_raw_cdp_id_counter; }
+
+void cefSendRaw(ViewHost* v, const std::string& message, int id_for_cb,
+                std::function<void(bool, std::string)> cb) {
+  if (!v || !v->browser) { if (cb) cb(false, "{\"error\":\"view not ready\"}"); return; }
+  if (cb) {
+    std::lock_guard<std::mutex> lk(g_cdp_cb_mutex);
+    g_cdp_callbacks[id_for_cb] = std::move(cb);
+  }
+  if (!v->browser->GetHost()->SendDevToolsMessage(message.data(), message.size())) {
+    std::function<void(bool, std::string)> orphan;
+    {
+      std::lock_guard<std::mutex> lk(g_cdp_cb_mutex);
+      auto it = g_cdp_callbacks.find(id_for_cb);
+      if (it != g_cdp_callbacks.end()) { orphan = std::move(it->second); g_cdp_callbacks.erase(it); }
+    }
+    if (orphan) orphan(false, "{\"error\":\"SendDevToolsMessage failed\"}");
+  }
 }
 
 void cefCdpCall(ViewHost* v, const std::string& method, const std::string& params_json,
@@ -1515,21 +1580,12 @@ std::string escapeForJsonString(const std::string& s) {
   return out;
 }
 
-std::string buildResolveScript(const std::string& selector, bool walk_frames) {
-  // Frame-walk runs BEFORE selector resolve so a cross-origin ancestor doesn't
-  // leak scrollIntoView. rect is viewport-normalized to match click coords.
+std::string buildResolveScript(const std::string& selector) {
+  // Frame offset is computed natively via DOM.getBoxModel — script returns
+  // frame-local rect (or viewport-local for main frame).
   std::string sel_lit = "\"" + escapeForJsString(selector) + "\"";
-  std::string s =
+  return
     "(function(){"
-      "var ox=0,oy=0;";
-  if (walk_frames) {
-    s +=
-      "try{var w=window;while(w!==w.parent){var fe=w.frameElement;"
-      "if(!fe)return{ok:false,code:\"cross_origin\"};"
-      "var fr=fe.getBoundingClientRect();ox+=fr.x;oy+=fr.y;w=w.parent;}}"
-      "catch(e){return{ok:false,code:\"cross_origin\"};}";
-  }
-  s +=
       "var el=document.querySelector(" + sel_lit + ");"
       "if(!el)return{ok:false,code:\"not_found\"};"
       "el.scrollIntoView({block:\"nearest\",inline:\"nearest\",behavior:\"instant\"});"
@@ -1537,10 +1593,9 @@ std::string buildResolveScript(const std::string& selector, bool walk_frames) {
       "var vis=r.width>0&&r.height>0&&r.bottom>0&&r.right>0"
       "&&r.top<innerHeight&&r.left<innerWidth;"
       "if(!vis)return{ok:false,code:\"not_visible\"};"
-      "return{ok:true,x:ox+r.x,y:oy+r.y,w:r.width,h:r.height,"
-      "cx:ox+r.x+r.width/2,cy:oy+r.y+r.height/2};"
+      "return{ok:true,x:r.x,y:r.y,w:r.width,h:r.height,"
+      "cx:r.x+r.width/2,cy:r.y+r.height/2};"
     "})()";
-  return s;
 }
 
 CefRefPtr<CefDictionaryValue> parseEvaluateValue(
@@ -1577,6 +1632,146 @@ void dispatchCdpClick(ViewHost* view, double cx, double cy,
 
 }  // namespace
 
+namespace {
+
+// Dispatch native click at page coords + emit success envelope.
+void finishResolveAndClick(uint32_t view_id, uint32_t request_id, double x, double y,
+                            double w, double h, double cx, double cy,
+                            int32_t button, int32_t click_count, uint32_t modifiers) {
+  auto* v = bunite_win::getViewHostById(view_id);
+  if (!v || !v->browser) { emitResolveAndClickError(view_id, request_id, "runtime_error", "view destroyed"); return; }
+  dispatchCdpClick(v, cx, cy, button, click_count, modifiers);
+  // Chromium browser-process CDP → DOM trust=false (matches existing CEF click cap).
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":true,\"rect\":{\"x\":" + std::to_string(x) +
+                        ",\"y\":" + std::to_string(y) +
+                        ",\"width\":" + std::to_string(w) +
+                        ",\"height\":" + std::to_string(h) + "},"
+                        "\"isTrustedEvent\":false}";
+  bunite_win::emitWebviewEvent(view_id, "resolve-and-click-result", payload);
+}
+
+// Parse a Runtime.evaluate response (either main-session or sessionId-routed)
+// and forward (frame-local) cx/cy/x/y/w/h to `onOk`. The script's failure
+// branch (`{ok:false,code:...}`) routes through `onErr`.
+void parseEvalAndContinue(uint32_t view_id, uint32_t request_id, bool ok, const std::string& evalResult,
+                           std::function<void(double, double, double, double, double, double)> onOk) {
+  auto onErr = [view_id, request_id](const char* code, const std::string& msg) {
+    emitResolveAndClickError(view_id, request_id, code, msg);
+  };
+  if (!ok) { onErr("runtime_error", "Runtime.evaluate failed"); return; }
+  auto value = parseEvaluateValue(evalResult, onErr);
+  if (!value) return;
+  if (!value->HasKey("ok") || !value->GetBool("ok")) {
+    std::string code = value->HasKey("code") ? value->GetString("code").ToString() : "runtime_error";
+    onErr(code.c_str(), "");
+    return;
+  }
+  onOk(value->GetDouble("x"), value->GetDouble("y"),
+       value->GetDouble("w"), value->GetDouble("h"),
+       value->GetDouble("cx"), value->GetDouble("cy"));
+}
+
+// Issue Runtime.evaluate inside the target frame — sessionId-routed (OOPIF) or
+// isolated-world via main session (same-renderer cross-origin or same-origin).
+void evalInFrame(uint32_t view_id, uint32_t request_id, const std::string& frameId,
+                  const std::string& escScript,
+                  std::function<void(double, double, double, double, double, double)> onOk) {
+  auto* view = bunite_win::getViewHostById(view_id);
+  if (!view || !view->browser) { emitResolveAndClickError(view_id, request_id, "runtime_error", "view destroyed"); return; }
+  // Look up auto-attached OOPIF session.
+  std::string session_id;
+  {
+    std::lock_guard<std::mutex> lk(view->oopif_sessions_mutex);
+    auto it = view->oopif_sessions.find(frameId);
+    if (it != view->oopif_sessions.end()) session_id = it->second;
+  }
+  if (!session_id.empty()) {
+    int id = nextRawCdpId();
+    std::string msg = "{\"id\":" + std::to_string(id) +
+                      ",\"sessionId\":\"" + session_id +
+                      "\",\"method\":\"Runtime.evaluate\""
+                      ",\"params\":{\"expression\":\"" + escScript +
+                      "\",\"returnByValue\":true,\"awaitPromise\":true}}";
+    cefSendRaw(view, msg, id,
+        [view_id, request_id, onOk](bool ok, std::string r) {
+          parseEvalAndContinue(view_id, request_id, ok, r, onOk);
+        });
+    return;
+  }
+  // In-process: createIsolatedWorld + Runtime.evaluate via main session.
+  std::string isoParams = "{\"frameId\":\"" + bunite_win::escapeJsonString(frameId) + "\",\"worldName\":\"bunite-rac\"}";
+  cefCdpCall(view, "Page.createIsolatedWorld", isoParams,
+      [view_id, request_id, escScript, onOk](bool ok, std::string isoResult) {
+        if (!ok) { emitResolveAndClickError(view_id, request_id, "runtime_error", "createIsolatedWorld failed"); return; }
+        CefRefPtr<CefValue> val = CefParseJSON(isoResult, JSON_PARSER_RFC);
+        if (!val || val->GetType() != VTYPE_DICTIONARY) {
+          emitResolveAndClickError(view_id, request_id, "runtime_error", "createIsolatedWorld malformed"); return;
+        }
+        int contextId = val->GetDictionary()->GetInt("executionContextId");
+        auto* v2 = bunite_win::getViewHostById(view_id);
+        if (!v2) { emitResolveAndClickError(view_id, request_id, "runtime_error", "view destroyed"); return; }
+        std::string evalParams = "{\"expression\":\"" + escScript +
+                                 "\",\"contextId\":" + std::to_string(contextId) +
+                                 ",\"returnByValue\":true,\"awaitPromise\":true}";
+        cefCdpCall(v2, "Runtime.evaluate", evalParams,
+            [view_id, request_id, onOk](bool ok2, std::string r) {
+              parseEvalAndContinue(view_id, request_id, ok2, r, onOk);
+            });
+      });
+}
+
+// `frameId` non-empty: resolve via DOM.getFrameOwner + DOM.getBoxModel (main) +
+// in-frame eval (sessionId-routed or createIsolatedWorld) + page-coord click.
+void runFrameTargeted(uint32_t view_id, uint32_t request_id, const std::string& frameId,
+                       const std::string& escScript,
+                       int32_t button, int32_t click_count, uint32_t modifiers) {
+  auto* view = bunite_win::getViewHostById(view_id);
+  if (!view || !view->browser) { emitResolveAndClickError(view_id, request_id, "runtime_error", "view destroyed"); return; }
+  std::string ownerParams = "{\"frameId\":\"" + bunite_win::escapeJsonString(frameId) + "\"}";
+  cefCdpCall(view, "DOM.getFrameOwner", ownerParams,
+      [view_id, request_id, frameId, escScript, button, click_count, modifiers](bool ok, std::string r) {
+        if (!ok) { emitResolveAndClickError(view_id, request_id, "not_found", "frame not in tree"); return; }
+        CefRefPtr<CefValue> val = CefParseJSON(r, JSON_PARSER_RFC);
+        if (!val || val->GetType() != VTYPE_DICTIONARY) { emitResolveAndClickError(view_id, request_id, "runtime_error", "getFrameOwner malformed"); return; }
+        int backendNodeId = val->GetDictionary()->HasKey("backendNodeId") ? val->GetDictionary()->GetInt("backendNodeId") : 0;
+        if (!backendNodeId) { emitResolveAndClickError(view_id, request_id, "not_found", "no backendNodeId"); return; }
+        auto* v2 = bunite_win::getViewHostById(view_id);
+        if (!v2 || !v2->browser) { emitResolveAndClickError(view_id, request_id, "runtime_error", "view destroyed"); return; }
+        std::string boxParams = "{\"backendNodeId\":" + std::to_string(backendNodeId) + "}";
+        cefCdpCall(v2, "DOM.getBoxModel", boxParams,
+            [view_id, request_id, frameId, escScript, button, click_count, modifiers](bool ok2, std::string rb) {
+              if (!ok2) { emitResolveAndClickError(view_id, request_id, "not_visible", "iframe has no box"); return; }
+              CefRefPtr<CefValue> bv = CefParseJSON(rb, JSON_PARSER_RFC);
+              if (!bv || bv->GetType() != VTYPE_DICTIONARY) { emitResolveAndClickError(view_id, request_id, "runtime_error", "getBoxModel malformed"); return; }
+              auto model = bv->GetDictionary()->HasKey("model") ? bv->GetDictionary()->GetDictionary("model") : nullptr;
+              if (!model) { emitResolveAndClickError(view_id, request_id, "not_visible", "no model"); return; }
+              auto contentList = model->HasKey("content") ? model->GetList("content") : nullptr;
+              if (!contentList || contentList->GetSize() < 8) { emitResolveAndClickError(view_id, request_id, "runtime_error", "bad quad"); return; }
+              double q[8];
+              for (int i = 0; i < 8; ++i) q[i] = contentList->GetDouble(i);
+              // Axis-aligned check (TL→TR→BR→BL clockwise). Transformed iframes
+              // (rotate/skew) violate; fail-closed.
+              const bool axis_aligned = (q[1] == q[3]) && (q[0] == q[6]) && (q[2] == q[4]) && (q[5] == q[7]);
+              if (!axis_aligned) {
+                emitResolveAndClickError(view_id, request_id, "not_supported", "transformed iframe not supported");
+                return;
+              }
+              const double iframe_x = q[0], iframe_y = q[1];
+              evalInFrame(view_id, request_id, frameId, escScript,
+                  [view_id, request_id, iframe_x, iframe_y, button, click_count, modifiers]
+                  (double fx, double fy, double fw, double fh, double fcx, double fcy) {
+                    finishResolveAndClick(view_id, request_id,
+                        iframe_x + fx, iframe_y + fy, fw, fh,
+                        iframe_x + fcx, iframe_y + fcy,
+                        button, click_count, modifiers);
+                  });
+            });
+      });
+}
+
+}  // namespace
+
 extern "C" BUNITE_EXPORT void bunite_view_resolve_and_click(
     uint32_t view_id, uint32_t request_id,
     const char* selector_c, const char* frame_id_c,
@@ -1587,62 +1782,37 @@ extern "C" BUNITE_EXPORT void bunite_view_resolve_and_click(
     auto* view = bunite_win::getViewHostById(view_id);
     if (!view || !view->browser) { emitResolveAndClickError(view_id, request_id, "runtime_error", "view not ready"); return; }
 
-    const bool frame_targeted = !frameId.empty();
-    std::string script = buildResolveScript(selector, frame_targeted);
+    std::string script = buildResolveScript(selector);
     std::string escScript = escapeForJsonString(script);
 
-    auto onEvalResult = [view_id, request_id, button, click_count, modifiers](bool ok, std::string evalResult) {
-      auto onErr = [view_id, request_id](const char* code, const std::string& msg) {
-        emitResolveAndClickError(view_id, request_id, code, msg);
-      };
-      if (!ok) { onErr("runtime_error", "Runtime.evaluate failed"); return; }
-      auto value = parseEvaluateValue(evalResult, onErr);
-      if (!value) return;
-      const bool result_ok = value->HasKey("ok") && value->GetBool("ok");
-      if (!result_ok) {
-        std::string code = value->HasKey("code") ? value->GetString("code").ToString() : "runtime_error";
-        onErr(code.c_str(), "");
-        return;
-      }
-      double cx = value->GetDouble("cx"), cy = value->GetDouble("cy");
-      double x = value->GetDouble("x"), y = value->GetDouble("y");
-      double w = value->GetDouble("w"), h = value->GetDouble("h");
-      auto* v2 = bunite_win::getViewHostById(view_id);
-      if (!v2 || !v2->browser) { onErr("runtime_error", "view destroyed"); return; }
-      dispatchCdpClick(v2, cx, cy, button, click_count, modifiers);
-      // Chromium browser-process CDP → DOM trust=false.
-      std::string payload = "{\"requestId\":" + std::to_string(request_id) +
-                            ",\"ok\":true,\"rect\":{\"x\":" + std::to_string(x) +
-                            ",\"y\":" + std::to_string(y) +
-                            ",\"width\":" + std::to_string(w) +
-                            ",\"height\":" + std::to_string(h) + "},"
-                            "\"isTrustedEvent\":false}";
-      bunite_win::emitWebviewEvent(view_id, "resolve-and-click-result", payload);
-    };
-
-    if (!frame_targeted) {
+    if (frameId.empty()) {
+      // Main frame.
       std::string evalParams = "{\"expression\":\"" + escScript + "\",\"returnByValue\":true,\"awaitPromise\":true}";
-      cefCdpCall(view, "Runtime.evaluate", evalParams, onEvalResult);
+      cefCdpCall(view, "Runtime.evaluate", evalParams,
+          [view_id, request_id, button, click_count, modifiers](bool ok, std::string r) {
+            parseEvalAndContinue(view_id, request_id, ok, r,
+                [view_id, request_id, button, click_count, modifiers]
+                (double x, double y, double w, double h, double cx, double cy) {
+                  finishResolveAndClick(view_id, request_id, x, y, w, h, cx, cy,
+                                         button, click_count, modifiers);
+                });
+          });
       return;
     }
 
-    // OOPIF frameIds make createIsolatedWorld fail → spec-locked cross_origin.
-    std::string isoParams = "{\"frameId\":\"" + bunite_win::escapeJsonString(frameId) + "\",\"worldName\":\"bunite-rac\"}";
-    cefCdpCall(view, "Page.createIsolatedWorld", isoParams,
-        [view_id, request_id, escScript, onEvalResult](bool ok, std::string isoResult) {
-          if (!ok) { emitResolveAndClickError(view_id, request_id, "cross_origin", "createIsolatedWorld failed (cross-origin frame?)"); return; }
-          CefRefPtr<CefValue> val = CefParseJSON(isoResult, JSON_PARSER_RFC);
-          if (!val || val->GetType() != VTYPE_DICTIONARY) {
-            emitResolveAndClickError(view_id, request_id, "runtime_error", "createIsolatedWorld malformed"); return;
-          }
-          int contextId = val->GetDictionary()->GetInt("executionContextId");
-          auto* v2 = bunite_win::getViewHostById(view_id);
-          if (!v2) { emitResolveAndClickError(view_id, request_id, "runtime_error", "view destroyed"); return; }
-          std::string evalParams = "{\"expression\":\"" + escScript +
-                                   "\",\"contextId\":" + std::to_string(contextId) +
-                                   ",\"returnByValue\":true,\"awaitPromise\":true}";
-          cefCdpCall(v2, "Runtime.evaluate", evalParams, onEvalResult);
-        });
+    // Frame-targeted: lazy Target.setAutoAttach so OOPIF frames get sessionIds
+    // populated into view->oopif_sessions via OnDevToolsEvent. Wait for response
+    // so attachedToTarget events fire before we proceed.
+    if (!view->oopif_autoattach_armed.exchange(true)) {
+      cefCdpCall(view, "Target.setAutoAttach",
+          "{\"autoAttach\":true,\"flatten\":true,\"waitForDebuggerOnStart\":false}",
+          [view_id, request_id, frameId, escScript, button, click_count, modifiers](bool ok, std::string) {
+            if (!ok) { emitResolveAndClickError(view_id, request_id, "runtime_error", "setAutoAttach failed"); return; }
+            runFrameTargeted(view_id, request_id, frameId, escScript, button, click_count, modifiers);
+          });
+      return;
+    }
+    runFrameTargeted(view_id, request_id, frameId, escScript, button, click_count, modifiers);
   });
 }
 

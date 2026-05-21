@@ -127,6 +127,12 @@ struct ViewHost {
   bool pending_passthrough = false;
   bool has_pending_bounds = false;
   RECT pending_bounds{0, 0, 0, 0};
+
+  // OOPIF input dispatch — populated by Target.attachedToTarget events after
+  // lazy Target.setAutoAttach. frameId → sessionId for flatten:true routing.
+  std::atomic<bool> oopif_autoattach_armed = false;
+  std::mutex oopif_sessions_mutex;
+  std::unordered_map<std::string, std::string> oopif_sessions;  // frameId → sessionId
 };
 
 struct WindowHost {

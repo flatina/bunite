@@ -100,6 +100,15 @@ struct ViewHost {
   };
   std::unordered_map<uint32_t, PendingDialog> pending_dialogs;
   uint32_t next_dialog_request_id = 1;
+
+  // OOPIF input dispatch — populated by Target.attachedToTarget events after
+  // lazy Target.setAutoAttach. frameId → sessionId for flatten:true routing.
+  std::atomic<bool> oopif_autoattach_armed{false};
+  std::mutex oopif_sessions_mutex;
+  std::unordered_map<std::string, std::string> oopif_sessions;
+  EventRegistrationToken target_attached_token{};
+  EventRegistrationToken target_detached_token{};
+  bool oopif_event_tokens_registered = false;
 };
 
 struct WindowHost {
