@@ -69,9 +69,22 @@ type PendingPopup = {
   url: string;
   disposition: "tab" | "window" | "popup";
   timer: ReturnType<typeof setTimeout> | null;
+  armTs: number;  // arm emit timestamp for the 60s extend cap
 };
-const pendingPopups = new Map<number, PendingPopup>();  // by newSurfaceId
+const pendingPopups = new Map<number, PendingPopup>();
 const POPUP_ADOPT_TIMEOUT_MS = 5000;
+const POPUP_EXTEND_CAP_MS = 60_000;
+// Capped log so callers calling extendPopupTimeout after resolution get a
+// distinct error code instead of bare not_found.
+const popupResolutionLog = new Map<number, "adopted" | "dismissed">();
+const POPUP_RESOLUTION_LOG_MAX = 64;
+function recordResolution(id: number, kind: "adopted" | "dismissed") {
+  if (popupResolutionLog.size >= POPUP_RESOLUTION_LOG_MAX) {
+    const firstKey = popupResolutionLog.keys().next().value;
+    if (firstKey !== undefined) popupResolutionLog.delete(firstKey);
+  }
+  popupResolutionLog.set(id, kind);
+}
 
 /** Called when a backend mints a popup view. Stashes the pending adoption +
  *  arms a timer that auto-dismisses if the host doesn't respond. */
@@ -80,6 +93,7 @@ export function emitPopupRequested(
   openerSurfaceId: number,
   args: { newSurfaceId: number; url: string; disposition: "tab" | "window" | "popup" },
 ) {
+  const armTs = Date.now();
   const entry: PendingPopup = {
     newSurfaceId: args.newSurfaceId,
     openerHostViewId: hostViewId,
@@ -87,9 +101,11 @@ export function emitPopupRequested(
     url: args.url,
     disposition: args.disposition,
     timer: null,
+    armTs,
   };
   entry.timer = setTimeout(() => {
     if (!pendingPopups.delete(args.newSurfaceId)) return;
+    recordResolution(args.newSurfaceId, "dismissed");
     BrowserView.dismissPopupById(args.newSurfaceId);
   }, POPUP_ADOPT_TIMEOUT_MS);
   pendingPopups.set(args.newSurfaceId, entry);
@@ -610,6 +626,11 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
     acceptPopup: async ({ newSurfaceId, hostViewId: targetHostId, bounds }) => {
       const pending = pendingPopups.get(newSurfaceId);
       if (!pending) return { ok: false as const, code: "not_found" as const, message: "popup not pending" };
+      // Only the opener's host page can adopt the popup. The target host
+      // (where the new pane lands) is a separate decision.
+      if (pending.openerHostViewId !== hostViewId) {
+        return { ok: false as const, code: "not_found" as const, message: "popup not owned by this host" };
+      }
       const targetHost = BrowserView.getById(targetHostId);
       if (!targetHost || !targetHost.windowId) {
         // Don't consume pending state on validation failure — host can retry
@@ -622,6 +643,7 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       }
       if (pending.timer) clearTimeout(pending.timer);
       pendingPopups.delete(newSurfaceId);
+      recordResolution(newSurfaceId, "adopted");
       const offset = applyHostOffset(targetHost, bounds.x, bounds.y);
       const view = BrowserView.adopt({
         nativeViewId: newSurfaceId,
@@ -637,10 +659,41 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
 
     dismissPopup: ({ newSurfaceId }) => {
       const pending = pendingPopups.get(newSurfaceId);
-      if (!pending) return;  // already adopted or never pending — no-op.
+      if (!pending) return;
+      if (pending.openerHostViewId !== hostViewId) return;  // not this host's popup
       if (pending.timer) clearTimeout(pending.timer);
       pendingPopups.delete(newSurfaceId);
+      recordResolution(newSurfaceId, "dismissed");
       BrowserView.dismissPopupById(newSurfaceId);
+    },
+
+    extendPopupTimeout: ({ newSurfaceId, gracePeriodMs }) => {
+      if (!Number.isFinite(gracePeriodMs) || gracePeriodMs <= 0) {
+        return { ok: false as const, code: "not_found" as const, message: "gracePeriodMs must be a positive finite number" };
+      }
+      const pending = pendingPopups.get(newSurfaceId);
+      if (!pending) {
+        const prior = popupResolutionLog.get(newSurfaceId);
+        if (prior === "adopted") return { ok: false as const, code: "already_adopted" as const, message: "popup adopted" };
+        if (prior === "dismissed") return { ok: false as const, code: "already_dismissed" as const, message: "popup dismissed" };
+        return { ok: false as const, code: "not_found" as const, message: "popup not pending" };
+      }
+      if (pending.openerHostViewId !== hostViewId) {
+        return { ok: false as const, code: "not_found" as const, message: "popup not owned by this host" };
+      }
+      const now = Date.now();
+      const requested = now + gracePeriodMs;
+      const cap = pending.armTs + POPUP_EXTEND_CAP_MS;
+      if (requested > cap) {
+        return { ok: false as const, code: "cap_exceeded" as const, message: `extend exceeds ${POPUP_EXTEND_CAP_MS}ms cap since arm` };
+      }
+      if (pending.timer) clearTimeout(pending.timer);
+      pending.timer = setTimeout(() => {
+        if (!pendingPopups.delete(newSurfaceId)) return;
+        recordResolution(newSurfaceId, "dismissed");
+        BrowserView.dismissPopupById(newSurfaceId);
+      }, gracePeriodMs);
+      return { ok: true as const, deadlineMs: requested };
     },
 
     consoleEvents: ({ surfaceId: filterId }) => Stream.from<ConsoleEntry>((emit, signal) => {

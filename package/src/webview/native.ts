@@ -413,6 +413,10 @@ class BuniteWebviewElement extends HTMLElement {
     await callSurface((s) => s.dismissPopup({ newSurfaceId }));
   }
 
+  async extendAdoptionTimeout(newSurfaceId: number, gracePeriodMs: number) {
+    return callSurfaceTyped((s) => s.extendPopupTimeout({ newSurfaceId, gracePeriodMs }));
+  }
+
   async screenshot(args?: { format?: "png" | "jpeg"; quality?: number }): Promise<ScreenshotResult> {
     const sid = this._surfaceId;
     if (sid == null) return { ok: false, code: "not_supported", message: "surface not ready" };

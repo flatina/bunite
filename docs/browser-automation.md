@@ -51,6 +51,7 @@
 | `setDownloadPolicy(policy, downloadDir?)` | `Promise<void>` | `policy`: `"auto"` allows + emits lifecycle, `"block"` (default) cancels + emits `blocked`, `"ask"` is reserved (treated as block until implemented). |
 | `waitForDownload(opts?)` | `Promise<WaitForDownloadResult>` | Resolves on next download started after the call (`{timeoutMs?}` default 30000). |
 | `dismissPopup(newSurfaceId)` | `Promise<void>` | Close a popup-minted surface received via `surface-event` `popup` arm. Adoption: render `<bunite-webview adopt-popup-id="N">` instead. |
+| `extendAdoptionTimeout(newSurfaceId, gracePeriodMs)` | `Promise<ExtendPopupTimeoutResult>` | Reset the popup auto-dismiss deadline to `now + gracePeriodMs`. Capped at 60s since the popup arm was emitted. Call from the `popup` arm handler before any await. |
 | `screenshot(args?)` | `Promise<ScreenshotResult>` | `{format?: "png" \| "jpeg", quality?}`. |
 
 `Modifier = "alt" | "ctrl" | "meta" | "shift"`.

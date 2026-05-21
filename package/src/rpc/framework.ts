@@ -205,6 +205,16 @@ export type AcceptPopupResult =
   | { ok: true }
   | { ok: false; code: "not_found" | "host_view_invalid"; message: string };
 
+export interface ExtendPopupTimeoutArgs {
+  newSurfaceId: number;
+  /** Reset semantic: new deadline = now + gracePeriodMs. Not cumulative.
+   *  Capped at 60s since the popup arm was emitted. */
+  gracePeriodMs: number;
+}
+export type ExtendPopupTimeoutResult =
+  | { ok: true; deadlineMs: number }   // epoch ms of the new deadline
+  | { ok: false; code: "not_found" | "already_adopted" | "already_dismissed" | "cap_exceeded"; message: string };
+
 /** Surface lifecycle event arm before the surface pipeline stamps `epoch`. */
 export type SurfaceEventBase =
   | { type: "navigate"; url: string }
@@ -402,6 +412,7 @@ export const SurfaceCap = defineCap("bunite.Surface", {
   setDownloadPolicy: call<SetDownloadPolicyArgs, void>(),
   acceptPopup: call<AcceptPopupArgs, AcceptPopupResult>(),
   dismissPopup: call<{ newSurfaceId: number }, void>(),
+  extendPopupTimeout: call<ExtendPopupTimeoutArgs, ExtendPopupTimeoutResult>(),
 });
 
 export const RuntimeCap = defineCap("bunite.Runtime", {

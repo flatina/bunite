@@ -135,6 +135,10 @@ export type {
   ScreenshotArgs,
   ScreenshotResult,
   EvaluateResult,
+  AcceptPopupArgs,
+  AcceptPopupResult,
+  ExtendPopupTimeoutArgs,
+  ExtendPopupTimeoutResult,
 } from "./framework";
 
 export type {
