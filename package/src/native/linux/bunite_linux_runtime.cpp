@@ -16,7 +16,7 @@ bool isOnMainThread() {
 
 namespace {
 
-constexpr int32_t kBuniteAbiVersion = 9;
+constexpr int32_t kBuniteAbiVersion = 10;
 
 }  // namespace
 

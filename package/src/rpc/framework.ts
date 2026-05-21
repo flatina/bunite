@@ -110,7 +110,49 @@ export interface SurfaceCapabilities {
   screenshot: boolean;
   /** Present only when `screenshot` is true. */
   formats?: ("png" | "jpeg")[];
+  accessibilitySnapshot: boolean;
+  getBoundingRect: boolean;
 }
+
+export interface AxNode {
+  nodeId: string;
+  role: string;
+  name: string;
+  value?: string;
+  description?: string;
+  level?: number;
+  checked?: boolean | "mixed";
+  pressed?: boolean | "mixed";
+  expanded?: boolean;
+  disabled?: boolean;
+  focused?: boolean;
+  invalid?: boolean;
+  required?: boolean;
+  selected?: boolean;
+  rect?: { x: number; y: number; width: number; height: number };
+  children?: AxNode[];
+}
+
+export interface AccessibilitySnapshotArgs {
+  surfaceId: number;
+  /** Drop nodes with `ignored:true` (and reparent their children). Default true. */
+  interestingOnly?: boolean;
+  /** Reserved. Currently ignored — only main frame is snapshotted. */
+  frameId?: string;
+}
+export type AccessibilitySnapshotResult =
+  | { ok: true; tree: AxNode }
+  | { ok: false; code: "not_supported" | "runtime_error" | "timeout"; message: string };
+
+export interface BoundingRectArgs {
+  surfaceId: number;
+  selector: string;
+  /** Reserved. Currently ignored — only main frame is queried. */
+  frameId?: string;
+}
+export type BoundingRectResult =
+  | { ok: true; rect: { x: number; y: number; width: number; height: number }; visible: boolean }
+  | { ok: false; code: "not_found" | "runtime_error" | "cross_origin"; message: string };
 
 /** Surface lifecycle event arm before the surface pipeline stamps `epoch`. */
 export type SurfaceEventBase =
@@ -289,6 +331,8 @@ export const SurfaceCap = defineCap("bunite.Surface", {
   dialogs: stream<{ surfaceId: number }, DialogEvent>(),
   consoleEvents: stream<{ surfaceId: number }, ConsoleEntry>(),
   getNavigationState: call<{ surfaceId: number }, NavigationState>({ idempotent: true }),
+  accessibilitySnapshot: call<AccessibilitySnapshotArgs, AccessibilitySnapshotResult>(),
+  getBoundingRect: call<BoundingRectArgs, BoundingRectResult>({ idempotent: true }),
 });
 
 export const RuntimeCap = defineCap("bunite.Runtime", {

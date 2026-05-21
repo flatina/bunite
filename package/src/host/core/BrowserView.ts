@@ -8,13 +8,17 @@ import {
   type Connection,
   type BytesPipe,
 } from "../../rpc/index";
-import type { EvaluateResult, SurfaceCapabilities, ScreenshotResult, Modifier } from "../../rpc/framework";
+import type {
+  EvaluateResult, SurfaceCapabilities, ScreenshotResult, Modifier,
+  AccessibilitySnapshotResult, AxNode,
+} from "../../rpc/framework";
 import { encodeModifiers, resolveKey } from "./inputDispatch";
 import { createEncryptedPipe } from "../encryptedPipe";
 import {
   ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady,
   setEvaluateResultHandler, type NativeEvaluateResult,
   setScreenshotResultHandler, type NativeScreenshotResult,
+  setAccessibilityResultHandler, type NativeAccessibilityResult,
 } from "../native";
 import { attachBrowserViewRegistry, getRpcPort } from "./Socket";
 import { getAppRuntimeOrThrow } from "./App";
@@ -68,6 +72,100 @@ function rejectScreenshotsForView(viewId: number) {
     }
   }
 }
+
+type AxPending = { viewId: number; resolve: (result: AccessibilitySnapshotResult) => void; interestingOnly: boolean };
+let nextAxRequestId = 1;
+const axResolvers = new Map<number, AxPending>();
+
+function registerAxRequest(viewId: number, resolve: (result: AccessibilitySnapshotResult) => void, interestingOnly: boolean): number {
+  const id = nextAxRequestId++;
+  axResolvers.set(id, { viewId, resolve, interestingOnly });
+  return id;
+}
+
+function rejectAxForView(viewId: number) {
+  for (const [reqId, entry] of axResolvers) {
+    if (entry.viewId === viewId) {
+      axResolvers.delete(reqId);
+      entry.resolve({ ok: false, code: "not_supported", message: "view destroyed" });
+    }
+  }
+}
+
+// CDP `Accessibility.getFullAXTree` returns `{nodes: [flat]}` with `childIds`
+// references — build a nested tree from the first node. When `interestingOnly`
+// is true, ignored nodes are dropped and their children reparent up.
+function convertAxTree(cdpResult: { nodes?: any[] } | undefined, interestingOnly: boolean): AxNode {
+  const flat = cdpResult?.nodes ?? [];
+  if (flat.length === 0) return { nodeId: "", role: "", name: "" };
+  const byId = new Map<string, any>();
+  for (const n of flat) if (n?.nodeId != null) byId.set(String(n.nodeId), n);
+  // Walk childIds skipping ignored nodes (when filtering) and produce a flat list
+  // of "interesting" descendants for the given node.
+  const seen = new Set<string>();
+  const interestingDescendants = (cdpNode: any): any[] => {
+    const out: any[] = [];
+    if (!Array.isArray(cdpNode?.childIds)) return out;
+    for (const cid of cdpNode.childIds) {
+      const child = byId.get(String(cid));
+      if (!child) continue;
+      if (interestingOnly && child.ignored === true) {
+        out.push(...interestingDescendants(child));
+      } else {
+        out.push(child);
+      }
+    }
+    return out;
+  };
+  const build = (n: any): AxNode => {
+    const id = String(n?.nodeId ?? "");
+    if (id && seen.has(id)) return { nodeId: id, role: "", name: "" };  // cycle guard
+    if (id) seen.add(id);
+    const props = new Map<string, unknown>();
+    if (Array.isArray(n?.properties)) {
+      for (const p of n.properties) {
+        if (p?.name && p.value && "value" in p.value) props.set(p.name, p.value.value);
+      }
+    }
+    const out: AxNode = {
+      nodeId: id,
+      role: String(n?.role?.value ?? ""),
+      name: String(n?.name?.value ?? ""),
+    };
+    if (n?.value?.value !== undefined) out.value = String(n.value.value);
+    if (n?.description?.value !== undefined) out.description = String(n.description.value);
+    const level = props.get("level"); if (typeof level === "number") out.level = level;
+    const checked = props.get("checked"); if (checked === true || checked === false || checked === "mixed") out.checked = checked;
+    const pressed = props.get("pressed"); if (pressed === true || pressed === false || pressed === "mixed") out.pressed = pressed;
+    const expanded = props.get("expanded"); if (typeof expanded === "boolean") out.expanded = expanded;
+    const disabled = props.get("disabled"); if (typeof disabled === "boolean") out.disabled = disabled;
+    const focused = props.get("focused"); if (typeof focused === "boolean") out.focused = focused;
+    const invalid = props.get("invalid"); if (typeof invalid === "boolean") out.invalid = invalid;
+    const required = props.get("required"); if (typeof required === "boolean") out.required = required;
+    const selected = props.get("selected"); if (typeof selected === "boolean") out.selected = selected;
+    const kids = interestingDescendants(n).map(build);
+    if (kids.length > 0) out.children = kids;
+    return out;
+  };
+  // Root node skips ignored-filter (always include even if ignored).
+  return build(flat[0]);
+}
+
+setAccessibilityResultHandler((viewId, raw: NativeAccessibilityResult) => {
+  const entry = axResolvers.get(raw.requestId);
+  if (!entry || entry.viewId !== viewId) return;
+  axResolvers.delete(raw.requestId);
+  if (raw.ok && raw.tree) {
+    try { entry.resolve({ ok: true, tree: convertAxTree(raw.tree as any, entry.interestingOnly) }); }
+    catch (e) { entry.resolve({ ok: false, code: "runtime_error", message: `ax tree convert failed: ${(e as Error).message}` }); }
+  } else {
+    entry.resolve({
+      ok: false,
+      code: (raw.code as "not_supported" | "runtime_error" | "timeout") ?? "runtime_error",
+      message: raw.message ?? "accessibility snapshot failed",
+    });
+  }
+});
 
 function decodeBase64(b64: string): Uint8Array {
   const bin = atob(b64);
@@ -131,6 +229,8 @@ const CAP_FORMAT_JPEG          = 1 << 10;
 const CAP_MOUSE                = 1 << 11;
 const CAP_DIALOGS              = 1 << 12;
 const CAP_CONSOLE              = 1 << 13;
+const CAP_AX                   = 1 << 15;
+const CAP_BOUNDING_RECT        = 1 << 16;
 
 function decodeCapabilityBits(bits: number): SurfaceCapabilities {
   const formats: ("png" | "jpeg")[] = [];
@@ -149,6 +249,8 @@ function decodeCapabilityBits(bits: number): SurfaceCapabilities {
     dialogs: !!(bits & CAP_DIALOGS),
     console: !!(bits & CAP_CONSOLE),
     screenshot: !!(bits & CAP_SCREENSHOT),
+    accessibilitySnapshot: !!(bits & CAP_AX),
+    getBoundingRect: !!(bits & CAP_BOUNDING_RECT),
     ...(formats.length > 0 ? { formats } : {}),
   };
 }
@@ -440,6 +542,24 @@ export class BrowserView {
     });
   }
 
+  accessibilitySnapshot(interestingOnly: boolean): Promise<AccessibilitySnapshotResult> {
+    if (!this.nativeAttached) {
+      return Promise.resolve({ ok: false, code: "not_supported", message: "native runtime unavailable" });
+    }
+    return new Promise<AccessibilitySnapshotResult>((resolve) => {
+      const requestId = registerAxRequest(this.id, resolve, interestingOnly);
+      const timer = setTimeout(() => {
+        if (axResolvers.delete(requestId)) {
+          resolve({ ok: false, code: "timeout", message: "accessibility snapshot timed out after 30s" });
+        }
+      }, 30_000);
+      const wrappedResolve = (r: AccessibilitySnapshotResult) => { clearTimeout(timer); resolve(r); };
+      axResolvers.set(requestId, { viewId: this.id, resolve: wrappedResolve, interestingOnly });
+      // Native flag is currently unused (filter is TS-side); kept for ABI shape stability.
+      getNativeLibrary()?.symbols.bunite_view_accessibility_snapshot(this.id, requestId, interestingOnly ? 1 : 0);
+    });
+  }
+
   goBack() {
     if (this.nativeAttached) {
       getNativeLibrary()?.symbols.bunite_view_go_back(this.id);
@@ -546,6 +666,7 @@ export class BrowserView {
     cancelWaitForViewReady(this.id);
     rejectEvaluatesForView(this.id);
     rejectScreenshotsForView(this.id);
+    rejectAxForView(this.id);
     this.nativeAttached = false;
     for (const eventName of [
       "will-navigate", "did-navigate", "dom-ready", "new-window-open", "permission-requested", "title-changed"

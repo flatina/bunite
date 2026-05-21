@@ -452,7 +452,17 @@ extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
   if (!v) return 0;
   return BUNITE_CAP_EVALUATE | BUNITE_CAP_SURFACE_EVENTS |
          BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
-         BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
+         BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG |
+         BUNITE_CAP_BOUNDING_RECT;
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_accessibility_snapshot(uint32_t view_id, uint32_t request_id,
+                                                                  int32_t /*interesting_only*/) {
+  // WebKitGTK has no host-facing ax tree API on GTK4. Honest not_supported.
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"not_supported\","
+                        "\"message\":\"WebKitGTK has no public accessibility tree API\"}";
+  bunite_linux::emitWebviewEvent(view_id, "accessibility-result", payload);
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,

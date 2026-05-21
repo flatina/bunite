@@ -16,28 +16,8 @@ extern "C" {
 #endif
 
 /** ABI version. Bump on any breaking change to symbol set / signatures.
- *  v9 (2026-05): adds `bunite_view_mouse` (move/down/up primitives for drag &
- *                hover) + `bunite_view_respond_dialog`. Webview event names
- *                expand to include `dialog` (alert/confirm/prompt/beforeunload)
- *                and `console-message` (the latter is RPC-pushed by preload,
- *                not emitted by native — listed here for the host-side event
- *                channel completeness). Capability bits add `MOUSE` (1<<11),
- *                `DIALOGS` (1<<12), `CONSOLE` (1<<13). `NATIVE_INPUT_TRUSTED`
- *                meaning stretches to include `mouse` (click/type/press/mouse
- *                all produce isTrusted=true on supporting backends; scroll and
- *                screenshot remain outside that guarantee).
- *  v8 (2026-05): `bunite_view_press` gains `action` (down/up/both), `extended`
- *                (Win 0xE0 scancode prefix), `location` (DOM KeyboardEvent
- *                location, 0/1/2/3) params. Webview event names expand to
- *                include `load-start` / `load-finish` / `load-fail`. Capability
- *                bit 2 renamed `TITLE_CHANGED` → `SURFACE_EVENTS` — value
- *                unchanged but semantic is now "unified surfaceEvents stream
- *                supported". A surface fires `load-finish` OR `load-fail` per
- *                navigation, never both.
- *  v7 (2026-05): adds `bunite_view_screenshot` + `bunite_view_capabilities`
- *                + capability bitset (`BuniteCapBit`).
- *  v6 (2026-05): adds input dispatch — `bunite_view_click/type/press/scroll`.
- *  v5 (2026-05): adds `bunite_view_evaluate` + `evaluate-result` webview event. */
+ *  v10: `bunite_view_accessibility_snapshot` + `accessibility-result` event.
+ *       Capability bits `AX` (1<<15), `BOUNDING_RECT` (1<<16). */
 BUNITE_EXPORT int32_t bunite_abi_version(void);
 BUNITE_EXPORT void bunite_set_log_level(int32_t level);
 BUNITE_EXPORT bool bunite_init(
@@ -240,6 +220,8 @@ enum BuniteCapBit {
 	BUNITE_CAP_MOUSE                = 1u << 11,
 	BUNITE_CAP_DIALOGS              = 1u << 12,
 	BUNITE_CAP_CONSOLE              = 1u << 13,
+	BUNITE_CAP_AX                   = 1u << 15,
+	BUNITE_CAP_BOUNDING_RECT        = 1u << 16,
 };
 BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id);
 
@@ -257,6 +239,19 @@ BUNITE_EXPORT void bunite_view_screenshot(
 	uint32_t request_id,
 	const char* format,
 	int32_t quality
+);
+
+/** Snapshot the accessibility tree (CDP `Accessibility.getFullAXTree`). Async —
+ *  result reported via webview event handler as `accessibility-result` payload
+ *    { requestId, ok: true, tree: {nodes: [<CDP AXNode flat list>]} }
+ *    { requestId, ok: false, code, message }
+ *  TS builds the nested tree from `childIds`. mac/linux always emit
+ *  `not_supported` (no public ax tree API). `interesting_only` is reserved and
+ *  currently unused on the native side (filter is TS-side). */
+BUNITE_EXPORT void bunite_view_accessibility_snapshot(
+	uint32_t view_id,
+	uint32_t request_id,
+	int32_t interesting_only
 );
 
 BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id);

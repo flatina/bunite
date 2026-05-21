@@ -4,6 +4,7 @@ import type { ClientOf } from "../rpc/index";
 import type {
   SurfaceCap, EvaluateResult, SurfaceCapabilities, ScreenshotResult,
   SurfaceEvent, ConsoleEntry, WaitResult, NavigationState,
+  AccessibilitySnapshotResult, BoundingRectResult,
 } from "../rpc/framework";
 
 declare const host: {
@@ -277,7 +278,7 @@ class BuniteWebviewElement extends HTMLElement {
         evaluate: false, crossOriginEval: false, surfaceEvents: false,
         nativeInputTrusted: false, click: false, type: false, press: false,
         scroll: false, mouse: false, dialogs: false, console: false,
-        screenshot: false,
+        screenshot: false, accessibilitySnapshot: false, getBoundingRect: false,
       };
     }
     return callSurfaceTyped((s) => s.capabilities({ surfaceId: sid }));
@@ -365,6 +366,18 @@ class BuniteWebviewElement extends HTMLElement {
     const sid = this._surfaceId;
     if (sid == null) return { lastLoadEpoch: 0, isLoading: false, currentUrl: "" };
     return callSurfaceTyped((s) => s.getNavigationState({ surfaceId: sid }));
+  }
+
+  async accessibilitySnapshot(opts?: { interestingOnly?: boolean }): Promise<AccessibilitySnapshotResult> {
+    const sid = this._surfaceId;
+    if (sid == null) return { ok: false, code: "not_supported", message: "surface not ready" };
+    return callSurfaceTyped((s) => s.accessibilitySnapshot({ surfaceId: sid, interestingOnly: opts?.interestingOnly }));
+  }
+
+  async getBoundingRect(selector: string): Promise<BoundingRectResult> {
+    const sid = this._surfaceId;
+    if (sid == null) return { ok: false, code: "runtime_error", message: "surface not ready" };
+    return callSurfaceTyped((s) => s.getBoundingRect({ surfaceId: sid, selector }));
   }
 
   async screenshot(args?: { format?: "png" | "jpeg"; quality?: number }): Promise<ScreenshotResult> {

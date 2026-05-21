@@ -12,7 +12,7 @@ void setViewInputPassthrough(ViewHost* v, bool passthrough);
 
 extern "C" {
 
-BUNITE_EXPORT int32_t bunite_abi_version(void) { return 9; }
+BUNITE_EXPORT int32_t bunite_abi_version(void) { return 10; }
 
 BUNITE_EXPORT void bunite_set_log_level(int32_t level) {
   if (level < 0) level = 0;
@@ -392,6 +392,23 @@ void cdpCall(ViewHost* v, const wchar_t* method, const std::string& json) {
       method, utf8ToWide(json).c_str(), nullptr);
 }
 
+// Result-aware CDP call. `cb(ok, json)` runs on the UI thread once the result
+// arrives; on failure `ok=false` and json is an error description.
+void cdpCallWithResult(ViewHost* v, const wchar_t* method, const std::string& json,
+                       std::function<void(bool, std::string)> cb) {
+  if (!v || !v->webview) { if (cb) cb(false, "view not ready"); return; }
+  auto lifetime = g_runtime.lifetime;
+  v->webview->CallDevToolsProtocolMethod(
+      method, utf8ToWide(json).c_str(),
+      Microsoft::WRL::Callback<ICoreWebView2CallDevToolsProtocolMethodCompletedHandler>(
+          [lifetime, cb](HRESULT hr, LPCWSTR result) -> HRESULT {
+            if (!lifetime || !lifetime->alive.load()) return S_OK;
+            if (FAILED(hr) || !result) { cb(false, "CDP call failed"); return S_OK; }
+            cb(true, wideToUtf8(result));
+            return S_OK;
+          }).Get());
+}
+
 }  // namespace
 
 BUNITE_EXPORT void bunite_view_click(uint32_t view_id, double x, double y,
@@ -485,7 +502,31 @@ BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
          BUNITE_CAP_NATIVE_INPUT_TRUSTED |
          BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
          BUNITE_CAP_MOUSE | BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
-         BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
+         BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG |
+         BUNITE_CAP_AX | BUNITE_CAP_BOUNDING_RECT;
+}
+
+namespace {
+void emitAxError(uint32_t view_id, uint32_t request_id, const char* code, const std::string& message) {
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"" + code +
+                        "\",\"message\":\"" + escapeJsonString(message) + "\"}";
+  emitWebviewEvent(view_id, "accessibility-result", payload);
+}
+}  // namespace
+
+BUNITE_EXPORT void bunite_view_accessibility_snapshot(uint32_t view_id, uint32_t request_id,
+                                                       int32_t /*interesting_only*/) {
+  // CDP getFullAXTree accepts only depth/frameId — interesting-only filter is TS-side.
+  ViewHost* v = getView(view_id);
+  if (!v || !v->webview) { emitAxError(view_id, request_id, "not_supported", "view not ready"); return; }
+  cdpCallWithResult(v, L"Accessibility.getFullAXTree", "{}",
+      [view_id, request_id](bool ok, std::string result) {
+        if (!ok) { emitAxError(view_id, request_id, "runtime_error", "getFullAXTree failed: " + result); return; }
+        std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                              ",\"ok\":true,\"tree\":" + result + "}";
+        emitWebviewEvent(view_id, "accessibility-result", payload);
+      });
 }
 
 BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,

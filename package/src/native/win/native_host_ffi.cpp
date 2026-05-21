@@ -20,7 +20,7 @@
 using bunite_win::runOnUiThreadSync;
 using bunite_win::runOnCefUiThreadSync;
 
-static constexpr int32_t BUNITE_ABI_VERSION = 9;
+static constexpr int32_t BUNITE_ABI_VERSION = 10;
 
 namespace {
 
@@ -1189,7 +1189,8 @@ extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
          BUNITE_CAP_NATIVE_INPUT_TRUSTED |
          BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
          BUNITE_CAP_MOUSE | BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
-         BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG;
+         BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG |
+         BUNITE_CAP_AX | BUNITE_CAP_BOUNDING_RECT;
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
@@ -1230,6 +1231,38 @@ extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t 
                                 "\",\"mime\":\"" + mime +
                                 "\",\"dataBase64\":\"" + b64 + "\"}";
           bunite_win::emitWebviewEvent(view_id, "screenshot-result", payload);
+        });
+  });
+}
+
+static void emitAxError(uint32_t view_id, uint32_t request_id, const char* code, const std::string& message) {
+  std::string esc; esc.reserve(message.size());
+  for (char c : message) {
+    if (c == '"' || c == '\\') { esc.push_back('\\'); esc.push_back(c); }
+    else if (c == '\n') esc += "\\n";
+    else if (c == '\r') esc += "\\r";
+    else if (c == '\t') esc += "\\t";
+    else esc.push_back(c);
+  }
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"" + code +
+                        "\",\"message\":\"" + esc + "\"}";
+  bunite_win::emitWebviewEvent(view_id, "accessibility-result", payload);
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_accessibility_snapshot(uint32_t view_id, uint32_t request_id,
+                                                                  int32_t /*interesting_only*/) {
+  // CDP `Accessibility.getFullAXTree` takes `depth`/`frameId` only; the
+  // interesting-only filter is applied TS-side on the flat node list.
+  bunite_win::postCefUiTask([view_id, request_id]() {
+    auto* view = bunite_win::getViewHostById(view_id);
+    if (!view) { emitAxError(view_id, request_id, "not_supported", "view not ready"); return; }
+    cefCdpCall(view, "Accessibility.getFullAXTree", "{}",
+        [view_id, request_id](bool ok, std::string result) {
+          if (!ok) { emitAxError(view_id, request_id, "runtime_error", "getFullAXTree failed: " + result); return; }
+          std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                ",\"ok\":true,\"tree\":" + result + "}";
+          bunite_win::emitWebviewEvent(view_id, "accessibility-result", payload);
         });
   });
 }

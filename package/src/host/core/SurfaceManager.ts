@@ -395,7 +395,7 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
           evaluate: false, crossOriginEval: false, surfaceEvents: false,
           nativeInputTrusted: false, click: false, type: false, press: false,
           scroll: false, mouse: false, dialogs: false, console: false,
-          screenshot: false,
+          screenshot: false, accessibilitySnapshot: false, getBoundingRect: false,
         };
       }
       return record.view.capabilities();
@@ -446,6 +446,26 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
         isLoading: state.isLoading,
         currentUrl: state.currentUrl,
       };
+    },
+
+    accessibilitySnapshot: async ({ surfaceId, interestingOnly = true }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
+      return record.view.accessibilitySnapshot(interestingOnly);
+    },
+
+    getBoundingRect: async ({ surfaceId, selector }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
+      const expr = `(function(){var el=document.querySelector(${JSON.stringify(selector)});if(!el)return null;var r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,visible:r.width>0&&r.height>0&&r.bottom>0&&r.right>0&&r.top<innerHeight&&r.left<innerWidth};})()`;
+      const res = await record.view.evaluate(expr);
+      if (!res.ok) {
+        const code = res.code === "cross_origin" ? "cross_origin" as const : "runtime_error" as const;
+        return { ok: false as const, code, message: res.message };
+      }
+      const v = res.value as null | { x: number; y: number; width: number; height: number; visible: boolean };
+      if (!v) return { ok: false as const, code: "not_found" as const, message: `selector ${JSON.stringify(selector)} not found` };
+      return { ok: true as const, rect: { x: v.x, y: v.y, width: v.width, height: v.height }, visible: v.visible };
     },
 
     consoleEvents: ({ surfaceId: filterId }) => Stream.from<ConsoleEntry>((emit, signal) => {

@@ -126,6 +126,9 @@ type NativeSymbols = {
   bunite_view_screenshot: (
     viewId: number, requestId: number, format: CStringPointer, quality: number
   ) => void;
+  bunite_view_accessibility_snapshot: (
+    viewId: number, requestId: number, interestingOnly: number
+  ) => void;
   bunite_view_capabilities: (viewId: number) => number;
   bunite_view_load_url: (viewId: number, url: CStringPointer) => void;
   bunite_view_load_html: (viewId: number, html: CStringPointer) => void;
@@ -342,6 +345,10 @@ const nativeSymbolDefinitions = {
     args: [FFIType.u32, FFIType.u32, FFIType.cstring, FFIType.i32],
     returns: FFIType.void
   },
+  bunite_view_accessibility_snapshot: {
+    args: [FFIType.u32, FFIType.u32, FFIType.i32],
+    returns: FFIType.void
+  },
   bunite_view_capabilities: {
     args: [FFIType.u32],
     returns: FFIType.u32
@@ -419,6 +426,18 @@ export type NativeScreenshotResult = {
 let screenshotResultHandler: ((viewId: number, result: NativeScreenshotResult) => void) | null = null;
 export function setScreenshotResultHandler(handler: (viewId: number, result: NativeScreenshotResult) => void) {
   screenshotResultHandler = handler;
+}
+
+export type NativeAccessibilityResult = {
+  requestId: number;
+  ok: boolean;
+  tree?: unknown;       // CDP Accessibility.AXNode tree as JSON value
+  code?: string;
+  message?: string;
+};
+let accessibilityResultHandler: ((viewId: number, result: NativeAccessibilityResult) => void) | null = null;
+export function setAccessibilityResultHandler(handler: (viewId: number, result: NativeAccessibilityResult) => void) {
+  accessibilityResultHandler = handler;
 }
 
 // Per-view deferred resolvers for "view-ready" (OnAfterCreated).
@@ -573,6 +592,11 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
           case "screenshot-result": {
             const parsed = maybeParsePayload(payload) as NativeScreenshotResult;
             screenshotResultHandler?.(viewId, parsed);
+            break;
+          }
+          case "accessibility-result": {
+            const parsed = maybeParsePayload(payload) as NativeAccessibilityResult;
+            accessibilityResultHandler?.(viewId, parsed);
             break;
           }
           case "title-changed": {
@@ -779,7 +803,7 @@ export async function initNativeRuntime(
     throw new Error(`bunite: failed to load native library at ${artifacts.nativeLibPath}.`);
   }
 
-  const EXPECTED_ABI = 9;
+  const EXPECTED_ABI = 10;
   const nativeAbi = nativeLibrary.symbols.bunite_abi_version();
   if (nativeAbi !== EXPECTED_ABI) {
     throw new Error(
