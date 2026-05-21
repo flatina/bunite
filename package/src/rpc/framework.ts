@@ -435,6 +435,16 @@ export const SurfaceCap = defineCap("bunite.Surface", {
   resolveAndClick: call<ResolveAndClickArgs, ResolveAndClickResult>(),
 });
 
+/** Process-lifetime cumulative counts of popup lifecycle resolutions. Useful
+ *  for tuning the default popup adoption timeout. */
+export interface PopupMetrics {
+  armed: number;
+  adopted: number;
+  dismissed: number;
+  timeoutFired: number;
+  extended: number;
+}
+
 export const RuntimeCap = defineCap("bunite.Runtime", {
   window: call<void, typeof WindowCap>({ returns: cap(WindowCap), idempotent: true }),
   dialogs: call<void, typeof DialogsCap>({ returns: cap(DialogsCap), idempotent: true }),
@@ -446,6 +456,7 @@ export const RuntimeCap = defineCap("bunite.Runtime", {
   themeWatch: stream<void, "light" | "dark">(),
   surface: call<void, typeof SurfaceCap>({ returns: cap(SurfaceCap), idempotent: true }),
   reporting: call<void, typeof PageReportingCap>({ returns: cap(PageReportingCap), idempotent: true }),
+  popupMetrics: call<void, PopupMetrics>({ idempotent: true }),
 });
 
 export const FRAMEWORK_TYPE_IDS = {

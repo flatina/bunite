@@ -1,6 +1,10 @@
 #include "webview2_internal.h"
 
+#include <algorithm>
+#include <array>
 #include <cstring>
+#include <memory>
+#include <vector>
 #include <wincrypt.h>  // CryptBinaryToStringA — base64 encoding for screenshot payload.
 
 using namespace bunite_webview2;
@@ -817,8 +821,8 @@ std::string escapeForJsStringWv2(const std::string& s) {
 }
 
 std::string buildResolveScriptWv2(const std::string& selector) {
-  // Frame offset is computed natively via DOM.getBoxModel — script returns
-  // frame-local (or viewport-local for main frame) rect.
+  // Frame-local rect + innerWidth/innerHeight for bilinear mapping when the
+  // frame is transformed (rotate/scale). Main frame uses iw/ih harmlessly.
   std::string sel_lit = "\"" + escapeForJsStringWv2(selector) + "\"";
   return
     "(function(){"
@@ -830,7 +834,8 @@ std::string buildResolveScriptWv2(const std::string& selector) {
       "&&r.top<innerHeight&&r.left<innerWidth;"
       "if(!vis)return{ok:false,code:\"not_visible\"};"
       "return{ok:true,x:r.x,y:r.y,w:r.width,h:r.height,"
-      "cx:r.x+r.width/2,cy:r.y+r.height/2};"
+      "cx:r.x+r.width/2,cy:r.y+r.height/2,"
+      "iw:innerWidth,ih:innerHeight};"
     "})()";
 }
 
@@ -933,10 +938,12 @@ void finishResolveAndClickWv2(uint32_t view_id, uint32_t request_id, double x, d
   emitWebviewEvent(view_id, "resolve-and-click-result", payload);
 }
 
+struct FrameResolveOkWv2 { double x, y, w, h, cx, cy, iw, ih; };
+
 // Parse a Runtime.evaluate response (regardless of session); on success forwards
 // frame-local fields to `onOk`. Script's failure branch routes through error emit.
 void parseEvalAndContinueWv2(uint32_t view_id, uint32_t request_id, bool ok, const std::string& evalResult,
-                              std::function<void(double, double, double, double, double, double)> onOk) {
+                              std::function<void(const FrameResolveOkWv2&)> onOk) {
   if (!ok) { emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "Runtime.evaluate failed"); return; }
   if (evalResult.find("\"exceptionDetails\"") != std::string::npos) {
     emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "evaluate threw"); return;
@@ -950,14 +957,17 @@ void parseEvalAndContinueWv2(uint32_t view_id, uint32_t request_id, bool ok, con
     emitResolveAndClickErrorWv2(view_id, request_id, code.c_str(), "");
     return;
   }
-  onOk(extractJsonDouble(value, "x"), extractJsonDouble(value, "y"),
-       extractJsonDouble(value, "w"), extractJsonDouble(value, "h"),
-       extractJsonDouble(value, "cx"), extractJsonDouble(value, "cy"));
+  onOk(FrameResolveOkWv2{
+      extractJsonDouble(value, "x"), extractJsonDouble(value, "y"),
+      extractJsonDouble(value, "w"), extractJsonDouble(value, "h"),
+      extractJsonDouble(value, "cx"), extractJsonDouble(value, "cy"),
+      extractJsonDouble(value, "iw"), extractJsonDouble(value, "ih"),
+  });
 }
 
 void evalInFrameWv2(uint32_t view_id, uint32_t request_id, const std::string& frameId,
                      const std::string& script,
-                     std::function<void(double, double, double, double, double, double)> onOk) {
+                     std::function<void(const FrameResolveOkWv2&)> onOk) {
   ViewHost* v = getView(view_id);
   if (!v || !v->webview) { emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "view destroyed"); return; }
   std::string session_id;
@@ -996,61 +1006,206 @@ void evalInFrameWv2(uint32_t view_id, uint32_t request_id, const std::string& fr
       });
 }
 
+inline void bilinearMapWv2(const std::array<double, 8>& q, double iw, double ih,
+                            double fx, double fy, double& px, double& py) {
+  const double u = (iw > 0) ? (fx / iw) : 0.0;
+  const double v = (ih > 0) ? (fy / ih) : 0.0;
+  px = (1-u)*(1-v)*q[0] + u*(1-v)*q[2] + u*v*q[4] + (1-u)*v*q[6];
+  py = (1-u)*(1-v)*q[1] + u*(1-v)*q[3] + u*v*q[5] + (1-u)*v*q[7];
+}
+
+// Recursive frame path lookup in Page.getFrameTree response (text-based parser).
+// Returns [main_frame_id, ..., target_frame_id]; empty if target not found.
+std::vector<std::string> findFramePathWv2(const std::string& node, const std::string& target) {
+  std::string frame = extractJsonValueRaw(node, "frame");
+  std::string this_id = extractJsonStringDecoded(frame, "id");
+  if (this_id.empty()) return {};
+  if (this_id == target) return {this_id};
+  std::string children = extractJsonValueRaw(node, "childFrames");
+  if (children.size() < 2 || children.front() != '[') return {};
+  // Walk child array — each element is a JSON object {frame, childFrames?}.
+  size_t pos = 1;
+  while (pos < children.size() && children[pos] != ']') {
+    while (pos < children.size() && (children[pos] == ' ' || children[pos] == ',')) ++pos;
+    if (pos >= children.size() || children[pos] != '{') break;
+    int depth = 0;
+    size_t end = pos;
+    bool inStr = false;
+    while (end < children.size()) {
+      char ch = children[end];
+      if (inStr) { if (ch == '\\' && end + 1 < children.size()) ++end; else if (ch == '"') inStr = false; }
+      else if (ch == '"') inStr = true;
+      else if (ch == '{') ++depth;
+      else if (ch == '}') { --depth; if (depth == 0) { ++end; break; } }
+      ++end;
+    }
+    auto sub = findFramePathWv2(children.substr(pos, end - pos), target);
+    if (!sub.empty()) { sub.insert(sub.begin(), this_id); return sub; }
+    pos = end;
+  }
+  return {};
+}
+
+bool parseQuad8(const std::string& content, std::array<double, 8>& out) {
+  if (content.size() < 2 || content.front() != '[' || content.back() != ']') return false;
+  size_t pos = 1;
+  for (int i = 0; i < 8; ++i) {
+    while (pos < content.size() && (content[pos] == ' ' || content[pos] == ',')) ++pos;
+    size_t end = pos;
+    while (end < content.size() && content[end] != ',' && content[end] != ']') ++end;
+    if (end == pos) return false;
+    try { out[i] = std::stod(content.substr(pos, end - pos)); } catch (...) { return false; }
+    pos = end;
+  }
+  return true;
+}
+
+// Issue CDP on a specific OOPIF session, or main session if `session_id` empty.
+void cdpForChain(ViewHost* v, const std::string& session_id, const wchar_t* method,
+                  const std::string& params_json,
+                  std::function<void(bool, std::string)> cb) {
+  if (session_id.empty()) cdpCallWithResult(v, method, params_json, std::move(cb));
+  else cdpCallForSession(v, session_id, method, params_json, std::move(cb));
+}
+
+struct ChainStateWv2 {
+  uint32_t view_id;
+  uint32_t request_id;
+  std::string targetFrameId;
+  std::string script;
+  int32_t button, click_count;
+  uint32_t modifiers;
+  std::vector<std::string> chain;             // [main, ..., target]
+  std::vector<std::array<double, 8>> link_quads;
+  std::vector<std::pair<double, double>> ancestor_inner;  // chain[1..N-2]'s iw/ih
+};
+
+void composeAndDispatchWv2(std::shared_ptr<ChainStateWv2> s, const FrameResolveOkWv2& fr);
+void fetchTargetEvalWv2(std::shared_ptr<ChainStateWv2> s);
+void fetchAncestorInnerWv2(std::shared_ptr<ChainStateWv2> s, size_t i);
+void fetchLinkWv2(std::shared_ptr<ChainStateWv2> s, size_t link_idx);
+
+std::string sessionForChainIdxWv2(uint32_t view_id, const std::vector<std::string>& chain, size_t idx) {
+  if (idx == 0) return {};
+  ViewHost* v = getView(view_id);
+  if (!v) return {};
+  std::lock_guard<std::mutex> lk(v->oopif_sessions_mutex);
+  auto it = v->oopif_sessions.find(chain[idx]);
+  return (it != v->oopif_sessions.end()) ? it->second : std::string{};
+}
+
+void fetchLinkWv2(std::shared_ptr<ChainStateWv2> s, size_t link_idx) {
+  if (link_idx + 1 >= s->chain.size()) { fetchAncestorInnerWv2(s, 1); return; }
+  const std::string parent_session = sessionForChainIdxWv2(s->view_id, s->chain, link_idx);
+  const std::string& child_frameId = s->chain[link_idx + 1];
+  ViewHost* v = getView(s->view_id);
+  if (!v) { emitResolveAndClickErrorWv2(s->view_id, s->request_id, "runtime_error", "view destroyed"); return; }
+  std::string ownerParams = "{\"frameId\":\"" + escapeJsonString(child_frameId) + "\"}";
+  cdpForChain(v, parent_session, L"DOM.getFrameOwner", ownerParams,
+      [s, link_idx, parent_session](bool ok, std::string r) {
+        if (!ok) { emitResolveAndClickErrorWv2(s->view_id, s->request_id, "not_found", "getFrameOwner failed"); return; }
+        int backendNodeId = 0;
+        if (!extractJsonInt(r, "backendNodeId", backendNodeId) || !backendNodeId) {
+          emitResolveAndClickErrorWv2(s->view_id, s->request_id, "not_found", "no backendNodeId"); return;
+        }
+        ViewHost* v2 = getView(s->view_id);
+        if (!v2) { emitResolveAndClickErrorWv2(s->view_id, s->request_id, "runtime_error", "view destroyed"); return; }
+        std::string boxParams = "{\"backendNodeId\":" + std::to_string(backendNodeId) + "}";
+        cdpForChain(v2, parent_session, L"DOM.getBoxModel", boxParams,
+            [s, link_idx](bool ok2, std::string rb) {
+              if (!ok2) { emitResolveAndClickErrorWv2(s->view_id, s->request_id, "not_visible", "iframe has no box"); return; }
+              std::string model = extractJsonValueRaw(rb, "model");
+              std::string content = extractJsonValueRaw(model, "content");
+              std::array<double, 8> quad{};
+              if (!parseQuad8(content, quad)) { emitResolveAndClickErrorWv2(s->view_id, s->request_id, "runtime_error", "bad quad"); return; }
+              s->link_quads.push_back(quad);
+              fetchLinkWv2(s, link_idx + 1);
+            });
+      });
+}
+
+void fetchAncestorInnerWv2(std::shared_ptr<ChainStateWv2> s, size_t i) {
+  if (i + 1 >= s->chain.size()) { fetchTargetEvalWv2(s); return; }
+  const std::string sid = sessionForChainIdxWv2(s->view_id, s->chain, i);
+  ViewHost* v = getView(s->view_id);
+  if (!v) { emitResolveAndClickErrorWv2(s->view_id, s->request_id, "runtime_error", "view destroyed"); return; }
+  std::string params = "{\"expression\":\"JSON.stringify({iw:innerWidth,ih:innerHeight})\",\"returnByValue\":true,\"awaitPromise\":true}";
+  cdpForChain(v, sid, L"Runtime.evaluate", params,
+      [s, i](bool ok, std::string r) {
+        if (!ok) { emitResolveAndClickErrorWv2(s->view_id, s->request_id, "runtime_error", "ancestor eval failed"); return; }
+        // Result: {"result":{"type":"string","value":"<json>"}}
+        std::string value = extractJsonValueRaw(r, "value");
+        if (value.size() < 2) { emitResolveAndClickErrorWv2(s->view_id, s->request_id, "runtime_error", "ancestor eval no value"); return; }
+        // value is a JSON string literal — extractJsonValueRaw returns it with quotes; decode.
+        std::string inner;
+        for (size_t p = 1; p + 1 < value.size(); ++p) {
+          if (value[p] == '\\' && p + 2 < value.size()) {
+            char nxt = value[++p];
+            switch (nxt) { case '"': inner += '"'; break; case '\\': inner += '\\'; break;
+                            case 'n': inner += '\n'; break; default: inner += nxt; }
+          } else inner += value[p];
+        }
+        double iw = extractJsonDouble(inner, "iw"), ih = extractJsonDouble(inner, "ih");
+        s->ancestor_inner.push_back({iw, ih});
+        fetchAncestorInnerWv2(s, i + 1);
+      });
+}
+
+void fetchTargetEvalWv2(std::shared_ptr<ChainStateWv2> s) {
+  evalInFrameWv2(s->view_id, s->request_id, s->targetFrameId, s->script,
+      [s](const FrameResolveOkWv2& fr) { composeAndDispatchWv2(s, fr); });
+}
+
+void composeAndDispatchWv2(std::shared_ptr<ChainStateWv2> s, const FrameResolveOkWv2& fr) {
+  auto mapCorner = [&](double fx, double fy, double& px, double& py) {
+    double cur_x = fx, cur_y = fy;
+    double cur_iw = fr.iw, cur_ih = fr.ih;
+    for (size_t i = s->link_quads.size(); i-- > 0; ) {
+      double mx, my;
+      bilinearMapWv2(s->link_quads[i], cur_iw, cur_ih, cur_x, cur_y, mx, my);
+      cur_x = mx; cur_y = my;
+      if (i == 0) break;
+      cur_iw = s->ancestor_inner[i - 1].first;
+      cur_ih = s->ancestor_inner[i - 1].second;
+    }
+    px = cur_x; py = cur_y;
+  };
+  double pcx, pcy; mapCorner(fr.cx, fr.cy, pcx, pcy);
+  double cx0, cy0, cx1, cy1, cx2, cy2, cx3, cy3;
+  mapCorner(fr.x,             fr.y,             cx0, cy0);
+  mapCorner(fr.x + fr.w,      fr.y,             cx1, cy1);
+  mapCorner(fr.x + fr.w,      fr.y + fr.h,      cx2, cy2);
+  mapCorner(fr.x,             fr.y + fr.h,      cx3, cy3);
+  const double min_x = std::min(std::min(cx0, cx1), std::min(cx2, cx3));
+  const double max_x = std::max(std::max(cx0, cx1), std::max(cx2, cx3));
+  const double min_y = std::min(std::min(cy0, cy1), std::min(cy2, cy3));
+  const double max_y = std::max(std::max(cy0, cy1), std::max(cy2, cy3));
+  finishResolveAndClickWv2(s->view_id, s->request_id,
+      min_x, min_y, max_x - min_x, max_y - min_y, pcx, pcy,
+      s->button, s->click_count, s->modifiers);
+}
+
+// Walk ancestor chain via Page.getFrameTree, compose bilinear transforms across
+// nested OOPIF/same-origin frames, dispatch click in main-page coords.
 void runFrameTargetedWv2(uint32_t view_id, uint32_t request_id, const std::string& frameId,
                           const std::string& script,
                           int32_t button, int32_t click_count, uint32_t modifiers) {
   ViewHost* v = getView(view_id);
   if (!v || !v->webview) { emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "view destroyed"); return; }
-  std::string ownerParams = "{\"frameId\":\"" + escapeJsonString(frameId) + "\"}";
-  cdpCallWithResult(v, L"DOM.getFrameOwner", ownerParams,
+  cdpCallWithResult(v, L"Page.getFrameTree", "{}",
       [view_id, request_id, frameId, script, button, click_count, modifiers](bool ok, std::string r) {
-        if (!ok) { emitResolveAndClickErrorWv2(view_id, request_id, "not_found", "frame not in tree"); return; }
-        int backendNodeId = 0;
-        if (!extractJsonInt(r, "backendNodeId", backendNodeId) || !backendNodeId) {
-          emitResolveAndClickErrorWv2(view_id, request_id, "not_found", "no backendNodeId"); return;
-        }
-        ViewHost* v2 = getView(view_id);
-        if (!v2 || !v2->webview) { emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "view destroyed"); return; }
-        std::string boxParams = "{\"backendNodeId\":" + std::to_string(backendNodeId) + "}";
-        cdpCallWithResult(v2, L"DOM.getBoxModel", boxParams,
-            [view_id, request_id, frameId, script, button, click_count, modifiers](bool ok2, std::string rb) {
-              if (!ok2) { emitResolveAndClickErrorWv2(view_id, request_id, "not_visible", "iframe has no box"); return; }
-              std::string model = extractJsonValueRaw(rb, "model");
-              std::string content = extractJsonValueRaw(model, "content");
-              // Parse 8 doubles from JSON array `[a,b,c,d,e,f,g,h]`.
-              if (content.size() < 2 || content.front() != '[' || content.back() != ']') {
-                emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "bad quad"); return;
-              }
-              double q[8] = {0,0,0,0,0,0,0,0};
-              size_t pos = 1;
-              for (int i = 0; i < 8; ++i) {
-                while (pos < content.size() && (content[pos] == ' ' || content[pos] == ',')) ++pos;
-                size_t end = pos;
-                while (end < content.size() && content[end] != ',' && content[end] != ']') ++end;
-                if (end == pos) { emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "bad quad"); return; }
-                try { q[i] = std::stod(content.substr(pos, end - pos)); } catch (...) {
-                  emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "quad parse"); return;
-                }
-                pos = end;
-              }
-              const bool axis_aligned = (q[1] == q[3]) && (q[0] == q[6]) && (q[2] == q[4]) && (q[5] == q[7]);
-              if (!axis_aligned) {
-                emitResolveAndClickErrorWv2(view_id, request_id, "not_supported", "transformed iframe not supported");
-                return;
-              }
-              const double iframe_x = q[0], iframe_y = q[1];
-              evalInFrameWv2(view_id, request_id, frameId, script,
-                  [view_id, request_id, iframe_x, iframe_y, button, click_count, modifiers]
-                  (double fx, double fy, double fw, double fh, double fcx, double fcy) {
-                    finishResolveAndClickWv2(view_id, request_id,
-                        iframe_x + fx, iframe_y + fy, fw, fh,
-                        iframe_x + fcx, iframe_y + fcy,
-                        button, click_count, modifiers);
-                  });
-            });
+        if (!ok) { emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "getFrameTree failed"); return; }
+        std::string root = extractJsonValueRaw(r, "frameTree");
+        std::vector<std::string> chain = findFramePathWv2(root, frameId);
+        if (chain.size() < 2) { emitResolveAndClickErrorWv2(view_id, request_id, "not_found", "frame not in tree"); return; }
+        auto s = std::make_shared<ChainStateWv2>();
+        s->view_id = view_id; s->request_id = request_id;
+        s->targetFrameId = frameId; s->script = script;
+        s->button = button; s->click_count = click_count; s->modifiers = modifiers;
+        s->chain = std::move(chain);
+        fetchLinkWv2(s, 0);
       });
 }
-
 }  // namespace
 
 extern "C" {
@@ -1070,9 +1225,9 @@ BUNITE_EXPORT void bunite_view_resolve_and_click(
     cdpCallWithResult(v, L"Runtime.evaluate", evalParams,
         [view_id, request_id, button, click_count, modifiers](bool ok, std::string r) {
           parseEvalAndContinueWv2(view_id, request_id, ok, r,
-              [view_id, request_id, button, click_count, modifiers]
-              (double x, double y, double w, double h, double cx, double cy) {
-                finishResolveAndClickWv2(view_id, request_id, x, y, w, h, cx, cy,
+              [view_id, request_id, button, click_count, modifiers](const FrameResolveOkWv2& fr) {
+                finishResolveAndClickWv2(view_id, request_id,
+                                          fr.x, fr.y, fr.w, fr.h, fr.cx, fr.cy,
                                           button, click_count, modifiers);
               });
         });

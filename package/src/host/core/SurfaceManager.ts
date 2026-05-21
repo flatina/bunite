@@ -84,7 +84,12 @@ function recordResolution(id: number, kind: "adopted" | "dismissed") {
     if (firstKey !== undefined) popupResolutionLog.delete(firstKey);
   }
   popupResolutionLog.set(id, kind);
+  popupCounters[kind] += 1;
 }
+
+// Process-lifetime popup lifecycle counters; surfaced via RuntimeCap.popupMetrics.
+const popupCounters = { armed: 0, adopted: 0, dismissed: 0, timeoutFired: 0, extended: 0 };
+export function getPopupMetricsSnapshot() { return { ...popupCounters }; }
 
 /** Called when a backend mints a popup view. Stashes the pending adoption +
  *  arms a timer that auto-dismisses if the host doesn't respond. */
@@ -94,6 +99,7 @@ export function emitPopupRequested(
   args: { newSurfaceId: number; url: string; disposition: "tab" | "window" | "popup" },
 ) {
   const armTs = Date.now();
+  popupCounters.armed += 1;
   const entry: PendingPopup = {
     newSurfaceId: args.newSurfaceId,
     openerHostViewId: hostViewId,
@@ -105,6 +111,7 @@ export function emitPopupRequested(
   };
   entry.timer = setTimeout(() => {
     if (!pendingPopups.delete(args.newSurfaceId)) return;
+    popupCounters.timeoutFired += 1;
     recordResolution(args.newSurfaceId, "dismissed");
     BrowserView.dismissPopupById(args.newSurfaceId);
   }, POPUP_ADOPT_TIMEOUT_MS);
@@ -726,9 +733,11 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       if (pending.timer) clearTimeout(pending.timer);
       pending.timer = setTimeout(() => {
         if (!pendingPopups.delete(newSurfaceId)) return;
+        popupCounters.timeoutFired += 1;
         recordResolution(newSurfaceId, "dismissed");
         BrowserView.dismissPopupById(newSurfaceId);
       }, gracePeriodMs);
+      popupCounters.extended += 1;
       return { ok: true as const, deadlineMs: requested };
     },
 

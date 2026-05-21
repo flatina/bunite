@@ -15,7 +15,7 @@ import {
 } from "../native";
 import { ensureRpcServer } from "./Socket";
 import { BrowserWindow } from "./BrowserWindow";
-import { createSurfaceCapImpl } from "./SurfaceManager";
+import { createSurfaceCapImpl, getPopupMetricsSnapshot } from "./SurfaceManager";
 import "./SurfaceBrowserIPC";
 import { log, logLevelToInt } from "../log";
 import { RuntimeCap, SurfaceCap, PageReportingCap, IpcError, type ImplOf } from "../../rpc/index";
@@ -205,6 +205,7 @@ export class AppRuntime {
             });
           },
         }),
+      popupMetrics: () => getPopupMetricsSnapshot(),
     } satisfies ImplOf<typeof RuntimeCap>;
     return impl;
   }

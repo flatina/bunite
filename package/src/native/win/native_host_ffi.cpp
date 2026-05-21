@@ -11,10 +11,14 @@
 //   (verified empirically on Win 11 / CEF 119+).
 // screenshot: PrintWindow PW_RENDERFULLCONTENT misses hardware-composited
 //   surfaces (returns all-black). Page.captureScreenshot is compositor-aware.
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 
 using bunite_win::runOnUiThreadSync;
@@ -1581,8 +1585,8 @@ std::string escapeForJsonString(const std::string& s) {
 }
 
 std::string buildResolveScript(const std::string& selector) {
-  // Frame offset is computed natively via DOM.getBoxModel — script returns
-  // frame-local rect (or viewport-local for main frame).
+  // Frame-local rect + innerWidth/innerHeight for bilinear mapping when the
+  // frame is transformed (rotate/scale). Main frame uses iw/ih harmlessly.
   std::string sel_lit = "\"" + escapeForJsString(selector) + "\"";
   return
     "(function(){"
@@ -1594,7 +1598,8 @@ std::string buildResolveScript(const std::string& selector) {
       "&&r.top<innerHeight&&r.left<innerWidth;"
       "if(!vis)return{ok:false,code:\"not_visible\"};"
       "return{ok:true,x:r.x,y:r.y,w:r.width,h:r.height,"
-      "cx:r.x+r.width/2,cy:r.y+r.height/2};"
+      "cx:r.x+r.width/2,cy:r.y+r.height/2,"
+      "iw:innerWidth,ih:innerHeight};"
     "})()";
 }
 
@@ -1651,11 +1656,13 @@ void finishResolveAndClick(uint32_t view_id, uint32_t request_id, double x, doub
   bunite_win::emitWebviewEvent(view_id, "resolve-and-click-result", payload);
 }
 
+struct FrameResolveOk { double x, y, w, h, cx, cy, iw, ih; };
+
 // Parse a Runtime.evaluate response (either main-session or sessionId-routed)
-// and forward (frame-local) cx/cy/x/y/w/h to `onOk`. The script's failure
+// and forward the script's frame-local fields to `onOk`. The script's failure
 // branch (`{ok:false,code:...}`) routes through `onErr`.
 void parseEvalAndContinue(uint32_t view_id, uint32_t request_id, bool ok, const std::string& evalResult,
-                           std::function<void(double, double, double, double, double, double)> onOk) {
+                           std::function<void(const FrameResolveOk&)> onOk) {
   auto onErr = [view_id, request_id](const char* code, const std::string& msg) {
     emitResolveAndClickError(view_id, request_id, code, msg);
   };
@@ -1667,16 +1674,20 @@ void parseEvalAndContinue(uint32_t view_id, uint32_t request_id, bool ok, const 
     onErr(code.c_str(), "");
     return;
   }
-  onOk(value->GetDouble("x"), value->GetDouble("y"),
-       value->GetDouble("w"), value->GetDouble("h"),
-       value->GetDouble("cx"), value->GetDouble("cy"));
+  onOk(FrameResolveOk{
+      value->GetDouble("x"), value->GetDouble("y"),
+      value->GetDouble("w"), value->GetDouble("h"),
+      value->GetDouble("cx"), value->GetDouble("cy"),
+      value->HasKey("iw") ? value->GetDouble("iw") : 0.0,
+      value->HasKey("ih") ? value->GetDouble("ih") : 0.0,
+  });
 }
 
 // Issue Runtime.evaluate inside the target frame — sessionId-routed (OOPIF) or
 // isolated-world via main session (same-renderer cross-origin or same-origin).
 void evalInFrame(uint32_t view_id, uint32_t request_id, const std::string& frameId,
                   const std::string& escScript,
-                  std::function<void(double, double, double, double, double, double)> onOk) {
+                  std::function<void(const FrameResolveOk&)> onOk) {
   auto* view = bunite_win::getViewHostById(view_id);
   if (!view || !view->browser) { emitResolveAndClickError(view_id, request_id, "runtime_error", "view destroyed"); return; }
   // Look up auto-attached OOPIF session.
@@ -1721,52 +1732,242 @@ void evalInFrame(uint32_t view_id, uint32_t request_id, const std::string& frame
       });
 }
 
-// `frameId` non-empty: resolve via DOM.getFrameOwner + DOM.getBoxModel (main) +
-// in-frame eval (sessionId-routed or createIsolatedWorld) + page-coord click.
+// Bilinear: (fx, fy) ∈ [0, iw] × [0, ih] → page coord using clockwise quad
+// TL/TR/BR/BL. Handles axis-aligned, scaled, rotated, and skewed iframes.
+inline void bilinearMap(const std::array<double, 8>& q, double iw, double ih,
+                         double fx, double fy, double& px, double& py) {
+  const double u = (iw > 0) ? (fx / iw) : 0.0;
+  const double v = (ih > 0) ? (fy / ih) : 0.0;
+  px = (1-u)*(1-v)*q[0] + u*(1-v)*q[2] + u*v*q[4] + (1-u)*v*q[6];
+  py = (1-u)*(1-v)*q[1] + u*(1-v)*q[3] + u*v*q[5] + (1-u)*v*q[7];
+}
+
+// Recursive frame path lookup in Page.getFrameTree response.
+// Returns [outermost frame id, ..., target_frame_id] including main; empty if
+// target not in tree.
+std::vector<std::string> findFramePath(CefRefPtr<CefDictionaryValue> node, const std::string& target) {
+  if (!node) return {};
+  CefRefPtr<CefDictionaryValue> frame = node->HasKey("frame") ? node->GetDictionary("frame") : nullptr;
+  if (!frame) return {};
+  std::string this_id = frame->GetString("id").ToString();
+  if (this_id == target) return {this_id};
+  CefRefPtr<CefListValue> children = node->HasKey("childFrames") ? node->GetList("childFrames") : nullptr;
+  if (!children) return {};
+  for (size_t i = 0; i < children->GetSize(); ++i) {
+    auto v = children->GetValue(i);
+    if (!v || v->GetType() != VTYPE_DICTIONARY) continue;
+    auto sub = findFramePath(v->GetDictionary(), target);
+    if (!sub.empty()) { sub.insert(sub.begin(), this_id); return sub; }
+  }
+  return {};
+}
+
+bool parseQuadFromBoxModel(const std::string& result, std::array<double, 8>& out) {
+  CefRefPtr<CefValue> bv = CefParseJSON(result, JSON_PARSER_RFC);
+  if (!bv || bv->GetType() != VTYPE_DICTIONARY) return false;
+  auto model = bv->GetDictionary()->HasKey("model") ? bv->GetDictionary()->GetDictionary("model") : nullptr;
+  if (!model) return false;
+  auto content = model->HasKey("content") ? model->GetList("content") : nullptr;
+  if (!content || content->GetSize() < 8) return false;
+  for (int i = 0; i < 8; ++i) out[i] = content->GetDouble(i);
+  return true;
+}
+
+// Eval a script on a specific session (OOPIF) or main session (empty session_id).
+// Result delivered as raw JSON of `Runtime.evaluate` response.
+void evalRaw(ViewHost* view, const std::string& session_id, const std::string& escScript,
+              std::function<void(bool, std::string)> cb) {
+  if (session_id.empty()) {
+    std::string params = "{\"expression\":\"" + escScript + "\",\"returnByValue\":true,\"awaitPromise\":true}";
+    cefCdpCall(view, "Runtime.evaluate", params, std::move(cb));
+    return;
+  }
+  int id = nextRawCdpId();
+  std::string msg = "{\"id\":" + std::to_string(id) +
+                    ",\"sessionId\":\"" + session_id +
+                    "\",\"method\":\"Runtime.evaluate\",\"params\":{\"expression\":\"" +
+                    escScript + "\",\"returnByValue\":true,\"awaitPromise\":true}}";
+  cefSendRaw(view, msg, id, std::move(cb));
+}
+
+// State threaded through chain-walk continuations.
+struct ChainState {
+  uint32_t view_id;
+  uint32_t request_id;
+  std::string targetFrameId;
+  std::string escScript;
+  int32_t button, click_count;
+  uint32_t modifiers;
+  // chain[0] = main frameId, chain[1..N-1] = outermost..target. N >= 2.
+  std::vector<std::string> chain;
+  // For each link i (parent = chain[i], child = chain[i+1]): quad in parent's coord system.
+  std::vector<std::array<double, 8>> link_quads;
+  // For chain[i] (i in [1..N-2]): innerWidth/innerHeight of that ancestor frame.
+  // Used when mapping FROM chain[i+1]'s coords up to chain[i]'s coords.
+  // Indexed by ancestor's chain position; chain[N-1] (target) iw/ih comes from
+  // the target eval, not stored here.
+  std::vector<std::pair<double, double>> ancestor_inner;
+};
+
+void composeAndDispatch(std::shared_ptr<ChainState> s, const FrameResolveOk& fr);
+void fetchTargetEval(std::shared_ptr<ChainState> s);
+void fetchAncestorInner(std::shared_ptr<ChainState> s, size_t i);
+void fetchLink(std::shared_ptr<ChainState> s, size_t link_idx);
+
+// Look up the session for an ancestor frame (chain[idx]). idx == 0 → main (empty).
+std::string sessionForChainIdx(uint32_t view_id, const std::vector<std::string>& chain, size_t idx) {
+  if (idx == 0) return {};
+  auto* view = bunite_win::getViewHostById(view_id);
+  if (!view) return {};
+  std::lock_guard<std::mutex> lk(view->oopif_sessions_mutex);
+  auto it = view->oopif_sessions.find(chain[idx]);
+  return (it != view->oopif_sessions.end()) ? it->second : std::string{};
+}
+
+void fetchLink(std::shared_ptr<ChainState> s, size_t link_idx) {
+  if (link_idx + 1 >= s->chain.size()) {
+    // All links collected. Move to ancestor inner sizes.
+    fetchAncestorInner(s, 1);
+    return;
+  }
+  const std::string parent_session = sessionForChainIdx(s->view_id, s->chain, link_idx);
+  const std::string& child_frameId = s->chain[link_idx + 1];
+  auto* view = bunite_win::getViewHostById(s->view_id);
+  if (!view) { emitResolveAndClickError(s->view_id, s->request_id, "runtime_error", "view destroyed"); return; }
+  // DOM.getFrameOwner on parent's session.
+  std::string ownerParams = "{\"frameId\":\"" + bunite_win::escapeJsonString(child_frameId) + "\"}";
+  auto onOwner = [s, link_idx, parent_session](bool ok, std::string r) {
+    if (!ok) { emitResolveAndClickError(s->view_id, s->request_id, "not_found", "getFrameOwner failed"); return; }
+    CefRefPtr<CefValue> val = CefParseJSON(r, JSON_PARSER_RFC);
+    if (!val || val->GetType() != VTYPE_DICTIONARY) { emitResolveAndClickError(s->view_id, s->request_id, "runtime_error", "getFrameOwner malformed"); return; }
+    int backendNodeId = val->GetDictionary()->HasKey("backendNodeId") ? val->GetDictionary()->GetInt("backendNodeId") : 0;
+    if (!backendNodeId) { emitResolveAndClickError(s->view_id, s->request_id, "not_found", "no backendNodeId"); return; }
+    auto* v2 = bunite_win::getViewHostById(s->view_id);
+    if (!v2) { emitResolveAndClickError(s->view_id, s->request_id, "runtime_error", "view destroyed"); return; }
+    std::string boxParams = "{\"backendNodeId\":" + std::to_string(backendNodeId) + "}";
+    auto onBox = [s, link_idx](bool ok2, std::string rb) {
+      if (!ok2) { emitResolveAndClickError(s->view_id, s->request_id, "not_visible", "iframe has no box"); return; }
+      std::array<double, 8> quad{};
+      if (!parseQuadFromBoxModel(rb, quad)) { emitResolveAndClickError(s->view_id, s->request_id, "runtime_error", "bad quad"); return; }
+      s->link_quads.push_back(quad);
+      fetchLink(s, link_idx + 1);
+    };
+    if (parent_session.empty()) {
+      cefCdpCall(v2, "DOM.getBoxModel", boxParams, onBox);
+    } else {
+      int id = nextRawCdpId();
+      std::string msg = "{\"id\":" + std::to_string(id) +
+                        ",\"sessionId\":\"" + parent_session +
+                        "\",\"method\":\"DOM.getBoxModel\",\"params\":" + boxParams + "}";
+      cefSendRaw(v2, msg, id, onBox);
+    }
+  };
+  if (parent_session.empty()) {
+    cefCdpCall(view, "DOM.getFrameOwner", ownerParams, onOwner);
+  } else {
+    int id = nextRawCdpId();
+    std::string msg = "{\"id\":" + std::to_string(id) +
+                      ",\"sessionId\":\"" + parent_session +
+                      "\",\"method\":\"DOM.getFrameOwner\",\"params\":" + ownerParams + "}";
+    cefSendRaw(view, msg, id, onOwner);
+  }
+}
+
+void fetchAncestorInner(std::shared_ptr<ChainState> s, size_t i) {
+  // i ranges [1, N-2]. Skip N-1 (target — iw/ih from target eval).
+  if (i + 1 >= s->chain.size()) {
+    // Done with ancestors. Eval target script.
+    fetchTargetEval(s);
+    return;
+  }
+  const std::string sid = sessionForChainIdx(s->view_id, s->chain, i);
+  auto* view = bunite_win::getViewHostById(s->view_id);
+  if (!view) { emitResolveAndClickError(s->view_id, s->request_id, "runtime_error", "view destroyed"); return; }
+  const std::string& script = "JSON.stringify({iw:innerWidth,ih:innerHeight})";
+  std::string escScript = escapeForJsonString(script);
+  evalRaw(view, sid, escScript,
+      [s, i](bool ok, std::string r) {
+        if (!ok) { emitResolveAndClickError(s->view_id, s->request_id, "runtime_error", "ancestor eval failed"); return; }
+        // Result envelope: {"result":{"type":"string","value":"<json string>"}}
+        CefRefPtr<CefValue> v = CefParseJSON(r, JSON_PARSER_RFC);
+        if (!v || v->GetType() != VTYPE_DICTIONARY) { emitResolveAndClickError(s->view_id, s->request_id, "runtime_error", "ancestor eval malformed"); return; }
+        auto result = v->GetDictionary()->GetDictionary("result");
+        if (!result || !result->HasKey("value")) { emitResolveAndClickError(s->view_id, s->request_id, "runtime_error", "ancestor eval no value"); return; }
+        std::string vs = result->GetString("value").ToString();
+        CefRefPtr<CefValue> inner = CefParseJSON(vs, JSON_PARSER_RFC);
+        if (!inner || inner->GetType() != VTYPE_DICTIONARY) { emitResolveAndClickError(s->view_id, s->request_id, "runtime_error", "ancestor inner malformed"); return; }
+        s->ancestor_inner.push_back({inner->GetDictionary()->GetDouble("iw"), inner->GetDictionary()->GetDouble("ih")});
+        fetchAncestorInner(s, i + 1);
+      });
+}
+
+void fetchTargetEval(std::shared_ptr<ChainState> s) {
+  evalInFrame(s->view_id, s->request_id, s->targetFrameId, s->escScript,
+      [s](const FrameResolveOk& fr) { composeAndDispatch(s, fr); });
+}
+
+void composeAndDispatch(std::shared_ptr<ChainState> s, const FrameResolveOk& fr) {
+  // Stack iw/ih per chain level chain[1..N-1] for the bilinear walk.
+  // chain[N-1] = target → fr.iw, fr.ih.
+  // chain[i] (1 <= i < N-1) → s->ancestor_inner[i-1].
+  // link_quads[i] = quad of chain[i+1]'s iframe element, in chain[i]'s coords.
+  // Map order: from target up to main, applying bilinear at each link.
+  auto mapCorner = [&](double fx, double fy, double& px, double& py) {
+    double cur_x = fx, cur_y = fy;
+    double cur_iw = fr.iw, cur_ih = fr.ih;
+    // link i (chain[i+1] in chain[i]'s coords) for i = N-2 down to 0.
+    for (size_t i = s->link_quads.size(); i-- > 0; ) {
+      double mapped_x, mapped_y;
+      bilinearMap(s->link_quads[i], cur_iw, cur_ih, cur_x, cur_y, mapped_x, mapped_y);
+      cur_x = mapped_x; cur_y = mapped_y;
+      if (i == 0) break;  // chain[i] is main-direct child handled; next would be main itself
+      // Now in chain[i]'s coords; next iteration maps to chain[i-1]'s coords.
+      cur_iw = s->ancestor_inner[i - 1].first;
+      cur_ih = s->ancestor_inner[i - 1].second;
+    }
+    px = cur_x; py = cur_y;
+  };
+  double pcx, pcy; mapCorner(fr.cx, fr.cy, pcx, pcy);
+  double cx0, cy0, cx1, cy1, cx2, cy2, cx3, cy3;
+  mapCorner(fr.x,             fr.y,             cx0, cy0);
+  mapCorner(fr.x + fr.w,      fr.y,             cx1, cy1);
+  mapCorner(fr.x + fr.w,      fr.y + fr.h,      cx2, cy2);
+  mapCorner(fr.x,             fr.y + fr.h,      cx3, cy3);
+  const double min_x = std::min(std::min(cx0, cx1), std::min(cx2, cx3));
+  const double max_x = std::max(std::max(cx0, cx1), std::max(cx2, cx3));
+  const double min_y = std::min(std::min(cy0, cy1), std::min(cy2, cy3));
+  const double max_y = std::max(std::max(cy0, cy1), std::max(cy2, cy3));
+  finishResolveAndClick(s->view_id, s->request_id,
+      min_x, min_y, max_x - min_x, max_y - min_y, pcx, pcy,
+      s->button, s->click_count, s->modifiers);
+}
+
+// `frameId` non-empty: walk ancestor chain via Page.getFrameTree, compose
+// bilinear transforms across nested OOPIF/same-origin frames, dispatch click
+// in main-page coords.
 void runFrameTargeted(uint32_t view_id, uint32_t request_id, const std::string& frameId,
                        const std::string& escScript,
                        int32_t button, int32_t click_count, uint32_t modifiers) {
   auto* view = bunite_win::getViewHostById(view_id);
   if (!view || !view->browser) { emitResolveAndClickError(view_id, request_id, "runtime_error", "view destroyed"); return; }
-  std::string ownerParams = "{\"frameId\":\"" + bunite_win::escapeJsonString(frameId) + "\"}";
-  cefCdpCall(view, "DOM.getFrameOwner", ownerParams,
+  cefCdpCall(view, "Page.getFrameTree", "{}",
       [view_id, request_id, frameId, escScript, button, click_count, modifiers](bool ok, std::string r) {
-        if (!ok) { emitResolveAndClickError(view_id, request_id, "not_found", "frame not in tree"); return; }
+        if (!ok) { emitResolveAndClickError(view_id, request_id, "runtime_error", "getFrameTree failed"); return; }
         CefRefPtr<CefValue> val = CefParseJSON(r, JSON_PARSER_RFC);
-        if (!val || val->GetType() != VTYPE_DICTIONARY) { emitResolveAndClickError(view_id, request_id, "runtime_error", "getFrameOwner malformed"); return; }
-        int backendNodeId = val->GetDictionary()->HasKey("backendNodeId") ? val->GetDictionary()->GetInt("backendNodeId") : 0;
-        if (!backendNodeId) { emitResolveAndClickError(view_id, request_id, "not_found", "no backendNodeId"); return; }
-        auto* v2 = bunite_win::getViewHostById(view_id);
-        if (!v2 || !v2->browser) { emitResolveAndClickError(view_id, request_id, "runtime_error", "view destroyed"); return; }
-        std::string boxParams = "{\"backendNodeId\":" + std::to_string(backendNodeId) + "}";
-        cefCdpCall(v2, "DOM.getBoxModel", boxParams,
-            [view_id, request_id, frameId, escScript, button, click_count, modifiers](bool ok2, std::string rb) {
-              if (!ok2) { emitResolveAndClickError(view_id, request_id, "not_visible", "iframe has no box"); return; }
-              CefRefPtr<CefValue> bv = CefParseJSON(rb, JSON_PARSER_RFC);
-              if (!bv || bv->GetType() != VTYPE_DICTIONARY) { emitResolveAndClickError(view_id, request_id, "runtime_error", "getBoxModel malformed"); return; }
-              auto model = bv->GetDictionary()->HasKey("model") ? bv->GetDictionary()->GetDictionary("model") : nullptr;
-              if (!model) { emitResolveAndClickError(view_id, request_id, "not_visible", "no model"); return; }
-              auto contentList = model->HasKey("content") ? model->GetList("content") : nullptr;
-              if (!contentList || contentList->GetSize() < 8) { emitResolveAndClickError(view_id, request_id, "runtime_error", "bad quad"); return; }
-              double q[8];
-              for (int i = 0; i < 8; ++i) q[i] = contentList->GetDouble(i);
-              // Axis-aligned check (TL→TR→BR→BL clockwise). Transformed iframes
-              // (rotate/skew) violate; fail-closed.
-              const bool axis_aligned = (q[1] == q[3]) && (q[0] == q[6]) && (q[2] == q[4]) && (q[5] == q[7]);
-              if (!axis_aligned) {
-                emitResolveAndClickError(view_id, request_id, "not_supported", "transformed iframe not supported");
-                return;
-              }
-              const double iframe_x = q[0], iframe_y = q[1];
-              evalInFrame(view_id, request_id, frameId, escScript,
-                  [view_id, request_id, iframe_x, iframe_y, button, click_count, modifiers]
-                  (double fx, double fy, double fw, double fh, double fcx, double fcy) {
-                    finishResolveAndClick(view_id, request_id,
-                        iframe_x + fx, iframe_y + fy, fw, fh,
-                        iframe_x + fcx, iframe_y + fcy,
-                        button, click_count, modifiers);
-                  });
-            });
+        if (!val || val->GetType() != VTYPE_DICTIONARY) { emitResolveAndClickError(view_id, request_id, "runtime_error", "getFrameTree malformed"); return; }
+        auto root = val->GetDictionary()->GetDictionary("frameTree");
+        std::vector<std::string> chain = findFramePath(root, frameId);
+        if (chain.size() < 2) { emitResolveAndClickError(view_id, request_id, "not_found", "frame not in tree"); return; }
+        auto s = std::make_shared<ChainState>();
+        s->view_id = view_id;
+        s->request_id = request_id;
+        s->targetFrameId = frameId;
+        s->escScript = escScript;
+        s->button = button;
+        s->click_count = click_count;
+        s->modifiers = modifiers;
+        s->chain = std::move(chain);  // chain[0] = main, chain[N-1] = target
+        fetchLink(s, 0);
       });
 }
 
@@ -1786,14 +1987,14 @@ extern "C" BUNITE_EXPORT void bunite_view_resolve_and_click(
     std::string escScript = escapeForJsonString(script);
 
     if (frameId.empty()) {
-      // Main frame.
+      // Main frame — fr.x/y/w/h are already page-viewport coords (iw/ih unused).
       std::string evalParams = "{\"expression\":\"" + escScript + "\",\"returnByValue\":true,\"awaitPromise\":true}";
       cefCdpCall(view, "Runtime.evaluate", evalParams,
           [view_id, request_id, button, click_count, modifiers](bool ok, std::string r) {
             parseEvalAndContinue(view_id, request_id, ok, r,
-                [view_id, request_id, button, click_count, modifiers]
-                (double x, double y, double w, double h, double cx, double cy) {
-                  finishResolveAndClick(view_id, request_id, x, y, w, h, cx, cy,
+                [view_id, request_id, button, click_count, modifiers](const FrameResolveOk& fr) {
+                  finishResolveAndClick(view_id, request_id,
+                                         fr.x, fr.y, fr.w, fr.h, fr.cx, fr.cy,
                                          button, click_count, modifiers);
                 });
           });
