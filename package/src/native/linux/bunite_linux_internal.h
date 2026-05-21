@@ -43,6 +43,10 @@ struct ViewState {
   // held until we mark confirmed/text + emit signal completion.
   std::unordered_map<uint32_t, WebKitScriptDialog*> pending_dialogs;
   uint32_t next_dialog_request_id = 1;
+
+  // Download policy: 0=auto, 1=ask (treated as block), 2=block (default).
+  std::atomic<int32_t> download_policy{2};
+  std::string download_dir;
 };
 
 struct RuntimeState {
@@ -58,6 +62,12 @@ struct RuntimeState {
   GMainContext* ui_context = nullptr;
   pthread_t ui_thread = 0;
   bool ui_thread_set = false;
+
+  // Hidden top-level window — popup-minted WebViews park here until adoption.
+  GtkWindow* popup_parent = nullptr;
+  // Parked popup-minted views awaiting acceptPopup/dismissPopup. Keyed by
+  // popup view_id (>= 0x80000000).
+  std::unordered_map<uint32_t, WebKitWebView*> parked_popups;
 
   std::unordered_map<uint32_t, WebKitPermissionRequest*> pending_permissions;
   uint32_t next_permission_request_id = 1;
@@ -147,6 +157,8 @@ bool createView(uint32_t view_id, uint32_t window_id,
 void removeView(uint32_t view_id);
 void detachViewSideState(uint32_t view_id);
 void applyViewBounds(uint32_t view_id, double x, double y, double width, double height);
+bool acceptParkedPopup(uint32_t new_view_id, uint32_t host_window_id, double x, double y, double w, double h);
+void dismissParkedPopup(uint32_t new_view_id);
 void queueViewRedraw(WebKitWebView* wv);
 
 void registerAppresScheme(WebKitWebContext* ctx);

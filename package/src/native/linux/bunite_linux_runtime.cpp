@@ -59,6 +59,11 @@ extern "C" BUNITE_EXPORT bool bunite_init(
   }
 
   rt.app = app;
+  // Hidden offscreen parent — popup-minted views park here until host adoption.
+  rt.popup_parent = GTK_WINDOW(gtk_window_new());
+  gtk_window_set_decorated(rt.popup_parent, FALSE);
+  gtk_window_set_default_size(rt.popup_parent, 1, 1);
+  gtk_window_set_child(rt.popup_parent, gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0));
   rt.initialized = true;
   return true;
 }

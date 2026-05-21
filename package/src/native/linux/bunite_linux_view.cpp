@@ -10,6 +10,10 @@ namespace {
 
 constexpr const char* kViewIdKey = "bunite-view-id";
 
+// Forward decls — on_create references these to wire popup-minted views.
+gboolean on_decide_policy(WebKitWebView*, WebKitPolicyDecision*, WebKitPolicyDecisionType, gpointer);
+void on_title_changed(GObject*, GParamSpec*, gpointer);
+
 void emit_url(uint32_t view_id, const char* name, WebKitWebView* wv) {
   const char* uri = webkit_web_view_get_uri(wv);
   emitWebviewEvent(view_id, name, uri ? std::string(uri) : std::string{});
@@ -84,13 +88,49 @@ gboolean on_script_dialog(WebKitWebView* /*wv*/, WebKitScriptDialog* dialog, gpo
 }
 
 GtkWidget* on_create(WebKitWebView* wv, WebKitNavigationAction* action, gpointer user_data) {
-  const uint32_t view_id = GPOINTER_TO_UINT(user_data);
+  const uint32_t opener_view_id = GPOINTER_TO_UINT(user_data);
   WebKitURIRequest* req = webkit_navigation_action_get_request(action);
   const char* uri = webkit_uri_request_get_uri(req);
-  std::string payload = "{\"url\":\"" + escapeJsonString(uri ? uri : "") + "\"}";
-  emitWebviewEvent(view_id, "new-window-open", payload);
-  (void)wv;
-  return nullptr;  // cancel; JS opens via load_url if desired
+  if (g_runtime.popup_blocking) {
+    std::string payload = "{\"url\":\"" + escapeJsonString(uri ? uri : "") + "\"}";
+    emitWebviewEvent(opener_view_id, "new-window-open", payload);
+    return nullptr;
+  }
+  static std::atomic<uint32_t> g_popup_seq{0x80000000u};
+  const uint32_t new_view_id = g_popup_seq.fetch_add(1);
+  // Share network-session + user-content-manager so cookies/preload-injection
+  // carry across the opener boundary.
+  WebKitWebView* popup = WEBKIT_WEB_VIEW(g_object_new(
+      WEBKIT_TYPE_WEB_VIEW,
+      "network-session", webkit_web_view_get_network_session(wv),
+      "user-content-manager", webkit_web_view_get_user_content_manager(wv),
+      nullptr));
+  g_object_ref_sink(popup);
+  g_object_set_data(G_OBJECT(popup), kViewIdKey, GUINT_TO_POINTER(new_view_id));
+  g_signal_connect(popup, "load-changed", G_CALLBACK(on_load_changed), GUINT_TO_POINTER(new_view_id));
+  g_signal_connect(popup, "load-failed", G_CALLBACK(on_load_failed), GUINT_TO_POINTER(new_view_id));
+  g_signal_connect(popup, "load-failed-with-tls-errors", G_CALLBACK(on_load_failed_tls), GUINT_TO_POINTER(new_view_id));
+  g_signal_connect(popup, "decide-policy", G_CALLBACK(on_decide_policy), GUINT_TO_POINTER(new_view_id));
+  g_signal_connect(popup, "create", G_CALLBACK(on_create), GUINT_TO_POINTER(new_view_id));
+  g_signal_connect(popup, "notify::title", G_CALLBACK(on_title_changed), GUINT_TO_POINTER(new_view_id));
+  g_signal_connect(popup, "script-dialog", G_CALLBACK(on_script_dialog), GUINT_TO_POINTER(new_view_id));
+  {
+    std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
+    g_runtime.parked_popups[new_view_id] = popup;
+    auto& st = g_runtime.views[new_view_id];
+    st.webview = popup;
+    st.window_id = 0;  // bound on adoption
+    st.container = GTK_WIDGET(popup);
+  }
+  if (g_runtime.popup_parent) {
+    GtkWidget* box = gtk_window_get_child(g_runtime.popup_parent);
+    if (box) gtk_box_append(GTK_BOX(box), GTK_WIDGET(popup));
+  }
+  std::string payload = "{\"newSurfaceId\":" + std::to_string(new_view_id) +
+                        ",\"url\":\"" + escapeJsonString(uri ? uri : "") +
+                        "\",\"disposition\":\"popup\"}";
+  emitWebviewEvent(opener_view_id, "popup-requested", payload);
+  return GTK_WIDGET(popup);
 }
 
 void on_title_changed(GObject* source, GParamSpec* /*pspec*/, gpointer user_data) {
@@ -120,7 +160,125 @@ gboolean on_decide_policy(WebKitWebView* wv, WebKitPolicyDecision* decision,
   return TRUE;
 }
 
+constexpr const char* kDownloadIdKey = "bunite-download-id";
+std::atomic<uint64_t> g_download_seq{1};
+
+uint32_t viewIdForDownload(WebKitDownload* download) {
+  WebKitWebView* wv = webkit_download_get_web_view(download);
+  if (!wv) return 0;
+  return GPOINTER_TO_UINT(g_object_get_data(G_OBJECT(wv), kViewIdKey));
+}
+
+void on_received_data(WebKitDownload* download, guint64 /*data_length*/, gpointer /*user_data*/) {
+  const uint32_t view_id = viewIdForDownload(download);
+  if (!view_id) return;
+  const uint64_t id = GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(download), kDownloadIdKey));
+  const guint64 received = webkit_download_get_received_data_length(download);
+  WebKitURIResponse* resp = webkit_download_get_response(download);
+  const guint64 total = resp ? webkit_uri_response_get_content_length(resp) : 0;
+  std::string payload = "{\"kind\":\"progress\",\"id\":\"linux-" + std::to_string(id) +
+                        "\",\"receivedBytes\":" + std::to_string(received);
+  if (total > 0) payload += ",\"totalBytes\":" + std::to_string(total);
+  payload += "}";
+  emitWebviewEvent(view_id, "download-event", payload);
+}
+
+void on_download_finished(WebKitDownload* download, gpointer /*user_data*/) {
+  const uint32_t view_id = viewIdForDownload(download);
+  if (!view_id) return;
+  const uint64_t id = GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(download), kDownloadIdKey));
+  const char* dest_uri = webkit_download_get_destination(download);
+  std::string dest = dest_uri ? dest_uri : "";
+  if (dest.rfind("file://", 0) == 0) dest = dest.substr(7);
+  std::string payload = "{\"kind\":\"completed\",\"id\":\"linux-" + std::to_string(id) +
+                        "\",\"localPath\":\"" + escapeJsonString(dest) + "\"}";
+  emitWebviewEvent(view_id, "download-event", payload);
+}
+
+void on_download_failed(WebKitDownload* download, GError* error, gpointer /*user_data*/) {
+  const uint32_t view_id = viewIdForDownload(download);
+  if (!view_id) return;
+  const uint64_t id = GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(download), kDownloadIdKey));
+  std::string reason = error && error->message ? error->message : "unknown";
+  std::string payload = "{\"kind\":\"failed\",\"id\":\"linux-" + std::to_string(id) +
+                        "\",\"reason\":\"" + escapeJsonString(reason) + "\"}";
+  emitWebviewEvent(view_id, "download-event", payload);
+}
+
+// `decide-destination` is the gate: emits `started` / `blocked` and sets path.
+// Returning TRUE tells WebKit we resolved (or cancelled) destination.
+gboolean on_decide_destination(WebKitDownload* download, const gchar* suggested, gpointer /*user_data*/) {
+  const uint32_t view_id = viewIdForDownload(download);
+  if (!view_id) return FALSE;
+  ViewState* st = nullptr;
+  {
+    std::lock_guard<std::mutex> lk(g_runtime.object_mutex);
+    auto it = g_runtime.views.find(view_id);
+    if (it != g_runtime.views.end()) st = &it->second;
+  }
+  if (!st) return FALSE;
+  const uint64_t id = GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(download), kDownloadIdKey));
+  WebKitURIRequest* req = webkit_download_get_request(download);
+  const std::string url = (req && webkit_uri_request_get_uri(req)) ? webkit_uri_request_get_uri(req) : "";
+
+  const int32_t policy = st->download_policy.load();
+  if (policy != 0) {
+    const char* reason = (policy == 1) ? "ask-not-implemented" : "host-policy";
+    std::string payload = "{\"kind\":\"blocked\",\"id\":\"linux-" + std::to_string(id) +
+                          "\",\"url\":\"" + escapeJsonString(url) +
+                          "\",\"reason\":\"" + reason + "\"}";
+    emitWebviewEvent(view_id, "download-event", payload);
+    webkit_download_cancel(download);
+    return TRUE;
+  }
+
+  const std::string sug = suggested ? suggested : "download";
+  WebKitURIResponse* resp = webkit_download_get_response(download);
+  const std::string mime = (resp && webkit_uri_response_get_mime_type(resp)) ? webkit_uri_response_get_mime_type(resp) : "";
+  const guint64 total = resp ? webkit_uri_response_get_content_length(resp) : 0;
+  std::string started = "{\"kind\":\"started\",\"id\":\"linux-" + std::to_string(id) +
+                        "\",\"url\":\"" + escapeJsonString(url) +
+                        "\",\"suggestedFilename\":\"" + escapeJsonString(sug) +
+                        "\",\"mimeType\":\"" + escapeJsonString(mime) + "\"";
+  if (total > 0) started += ",\"sizeBytes\":" + std::to_string(total);
+  started += "}";
+  emitWebviewEvent(view_id, "download-event", started);
+
+  std::string dir = st->download_dir;
+  if (dir.empty()) {
+    const char* d = g_get_user_special_dir(G_USER_DIRECTORY_DOWNLOAD);
+    dir = d ? d : "/tmp";
+  }
+  std::string path = dir + "/" + sug;
+  std::string uri = "file://" + path;
+  webkit_download_set_destination(download, uri.c_str());
+  return TRUE;
+}
+
+void on_download_started(WebKitNetworkSession* /*session*/, WebKitDownload* download, gpointer /*user_data*/) {
+  const uint32_t view_id = viewIdForDownload(download);
+  if (!view_id) {
+    webkit_download_cancel(download);
+    return;
+  }
+  const uint64_t id = g_download_seq.fetch_add(1);
+  g_object_set_data(G_OBJECT(download), kDownloadIdKey, GSIZE_TO_POINTER(id));
+  g_signal_connect(download, "decide-destination", G_CALLBACK(on_decide_destination), nullptr);
+  g_signal_connect(download, "received-data", G_CALLBACK(on_received_data), nullptr);
+  g_signal_connect(download, "finished", G_CALLBACK(on_download_finished), nullptr);
+  g_signal_connect(download, "failed", G_CALLBACK(on_download_failed), nullptr);
+}
+
 }  // namespace
+
+void wireDownloadHandlers() {
+  static bool wired = false;
+  if (wired) return;
+  WebKitNetworkSession* session = webkit_network_session_get_default();
+  if (!session) return;
+  g_signal_connect(session, "download-started", G_CALLBACK(on_download_started), nullptr);
+  wired = true;
+}
 
 ViewState* findView(uint32_t view_id) {
   std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
@@ -166,6 +324,8 @@ bool createView(uint32_t view_id, uint32_t window_id,
     BUNITE_ERROR("bunite_view_create: view %u already exists", view_id);
     return false;
   }
+
+  wireDownloadHandlers();
 
   WebKitUserContentManager* ucm = webkit_user_content_manager_new();
 
@@ -289,6 +449,52 @@ void applyViewBounds(uint32_t view_id, double x, double y, double w, double h) {
   gtk_widget_queue_resize(container);
   gtk_widget_queue_draw(container);
   queueViewRedraw(v->webview);
+}
+
+bool acceptParkedPopup(uint32_t new_view_id, uint32_t host_window_id, double x, double y, double w, double h) {
+  WebKitWebView* popup = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
+    auto it = g_runtime.parked_popups.find(new_view_id);
+    if (it == g_runtime.parked_popups.end()) return false;
+    popup = it->second;
+    g_runtime.parked_popups.erase(it);
+  }
+  auto* host = findWindow(host_window_id);
+  if (!host || !host->host) return false;
+  gtk_widget_unparent(GTK_WIDGET(popup));
+  GtkWidget* container = gtk_fixed_new();
+  gtk_widget_set_halign(container, GTK_ALIGN_START);
+  gtk_widget_set_valign(container, GTK_ALIGN_START);
+  gtk_widget_set_overflow(container, GTK_OVERFLOW_HIDDEN);
+  gtk_fixed_put(GTK_FIXED(container), GTK_WIDGET(popup), 0, 0);
+  gtk_overlay_add_overlay(host->host, container);
+  {
+    std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
+    auto& st = g_runtime.views[new_view_id];
+    st.window_id = host_window_id;
+    st.container = container;
+    st.webview = popup;
+  }
+  applyViewBounds(new_view_id, x, y, w, h);
+  // Re-emit view-ready so TS BrowserView.adopt resolves its waiter — the
+  // initial `did-navigate` fired before the adopter registered.
+  emitWebviewEvent(new_view_id, "view-ready", std::string{});
+  return true;
+}
+
+void dismissParkedPopup(uint32_t new_view_id) {
+  WebKitWebView* popup = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
+    auto it = g_runtime.parked_popups.find(new_view_id);
+    if (it == g_runtime.parked_popups.end()) return;
+    popup = it->second;
+    g_runtime.parked_popups.erase(it);
+    g_runtime.views.erase(new_view_id);
+  }
+  gtk_widget_unparent(GTK_WIDGET(popup));
+  g_object_unref(popup);
 }
 
 void detachViewSideState(uint32_t view_id) {

@@ -462,43 +462,201 @@ extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
   return BUNITE_CAP_EVALUATE | BUNITE_CAP_SURFACE_EVENTS |
          BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG |
-         BUNITE_CAP_BOUNDING_RECT;
+         BUNITE_CAP_BOUNDING_RECT | BUNITE_CAP_DOWNLOADS | BUNITE_CAP_POPUPS |
+         BUNITE_CAP_AX | BUNITE_CAP_FRAMES;
 }
+
+namespace {
+
+struct AxCtx { uint32_t view_id; uint32_t request_id; };
+
+// JS-bridge ax tree: walks DOM + reads ARIA attrs. Emits CDP-shaped flat list
+// so TS-side convertAxTree works unchanged. `ignored` is always false — TS
+// `interestingOnly` filter is a no-op on this backend (limitation).
+const char* kAxScript = R"((function(){
+  var nodes=[];
+  function add(el,parentId){
+    if(!el||el.nodeType!==1)return null;
+    var id=String(nodes.length+1);
+    var node={nodeId:id,parentId:parentId,
+      role:{value:el.getAttribute('role')||el.tagName.toLowerCase()},
+      name:{value:el.getAttribute('aria-label')||
+        (el.tagName==='INPUT'||el.tagName==='TEXTAREA'?'':
+        (el.firstChild&&el.firstChild.nodeType===3?el.firstChild.textContent.trim().slice(0,100):''))},
+      properties:[],childIds:[],ignored:false};
+    var d=el.getAttribute('aria-description');if(d)node.description={value:d};
+    if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){if(el.value)node.value={value:el.value};}
+    if(el.getAttribute('aria-disabled')==='true'||el.disabled)node.properties.push({name:'disabled',value:{value:true}});
+    var ck=el.getAttribute('aria-checked');
+    if(ck==='true')node.properties.push({name:'checked',value:{value:true}});
+    else if(ck==='false')node.properties.push({name:'checked',value:{value:false}});
+    else if(ck==='mixed')node.properties.push({name:'checked',value:{value:'mixed'}});
+    var pr=el.getAttribute('aria-pressed');
+    if(pr==='true')node.properties.push({name:'pressed',value:{value:true}});
+    else if(pr==='false')node.properties.push({name:'pressed',value:{value:false}});
+    else if(pr==='mixed')node.properties.push({name:'pressed',value:{value:'mixed'}});
+    if(el.getAttribute('aria-expanded')==='true')node.properties.push({name:'expanded',value:{value:true}});
+    if(el.getAttribute('aria-selected')==='true')node.properties.push({name:'selected',value:{value:true}});
+    if(el.getAttribute('aria-required')==='true')node.properties.push({name:'required',value:{value:true}});
+    if(el.getAttribute('aria-invalid')==='true')node.properties.push({name:'invalid',value:{value:true}});
+    var lv=el.getAttribute('aria-level');if(lv)node.properties.push({name:'level',value:{value:parseInt(lv,10)}});
+    if(document.activeElement===el)node.properties.push({name:'focused',value:{value:true}});
+    nodes.push(node);
+    for(var i=0;i<el.children.length;i++){var cid=add(el.children[i],id);if(cid)node.childIds.push(cid);}
+    return id;
+  }
+  add(document.documentElement,null);
+  return JSON.stringify({nodes:nodes});
+})())";
+
+void on_ax_done(GObject* source, GAsyncResult* res, gpointer user_data) {
+  auto* ctx = static_cast<AxCtx*>(user_data);
+  WebKitWebView* wv = WEBKIT_WEB_VIEW(source);
+  GError* err = nullptr;
+  JSCValue* value = webkit_web_view_evaluate_javascript_finish(wv, res, &err);
+  std::string payload = "{\"requestId\":" + std::to_string(ctx->request_id);
+  if (err || !value) {
+    std::string msg = err ? err->message : "evaluate failed";
+    if (err) g_error_free(err);
+    payload += ",\"ok\":false,\"code\":\"runtime_error\","
+               "\"message\":\"" + bunite_linux::escapeJsonString(msg) + "\"}";
+  } else if (!jsc_value_is_string(value)) {
+    payload += ",\"ok\":false,\"code\":\"runtime_error\","
+               "\"message\":\"non-string ax result\"}";
+  } else {
+    char* raw = jsc_value_to_string(value);
+    std::string tree_json = raw ? raw : "{}";
+    if (raw) g_free(raw);
+    payload += ",\"ok\":true,\"tree\":" + tree_json + "}";
+  }
+  if (value) g_object_unref(value);
+  bunite_linux::emitWebviewEvent(ctx->view_id, "accessibility-result", payload);
+  delete ctx;
+}
+
+}  // namespace
 
 extern "C" BUNITE_EXPORT void bunite_view_accessibility_snapshot(uint32_t view_id, uint32_t request_id,
                                                                   int32_t /*interesting_only*/) {
-  // WebKitGTK has no host-facing ax tree API on GTK4. Honest not_supported.
-  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
-                        ",\"ok\":false,\"code\":\"not_supported\","
-                        "\"message\":\"WebKitGTK has no public accessibility tree API\"}";
-  bunite_linux::emitWebviewEvent(view_id, "accessibility-result", payload);
+  auto* st = bunite_linux::findView(view_id);
+  if (!st || !st->webview) {
+    std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                          ",\"ok\":false,\"code\":\"not_supported\","
+                          "\"message\":\"view not ready\"}";
+    bunite_linux::emitWebviewEvent(view_id, "accessibility-result", payload);
+    return;
+  }
+  auto* ctx = new AxCtx{view_id, request_id};
+  webkit_web_view_evaluate_javascript(st->webview, kAxScript, -1, nullptr, nullptr, nullptr, on_ax_done, ctx);
 }
 
+namespace {
+
+struct FramesCtx { uint32_t view_id; uint32_t request_id; };
+
+// JS-bridge frame tree: walks window.frames. Synthetic IDs are sequential —
+// not stable across calls. Cross-origin frames are included with empty url/origin
+// (SecurityError catch). Output matches CDP `Page.getFrameTree` shape so the
+// TS-side flattenFrameTree works unchanged.
+const char* kFramesScript = R"((function(){
+  var id=0;
+  function walk(win){
+    var fid=String(++id);
+    var frame={id:fid,securityOrigin:'',url:''};
+    try{
+      frame.url=win.location.href;
+      frame.securityOrigin=win.location.origin;
+      if(win.frameElement&&win.frameElement.name)frame.name=win.frameElement.name;
+    }catch(e){}
+    var children=[];
+    try{for(var i=0;i<win.frames.length;i++)children.push(walk(win.frames[i]));}catch(e){}
+    return {frame:frame,childFrames:children};
+  }
+  return JSON.stringify({frameTree:walk(window)});
+})())";
+
+void on_frames_done(GObject* source, GAsyncResult* res, gpointer user_data) {
+  auto* ctx = static_cast<FramesCtx*>(user_data);
+  WebKitWebView* wv = WEBKIT_WEB_VIEW(source);
+  GError* err = nullptr;
+  JSCValue* value = webkit_web_view_evaluate_javascript_finish(wv, res, &err);
+  std::string payload = "{\"requestId\":" + std::to_string(ctx->request_id);
+  if (err || !value) {
+    std::string msg = err ? err->message : "evaluate failed";
+    if (err) g_error_free(err);
+    payload += ",\"ok\":false,\"code\":\"runtime_error\","
+               "\"message\":\"" + bunite_linux::escapeJsonString(msg) + "\"}";
+  } else if (!jsc_value_is_string(value)) {
+    payload += ",\"ok\":false,\"code\":\"runtime_error\","
+               "\"message\":\"non-string frames result\"}";
+  } else {
+    char* raw = jsc_value_to_string(value);
+    std::string tree_json = raw ? raw : "{}";
+    if (raw) g_free(raw);
+    payload += ",\"ok\":true,\"raw\":" + tree_json + "}";
+  }
+  if (value) g_object_unref(value);
+  bunite_linux::emitWebviewEvent(ctx->view_id, "list-frames-result", payload);
+  delete ctx;
+}
+
+}  // namespace
+
 extern "C" BUNITE_EXPORT void bunite_view_list_frames(uint32_t view_id, uint32_t request_id) {
-  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
-                        ",\"ok\":false,\"code\":\"not_supported\","
-                        "\"message\":\"WebKitGTK has no frame addressing API\"}";
-  bunite_linux::emitWebviewEvent(view_id, "list-frames-result", payload);
+  auto* st = bunite_linux::findView(view_id);
+  if (!st || !st->webview) {
+    std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                          ",\"ok\":false,\"code\":\"not_supported\","
+                          "\"message\":\"view not ready\"}";
+    bunite_linux::emitWebviewEvent(view_id, "list-frames-result", payload);
+    return;
+  }
+  auto* ctx = new FramesCtx{view_id, request_id};
+  webkit_web_view_evaluate_javascript(st->webview, kFramesScript, -1, nullptr, nullptr, nullptr, on_frames_done, ctx);
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_evaluate_in_frame(uint32_t view_id, uint32_t request_id,
-                                                              const char* /*script*/, const char* /*frame_id*/) {
-  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
-                        ",\"ok\":false,\"code\":\"not_supported\","
-                        "\"message\":\"WebKitGTK has no frame addressing API\"}";
-  bunite_linux::emitWebviewEvent(view_id, "evaluate-result", payload);
+                                                              const char* script_c, const char* frame_id_c) {
+  std::string script = script_c ? script_c : "";
+  std::string frame_id = frame_id_c ? frame_id_c : "";
+  if (frame_id.empty()) {
+    bunite_view_evaluate(view_id, request_id, script_c);
+    return;
+  }
+  // JS-bridge: walk window.frames matching listFrames numbering, `eval` user
+  // script in target frame. frameIds are sequential per walk — caller must use
+  // them immediately after listFrames. The outer envelope from
+  // bunite_view_evaluate handles ok/cross_origin/runtime_error mapping; we
+  // surface SecurityError so cross-origin → cross_origin and re-throw missing
+  // frames as plain Error → runtime_error.
+  std::string js_target = bunite_linux::escapeJsonString(frame_id);
+  std::string js_script = bunite_linux::escapeJsonString(script);
+  std::string inner =
+    "(function(){var target=\"" + js_target + "\";var id=0;var found=null;"
+    "function walk(win){var fid=String(++id);if(fid===target){found=win;return;}"
+    "try{for(var i=0;i<win.frames.length;i++){walk(win.frames[i]);if(found)return;}}catch(e){}}"
+    "walk(window);"
+    "if(!found)throw new Error('frame not found');"
+    "return found.eval(\"(\"+\"" + js_script + "\"+\")\");"
+    "})()";
+  bunite_view_evaluate(view_id, request_id, inner.c_str());
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t /*view_id*/, int32_t /*policy*/, const char* /*download_dir*/) {
-  // WebKitDownload integration deferred. The cap bit is 0; consumers shouldn't call.
+extern "C" BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t view_id, int32_t policy, const char* download_dir) {
+  auto* st = bunite_linux::findView(view_id);
+  if (!st) return;
+  if (policy < 0 || policy > 2) policy = 2;
+  st->download_policy.store(policy);
+  st->download_dir = download_dir ? download_dir : "";
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_popup_accept(uint32_t /*new_view_id*/, uint32_t /*host_window_id*/,
-                                                       double /*x*/, double /*y*/, double /*w*/, double /*h*/) {
-  // Popup adoption deferred on WebKitGTK (create signal sync-return orchestration). Cap bit 0; no-op.
+extern "C" BUNITE_EXPORT void bunite_view_popup_accept(uint32_t new_view_id, uint32_t host_window_id,
+                                                       double x, double y, double w, double h) {
+  runOnUiThreadSync([=]() { bunite_linux::acceptParkedPopup(new_view_id, host_window_id, x, y, w, h); });
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_popup_dismiss(uint32_t /*new_view_id*/) {
+extern "C" BUNITE_EXPORT void bunite_view_popup_dismiss(uint32_t new_view_id) {
+  runOnUiThreadSync([=]() { bunite_linux::dismissParkedPopup(new_view_id); });
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
