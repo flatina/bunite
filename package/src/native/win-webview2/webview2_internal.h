@@ -120,6 +120,7 @@ struct RuntimeState {
   std::atomic<bool> initialized{false};
   std::atomic<bool> shutting_down{false};
   HWND message_window = nullptr;
+  HWND popup_parent = nullptr;  // hidden top-level parking parent for popup-minted controllers.
 
   std::mutex task_mutex;
   std::deque<std::function<void()>> queued_tasks;

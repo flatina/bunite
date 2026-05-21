@@ -112,6 +112,15 @@ struct ViewHost {
   std::atomic<int32_t> download_policy{2};
   std::string download_dir;
 
+  // True for ViewHosts minted by OnBeforePopup; popup_accept binds them to a
+  // user window, popup_dismiss destroys them.
+  bool is_popup_pending = false;
+  // If popup_accept arrives before OnAfterCreated, stash parameters; the
+  // browser-create completion applies them.
+  struct PendingPopupAccept { uint32_t host_window_id; double x, y, w, h; };
+  std::optional<PendingPopupAccept> pending_popup_accept;
+  bool popup_dismiss_requested = false;
+
   // Pending state: applied in OnAfterCreated when browser HWND becomes available.
   bool pending_visible = true;
   bool pending_bring_to_front = false;
@@ -211,6 +220,9 @@ bool shouldAlwaysAllowNavigationUrl(const std::string& url);
 bool shouldAllowNavigation(const ViewHost* view, const std::string& url);
 void emitWindowEvent(uint32_t window_id, const char* event_name, const std::string& payload = {});
 void emitWebviewEvent(uint32_t view_id, const char* event_name, const std::string& payload = {});
+
+// Bind a popup ViewHost (created by OnBeforePopup) to a user window + bounds.
+void applyPopupAccept(ViewHost* view, uint32_t host_window_id, double x, double y, double w, double h);
 
 std::string normalizeAppResPath(const std::string& url);
 std::string getMimeType(const std::filesystem::path& file_path);

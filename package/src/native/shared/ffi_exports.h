@@ -18,9 +18,11 @@ extern "C" {
 /** ABI version. Bump on any breaking change to symbol set / signatures.
  *  v10: agent surface deltas — `bunite_view_accessibility_snapshot`,
  *       `bunite_view_list_frames`, `bunite_view_evaluate_in_frame`,
- *       `bunite_view_set_download_policy`. New events `accessibility-result`,
- *       `list-frames-result`, `download-event`. Capability bits `AX` (1<<15),
- *       `BOUNDING_RECT` (1<<16), `FRAMES` (1<<17), `DOWNLOADS` (1<<18). */
+ *       `bunite_view_set_download_policy`, `bunite_view_popup_accept`,
+ *       `bunite_view_popup_dismiss`. New events `accessibility-result`,
+ *       `list-frames-result`, `download-event`, `popup-requested`. Capability
+ *       bits `AX` (1<<15), `BOUNDING_RECT` (1<<16), `FRAMES` (1<<17),
+ *       `DOWNLOADS` (1<<18), `POPUPS` (1<<19). */
 BUNITE_EXPORT int32_t bunite_abi_version(void);
 BUNITE_EXPORT void bunite_set_log_level(int32_t level);
 BUNITE_EXPORT bool bunite_init(
@@ -227,6 +229,7 @@ enum BuniteCapBit {
 	BUNITE_CAP_BOUNDING_RECT        = 1u << 16,
 	BUNITE_CAP_FRAMES               = 1u << 17,
 	BUNITE_CAP_DOWNLOADS            = 1u << 18,
+	BUNITE_CAP_POPUPS               = 1u << 19,
 };
 BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id);
 
@@ -289,6 +292,20 @@ BUNITE_EXPORT void bunite_view_set_download_policy(
 	int32_t policy,
 	const char* download_dir
 );
+
+/** Adopt a popup-minted view. Native must have previously emitted a
+ *  `popup-requested` event (carrying `newSurfaceId`); host calls this to attach
+ *  the pre-minted view to the target window + bounds. `host_window_id` is the
+ *  destination `WindowHost.id`. */
+BUNITE_EXPORT void bunite_view_popup_accept(
+	uint32_t new_view_id,
+	uint32_t host_window_id,
+	double x, double y, double w, double h
+);
+
+/** Discard a popup-minted view that wasn't adopted (or that host wants to
+ *  reject). Native destroys the controller/browser. Idempotent. */
+BUNITE_EXPORT void bunite_view_popup_dismiss(uint32_t new_view_id);
 
 BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id);
 BUNITE_EXPORT void bunite_view_close_devtools(uint32_t view_id);

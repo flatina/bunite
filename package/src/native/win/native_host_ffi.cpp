@@ -1191,7 +1191,7 @@ extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
          BUNITE_CAP_MOUSE | BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG |
          BUNITE_CAP_AX | BUNITE_CAP_BOUNDING_RECT | BUNITE_CAP_FRAMES |
-         BUNITE_CAP_DOWNLOADS;
+         BUNITE_CAP_DOWNLOADS | BUNITE_CAP_POPUPS;
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t view_id, int32_t policy, const char* download_dir) {
@@ -1202,6 +1202,60 @@ extern "C" BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t view_id, 
     if (p < 0 || p > 2) p = 2;
     view->download_policy.store(p);
     view->download_dir = dir;
+  });
+}
+
+namespace bunite_win {
+
+void applyPopupAccept(ViewHost* view, uint32_t host_window_id, double x, double y, double w, double h) {
+  if (!view || !view->browser) return;
+  auto* host = getWindowHostById(host_window_id);
+  if (!host || !host->hwnd) return;
+  view->window = host;
+  view->is_popup_pending = false;
+  host->views.push_back(view);
+  HWND browser_hwnd = view->browser->GetHost()->GetWindowHandle();
+  if (browser_hwnd) {
+    SetParent(browser_hwnd, host->hwnd);
+    SetWindowPos(browser_hwnd, HWND_TOP,
+      static_cast<int>(x), static_cast<int>(y),
+      static_cast<int>(w), static_cast<int>(h),
+      SWP_SHOWWINDOW | SWP_NOACTIVATE);
+    view->bounds = RECT{
+      static_cast<LONG>(x), static_cast<LONG>(y),
+      static_cast<LONG>(x + w), static_cast<LONG>(y + h)
+    };
+  }
+}
+
+}  // namespace bunite_win
+
+extern "C" BUNITE_EXPORT void bunite_view_popup_accept(uint32_t new_view_id, uint32_t host_window_id,
+                                                       double x, double y, double w, double h) {
+  bunite_win::postCefUiTask([new_view_id, host_window_id, x, y, w, h]() {
+    auto* view = bunite_win::getViewHostById(new_view_id);
+    if (!view) return;
+    if (!view->browser) {
+      // OnAfterCreated hasn't fired yet; stash the accept and apply when it does.
+      view->pending_popup_accept = ViewHost::PendingPopupAccept{host_window_id, x, y, w, h};
+      return;
+    }
+    bunite_win::applyPopupAccept(view, host_window_id, x, y, w, h);
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_popup_dismiss(uint32_t new_view_id) {
+  bunite_win::postCefUiTask([new_view_id]() {
+    auto* view = bunite_win::getViewHostById(new_view_id);
+    if (!view) return;
+    if (!view->is_popup_pending && view->window) return;  // already adopted — caller responsibility, ignore.
+    if (view->browser) {
+      view->closing.store(true);
+      view->browser->GetHost()->CloseBrowser(true);
+    } else {
+      // Browser not yet created — let OnAfterCreated handle dismissal.
+      view->popup_dismiss_requested = true;
+    }
   });
 }
 

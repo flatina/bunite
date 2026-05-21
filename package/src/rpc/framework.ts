@@ -118,6 +118,10 @@ export interface SurfaceCapabilities {
   /** Backend can intercept downloads and emit lifecycle events. When `false`,
    *  every download attempt emits `{kind: "blocked", reason: "not_supported"}`. */
   downloads: boolean;
+  /** Backend can intercept popups (window.open / target=_blank / cmd-click) and
+   *  mint a new surface with the opener relationship preserved. Host adopts via
+   *  `acceptPopup({newSurfaceId, hostViewId, bounds})`. */
+  popups: boolean;
 }
 
 export interface AxNode {
@@ -191,13 +195,33 @@ export interface SetDownloadPolicyArgs {
   downloadDir?: string;
 }
 
+export interface AcceptPopupArgs {
+  newSurfaceId: number;
+  /** The host BrowserView that will own the new surface. */
+  hostViewId: number;
+  bounds: { x: number; y: number; width: number; height: number };
+}
+export type AcceptPopupResult =
+  | { ok: true }
+  | { ok: false; code: "not_found" | "host_view_invalid"; message: string };
+
 /** Surface lifecycle event arm before the surface pipeline stamps `epoch`. */
 export type SurfaceEventBase =
   | { type: "navigate"; url: string }
   | { type: "load-start"; url: string }
   | { type: "load-finish"; url: string }
   | { type: "load-fail"; url: string; reason?: string }
-  | { type: "title-change"; title: string };
+  | { type: "title-change"; title: string }
+  | {
+      type: "popup";
+      url: string;
+      disposition: "tab" | "window" | "popup";
+      openerSurfaceId: number;
+      /** Native surface ID minted before the arm is emitted. Host must call
+       *  `acceptPopup` (within `popupAdoptionTimeoutMs`, default 5s) to attach,
+       *  or `dismissPopup` to close. Auto-dismiss fires on timeout. */
+      newSurfaceId: number;
+    };
 
 /** Wire form of `SurfaceEventBase`. `epoch` bumps on every `navigate` (incl. SPA
  *  `pushState`); other arms carry the current epoch. See `docs/browser-automation.md`. */
@@ -376,6 +400,8 @@ export const SurfaceCap = defineCap("bunite.Surface", {
   downloadEvents: stream<{ surfaceId: number }, DownloadEvent>(),
   waitForDownload: call<{ surfaceId: number; timeoutMs?: number }, WaitForDownloadResult>(),
   setDownloadPolicy: call<SetDownloadPolicyArgs, void>(),
+  acceptPopup: call<AcceptPopupArgs, AcceptPopupResult>(),
+  dismissPopup: call<{ newSurfaceId: number }, void>(),
 });
 
 export const RuntimeCap = defineCap("bunite.Runtime", {

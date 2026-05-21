@@ -61,6 +61,46 @@ const consoleSubs = new Map<number, Set<ConsoleEmit>>();
 
 type DownloadEmit = (event: { surfaceId: number; event: DownloadEvent }) => void;
 const downloadSubs = new Map<number, Set<DownloadEmit>>();
+
+type PendingPopup = {
+  newSurfaceId: number;
+  openerHostViewId: number;
+  openerSurfaceId: number;
+  url: string;
+  disposition: "tab" | "window" | "popup";
+  timer: ReturnType<typeof setTimeout> | null;
+};
+const pendingPopups = new Map<number, PendingPopup>();  // by newSurfaceId
+const POPUP_ADOPT_TIMEOUT_MS = 5000;
+
+/** Called when a backend mints a popup view. Stashes the pending adoption +
+ *  arms a timer that auto-dismisses if the host doesn't respond. */
+export function emitPopupRequested(
+  hostViewId: number,
+  openerSurfaceId: number,
+  args: { newSurfaceId: number; url: string; disposition: "tab" | "window" | "popup" },
+) {
+  const entry: PendingPopup = {
+    newSurfaceId: args.newSurfaceId,
+    openerHostViewId: hostViewId,
+    openerSurfaceId,
+    url: args.url,
+    disposition: args.disposition,
+    timer: null,
+  };
+  entry.timer = setTimeout(() => {
+    if (!pendingPopups.delete(args.newSurfaceId)) return;
+    BrowserView.dismissPopupById(args.newSurfaceId);
+  }, POPUP_ADOPT_TIMEOUT_MS);
+  pendingPopups.set(args.newSurfaceId, entry);
+  emitSurfaceEvent(hostViewId, openerSurfaceId, {
+    type: "popup",
+    url: args.url,
+    disposition: args.disposition,
+    openerSurfaceId,
+    newSurfaceId: args.newSurfaceId,
+  });
+}
 type DownloadWaiter = {
   /** Resolved on the next `completed` event (or `failed`/`blocked`). */
   resolve: (r: WaitForDownloadResult) => void;
@@ -447,7 +487,7 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
           nativeInputTrusted: false, click: false, type: false, press: false,
           scroll: false, mouse: false, dialogs: false, console: false,
           screenshot: false, accessibilitySnapshot: false, getBoundingRect: false,
-          frames: false, downloads: false,
+          frames: false, downloads: false, popups: false,
         };
       }
       return record.view.capabilities();
@@ -565,6 +605,42 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       const record = ownedSurface(surfaceId);
       if (!record) return;
       record.view.setDownloadPolicy(policy, downloadDir);
+    },
+
+    acceptPopup: async ({ newSurfaceId, hostViewId: targetHostId, bounds }) => {
+      const pending = pendingPopups.get(newSurfaceId);
+      if (!pending) return { ok: false as const, code: "not_found" as const, message: "popup not pending" };
+      const targetHost = BrowserView.getById(targetHostId);
+      if (!targetHost || !targetHost.windowId) {
+        // Don't consume pending state on validation failure — host can retry
+        // with a different target until the auto-dismiss timer fires.
+        return { ok: false as const, code: "host_view_invalid" as const, message: "host view not found" };
+      }
+      const existing = getHostSurfaceIds(targetHostId);
+      if (existing && existing.size >= MAX_SURFACES_PER_HOST) {
+        return { ok: false as const, code: "host_view_invalid" as const, message: `host surface limit reached (${MAX_SURFACES_PER_HOST})` };
+      }
+      if (pending.timer) clearTimeout(pending.timer);
+      pendingPopups.delete(newSurfaceId);
+      const offset = applyHostOffset(targetHost, bounds.x, bounds.y);
+      const view = BrowserView.adopt({
+        nativeViewId: newSurfaceId,
+        hostWindowId: targetHost.windowId,
+        bounds: { x: offset.x, y: offset.y, width: bounds.width, height: bounds.height },
+        appresRoot: targetHost.appresRoot,
+      });
+      trackSurface(view.id, { view, hostViewId: targetHostId, hidden: false });
+      seedNavigationState(view.id, pending.url);
+      for (const cb of initCallbacks) cb(view.id, targetHostId, view);
+      return { ok: true as const };
+    },
+
+    dismissPopup: ({ newSurfaceId }) => {
+      const pending = pendingPopups.get(newSurfaceId);
+      if (!pending) return;  // already adopted or never pending — no-op.
+      if (pending.timer) clearTimeout(pending.timer);
+      pendingPopups.delete(newSurfaceId);
+      BrowserView.dismissPopupById(newSurfaceId);
     },
 
     consoleEvents: ({ surfaceId: filterId }) => Stream.from<ConsoleEntry>((emit, signal) => {

@@ -315,6 +315,19 @@ public:
     }
 
     bunite_win::emitWebviewEvent(view_->id, "view-ready");
+
+    if (view_->is_popup_pending) {
+      if (view_->popup_dismiss_requested) {
+        view_->closing.store(true);
+        browser->GetHost()->CloseBrowser(true);
+        return;
+      }
+      if (view_->pending_popup_accept) {
+        auto p = *view_->pending_popup_accept;
+        view_->pending_popup_accept.reset();
+        bunite_win::applyPopupAccept(view_, p.host_window_id, p.x, p.y, p.w, p.h);
+      }
+    }
   }
 
   bool DoClose(CefRefPtr<CefBrowser>) override {
@@ -378,19 +391,33 @@ public:
     CefLifeSpanHandler::WindowOpenDisposition,
     bool,
     const CefPopupFeatures&,
-    CefWindowInfo&,
-    CefRefPtr<CefClient>&,
+    CefWindowInfo& window_info,
+    CefRefPtr<CefClient>& client,
     CefBrowserSettings&,
     CefRefPtr<CefDictionaryValue>&,
     bool*
   ) override {
     CEF_REQUIRE_UI_THREAD();
-    bunite_win::emitWebviewEvent(
-      view_->id,
-      "new-window-open",
-      "{\"url\":\"" + bunite_win::escapeJsonString(target_url.ToString()) + "\"}"
-    );
-    return true;
+    // Popup IDs live in the upper u32 half; TS allocator stays below.
+    static std::atomic<uint32_t> g_popup_seq{0x80000000u};
+    uint32_t new_view_id = g_popup_seq.fetch_add(1);
+    auto* popup = new ViewHost();
+    popup->id = new_view_id;
+    popup->window = nullptr;
+    popup->is_popup_pending = true;
+    {
+      std::lock_guard<std::mutex> lock(g_runtime.object_mutex);
+      g_runtime.views_by_id[new_view_id] = popup;
+    }
+    // Initial parent = runtime message window; host adopts and reparents later.
+    window_info.SetAsChild(g_runtime.message_window, CefRect{0, 0, 0, 0});
+    window_info.style = WS_CHILD;
+    client = new BuniteCefClient(popup);
+    std::string payload = "{\"newSurfaceId\":" + std::to_string(new_view_id) +
+                          ",\"url\":\"" + bunite_win::escapeJsonString(target_url.ToString()) +
+                          "\",\"disposition\":\"popup\"}";
+    bunite_win::emitWebviewEvent(view_->id, "popup-requested", payload);
+    return false;  // allow CEF to create the popup browser.
   }
 
   void OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, TransitionType) override {

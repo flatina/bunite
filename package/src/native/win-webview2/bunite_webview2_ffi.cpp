@@ -504,7 +504,7 @@ BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
          BUNITE_CAP_MOUSE | BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG |
          BUNITE_CAP_AX | BUNITE_CAP_BOUNDING_RECT | BUNITE_CAP_FRAMES |
-         BUNITE_CAP_DOWNLOADS;
+         BUNITE_CAP_DOWNLOADS | BUNITE_CAP_POPUPS;
 }
 
 BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t view_id, int32_t policy, const char* download_dir) {
@@ -513,6 +513,45 @@ BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t view_id, int32_t pol
   if (policy < 0 || policy > 2) policy = 2;
   v->download_policy.store(policy);
   v->download_dir = download_dir ? download_dir : "";
+}
+
+BUNITE_EXPORT void bunite_view_popup_accept(uint32_t new_view_id, uint32_t host_window_id,
+                                              double x, double y, double w, double h) {
+  ViewHost* v = getView(new_view_id);
+  if (!v || !v->controller || !v->container_hwnd) return;
+  WindowHost* host_window = nullptr;
+  {
+    std::lock_guard<std::mutex> g(g_runtime.object_mutex);
+    auto wit = g_runtime.windows_by_id.find(host_window_id);
+    if (wit == g_runtime.windows_by_id.end()) return;
+    host_window = wit->second;
+  }
+  if (!host_window || !host_window->hwnd) return;
+  v->window = host_window;
+  host_window->views.push_back(v);
+  SetParent(v->container_hwnd, host_window->hwnd);
+  MoveWindow(v->container_hwnd, static_cast<int>(x), static_cast<int>(y),
+             static_cast<int>(w), static_cast<int>(h), TRUE);
+  ShowWindow(v->container_hwnd, SW_SHOW);
+  RECT bounds{0, 0, static_cast<LONG>(w), static_cast<LONG>(h)};
+  v->controller->put_Bounds(bounds);
+  v->controller->put_IsVisible(TRUE);
+  emitWebviewEvent(new_view_id, "view-ready", "");
+}
+
+BUNITE_EXPORT void bunite_view_popup_dismiss(uint32_t new_view_id) {
+  ViewHost* v = nullptr;
+  {
+    std::lock_guard<std::mutex> g(g_runtime.object_mutex);
+    auto it = g_runtime.views_by_id.find(new_view_id);
+    if (it == g_runtime.views_by_id.end()) return;
+    v = it->second;
+    g_runtime.views_by_id.erase(it);
+  }
+  if (!v) return;
+  if (v->controller) v->controller->Close();
+  if (v->container_hwnd) DestroyWindow(v->container_hwnd);
+  delete v;
 }
 
 namespace {

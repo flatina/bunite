@@ -28,4 +28,9 @@ export default {
     localPath?: string;
     reason?: string;
   }) => new BuniteEvent("download-event", data),
+  popupRequested: (data: {
+    newSurfaceId: number;
+    url: string;
+    disposition: "tab" | "window" | "popup";
+  }) => new BuniteEvent("popup-requested", data),
 };

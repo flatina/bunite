@@ -132,6 +132,15 @@ bool registerWindowClasses() {
                                               getCurrentModuleHandle(), nullptr);
   if (!g_runtime.message_window) return false;
 
+  // Popup parking parent — a hidden top-level window. Children of HWND_MESSAGE
+  // can't render (WebView2 child controllers won't initialize), so popup-minted
+  // controllers live here until accept reparents to the user-visible host.
+  g_runtime.popup_parent = CreateWindowExW(
+      WS_EX_TOOLWINDOW, mc.lpszClassName, L"BunitePopupPark",
+      WS_POPUP, 0, 0, 0, 0,
+      nullptr, nullptr, getCurrentModuleHandle(), nullptr);
+  if (!g_runtime.popup_parent) return false;
+
   // `bun run` passes STARTF_USESHOWWINDOW + SW_HIDE; Win documented behavior
   // is for the first ShowWindow call to use STARTUPINFO.wShowWindow instead
   // of the requested nCmdShow. Consume it here on the message window so the
@@ -969,19 +978,85 @@ static void attachControllerCallbacks(ViewHost* view) {
           }).Get(),
       &tok);
 
-  // NewWindowRequested — block by default (matches plan), bubble event so the
-  // host can decide to open externally.
+  // NewWindowRequested — eager-mint a popup ViewHost with the requested
+  // CoreWebView2 (preserves window.opener) and emit `popup-requested`. Host
+  // adopts via `bunite_view_popup_accept` or rejects via `bunite_view_popup_dismiss`;
+  // SurfaceManager arms a 5s timer for the auto-dismiss safety net.
   view->webview->add_NewWindowRequested(
       Callback<ICoreWebView2NewWindowRequestedEventHandler>(
-          [lifetime, view_id](ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT {
+          [lifetime, view_id](ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args_raw) -> HRESULT {
             if (!lifetime || !lifetime->alive.load()) return S_OK;
-            args->put_Handled(TRUE);
+            ComPtr<ICoreWebView2NewWindowRequestedEventArgs> args(args_raw);
             LPWSTR uri_raw = nullptr;
             args->get_Uri(&uri_raw);
             std::string url = wideToUtf8(uri_raw);
             if (uri_raw) CoTaskMemFree(uri_raw);
-            std::string payload = "{\"url\":\"" + escapeJsonString(url) + "\"}";
-            emitWebviewEvent(view_id, "new-window-open", payload);
+            ComPtr<ICoreWebView2Deferral> deferral;
+            args->GetDeferral(&deferral);
+            args->put_Handled(TRUE);
+            // Popup IDs live in the upper u32 half; TS allocator stays below.
+            static std::atomic<uint32_t> g_popup_seq{0x80000000u};
+            uint32_t new_view_id = g_popup_seq.fetch_add(1);
+            auto* popup_raw = new ViewHost();
+            popup_raw->id = new_view_id;
+            popup_raw->window = nullptr;
+            popup_raw->bounds = RECT{0, 0, 0, 0};
+            popup_raw->auto_resize = false;
+            popup_raw->container_hwnd = CreateWindowExW(
+                0, kViewContainerClass, L"", WS_CHILD | WS_CLIPCHILDREN,
+                0, 0, 0, 0, g_runtime.popup_parent,
+                nullptr, getCurrentModuleHandle(), nullptr);
+            {
+              std::lock_guard<std::mutex> g(g_runtime.object_mutex);
+              g_runtime.views_by_id[new_view_id] = popup_raw;
+            }
+            auto cleanupPopup = [new_view_id]() {
+              auto* p = getView(new_view_id);
+              if (!p) return;
+              if (p->container_hwnd) DestroyWindow(p->container_hwnd);
+              {
+                std::lock_guard<std::mutex> g(g_runtime.object_mutex);
+                g_runtime.views_by_id.erase(new_view_id);
+              }
+              delete p;
+            };
+            HRESULT sync_hr = g_runtime.env->CreateCoreWebView2Controller(
+                popup_raw->container_hwnd,
+                Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+                    [lifetime, view_id, new_view_id, url, args, deferral, cleanupPopup](HRESULT hr, ICoreWebView2Controller* controller) -> HRESULT {
+                      if (!lifetime || !lifetime->alive.load()) {
+                        if (deferral) deferral->Complete();
+                        cleanupPopup();
+                        return S_OK;
+                      }
+                      auto* popup = getView(new_view_id);
+                      if (!popup || FAILED(hr) || !controller) {
+                        if (deferral) deferral->Complete();
+                        cleanupPopup();
+                        return S_OK;
+                      }
+                      popup->controller = controller;
+                      controller->get_CoreWebView2(&popup->webview);
+                      if (popup->webview) {
+                        args->put_NewWindow(popup->webview.Get());
+                      }
+                      controller->put_IsVisible(FALSE);
+                      RECT zero{0,0,0,0};
+                      controller->put_Bounds(zero);
+                      attachControllerCallbacks(popup);
+                      attachAppResFilter(popup);
+                      popup->ready.store(true);
+                      if (deferral) deferral->Complete();
+                      std::string payload = "{\"newSurfaceId\":" + std::to_string(new_view_id) +
+                                            ",\"url\":\"" + escapeJsonString(url) +
+                                            "\",\"disposition\":\"popup\"}";
+                      emitWebviewEvent(view_id, "popup-requested", payload);
+                      return S_OK;
+                    }).Get());
+            if (FAILED(sync_hr)) {
+              if (deferral) deferral->Complete();
+              cleanupPopup();
+            }
             return S_OK;
           }).Get(),
       &tok);

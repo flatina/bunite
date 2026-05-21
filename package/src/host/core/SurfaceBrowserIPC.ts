@@ -1,5 +1,5 @@
 import {
-  onSurfaceInit, emitSurfaceEvent, emitConsole, emitDownload,
+  onSurfaceInit, emitSurfaceEvent, emitConsole, emitDownload, emitPopupRequested,
   registerDialogRequest, disposeSurfaceState, clearConsoleBuffer,
 } from "./SurfaceManager";
 
@@ -41,6 +41,9 @@ onSurfaceInit((surfaceId, hostViewId, view) => {
   });
   view.on("download-event", (event: any) => {
     emitDownload(hostViewId, surfaceId, event.data);
+  });
+  view.on("popup-requested", (event: any) => {
+    emitPopupRequested(hostViewId, surfaceId, event.data);
   });
 });
 

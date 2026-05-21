@@ -65,7 +65,8 @@ type SurfaceEvent =
   | { type: "load-start"; epoch: number; url: string }
   | { type: "load-finish"; epoch: number; url: string }
   | { type: "load-fail"; epoch: number; url: string; reason?: string }
-  | { type: "title-change"; epoch: number; title: string };
+  | { type: "title-change"; epoch: number; title: string }
+  | { type: "popup"; epoch: number; url: string; disposition: "tab" | "window" | "popup"; openerSurfaceId: number; newSurfaceId: number };
 
 type NavigationState = { lastLoadEpoch: number; isLoading: boolean; currentUrl: string };
 ```
@@ -87,6 +88,8 @@ type ConsoleEntry = {
 ```
 
 **Dialog flow**: backend pauses page execution → emits `DialogEvent` → consumer calls `respondToDialog(requestId, accept, text?)` → page resumes. If no response within `setDialogTimeout` (default 5s), an `auto-dismissed` arm fires and the page proceeds with the default (cancel / no input). `setDialogTimeout(null)` disables the safety net.
+
+**Popup flow**: backend intercepts `window.open` / `target="_blank"` / `cmd-click` → eager-mints the new surface (preserves `window.opener`) → emits `popup` arm with `newSurfaceId`. Host has 5s to call `runtime.surface().acceptPopup({newSurfaceId, hostViewId, bounds})` (attaches to a target host BrowserView) or `dismissPopup({newSurfaceId})` (closes); auto-dismiss fires on timeout. mac/linux currently fall through to engine-default popup handling (no `popup` arm emitted) — capability bit reflects this.
 
 Invariants:
 
@@ -129,6 +132,7 @@ The same pattern works for any modifier (Shift / Alt / Meta) when you need the p
 | `getBoundingRect` | ✔ | ✔ | ✔ | ✔ |
 | `frames` (`listFrames`, `evaluate({frameId})`) | ✔ | ✔ | ✘ | ✘ |
 | `downloads` (`setDownloadPolicy`, `downloadEvents`, `waitForDownload`) | ✔ | ✔ | ✘ | ✘ |
+| `popups` (`popup` arm + `acceptPopup` / `dismissPopup`) | ✔ | ✔ | ✘ | ✘ |
 
 † On CEF, `scroll` and `screenshot` route through Chrome DevTools Protocol (`Input.dispatchMouseEvent` / `Page.captureScreenshot`) — native `SendMouseWheelEvent` doesn't reach the page in windowed mode, and `PrintWindow` misses hardware-composited surfaces.
 

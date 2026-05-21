@@ -291,6 +291,7 @@ const CAP_AX                   = 1 << 15;
 const CAP_BOUNDING_RECT        = 1 << 16;
 const CAP_FRAMES               = 1 << 17;
 const CAP_DOWNLOADS            = 1 << 18;
+const CAP_POPUPS               = 1 << 19;
 
 function decodeCapabilityBits(bits: number): SurfaceCapabilities {
   const formats: ("png" | "jpeg")[] = [];
@@ -313,6 +314,7 @@ function decodeCapabilityBits(bits: number): SurfaceCapabilities {
     getBoundingRect: !!(bits & CAP_BOUNDING_RECT),
     frames: !!(bits & CAP_FRAMES),
     downloads: !!(bits & CAP_DOWNLOADS),
+    popups: !!(bits & CAP_POPUPS),
     ...(formats.length > 0 ? { formats } : {}),
   };
 }
@@ -372,9 +374,36 @@ export class BrowserView {
   sandbox: boolean;
   secretKey: Uint8Array;
 
-  constructor(options: Partial<BrowserViewOptions>) {
+  /** Wrap a pre-existing native view (popup mint). Skips `bunite_view_create`;
+   *  the new view is then attached to the host window via `bunite_view_popup_accept`. */
+  static adopt(args: {
+    nativeViewId: number;
+    hostWindowId: number;
+    bounds: { x: number; y: number; width: number; height: number };
+    appresRoot: string | null;
+  }): BrowserView {
+    return new BrowserView({
+      adoptNativeViewId: args.nativeViewId,
+      windowId: args.hostWindowId,
+      frame: args.bounds,
+      appresRoot: args.appresRoot,
+      autoResize: false,
+    } as Partial<BrowserViewOptions> & { adoptNativeViewId: number });
+  }
+
+  static dismissPopupById(newSurfaceId: number) {
+    getNativeLibrary()?.symbols.bunite_view_popup_dismiss(newSurfaceId);
+  }
+
+  constructor(options: Partial<BrowserViewOptions> & { adoptNativeViewId?: number }) {
     ensureNativeRuntime();
 
+    const adopting = options.adoptNativeViewId != null;
+    if (adopting) {
+      this.id = options.adoptNativeViewId!;
+      // Adopted IDs live in the upper u32 half (popup namespace). Keep TS's
+      // sequential allocator untouched so normal creates stay below 0x80000000.
+    }
     this.windowId = options.windowId ?? defaultOptions.windowId;
     this.url = options.url ?? defaultOptions.url;
     this.html = options.html ?? defaultOptions.html;
@@ -406,23 +435,33 @@ export class BrowserView {
 
     BrowserViewMap[this.id] = this;
     this._readyPromise = waitForViewReady(this.id);
-    this.nativeAttached =
-      getNativeLibrary()?.symbols.bunite_view_create(
-        this.id,
-        this.windowId,
-        toCString(this.url ?? ""),
-        toCString(this.html ?? ""),
-        toCString(preloadScript),
-        toCString(this.appresRoot ?? ""),
-        toCString(this.navigationRules ? JSON.stringify(this.navigationRules) : ""),
-        this.frame.x,
-        this.frame.y,
-        this.frame.width,
-        this.frame.height,
-        this.autoResize,
-        this.sandbox,
-        toCString(this.preloadOrigins ? JSON.stringify(this.preloadOrigins) : "")
-      ) ?? false;
+    if (adopting) {
+      // Native popup mint already created the view; bind to host window + bounds.
+      const lib = getNativeLibrary();
+      lib?.symbols.bunite_view_popup_accept(
+        this.id, this.windowId,
+        this.frame.x, this.frame.y, this.frame.width, this.frame.height,
+      );
+      this.nativeAttached = true;
+    } else {
+      this.nativeAttached =
+        getNativeLibrary()?.symbols.bunite_view_create(
+          this.id,
+          this.windowId,
+          toCString(this.url ?? ""),
+          toCString(this.html ?? ""),
+          toCString(preloadScript),
+          toCString(this.appresRoot ?? ""),
+          toCString(this.navigationRules ? JSON.stringify(this.navigationRules) : ""),
+          this.frame.x,
+          this.frame.y,
+          this.frame.width,
+          this.frame.height,
+          this.autoResize,
+          this.sandbox,
+          toCString(this.preloadOrigins ? JSON.stringify(this.preloadOrigins) : "")
+        ) ?? false;
+    }
 
     if (this.nativeAttached) {
       this.on("did-navigate", (event: any) => {
@@ -770,7 +809,7 @@ export class BrowserView {
   }
 
   on(
-    name: "will-navigate" | "did-navigate" | "dom-ready" | "new-window-open" | "permission-requested" | "title-changed" | "load-start" | "load-finish" | "load-fail" | "dialog" | "console-message" | "download-event",
+    name: "will-navigate" | "did-navigate" | "dom-ready" | "new-window-open" | "permission-requested" | "title-changed" | "load-start" | "load-finish" | "load-fail" | "dialog" | "console-message" | "download-event" | "popup-requested",
     handler: (event: unknown) => void
   ) {
     const specificName = `${name}-${this.id}`;

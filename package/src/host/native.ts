@@ -136,6 +136,11 @@ type NativeSymbols = {
   bunite_view_set_download_policy: (
     viewId: number, policy: number, downloadDir: CStringPointer
   ) => void;
+  bunite_view_popup_accept: (
+    newViewId: number, hostWindowId: number,
+    x: number, y: number, w: number, h: number,
+  ) => void;
+  bunite_view_popup_dismiss: (newViewId: number) => void;
   bunite_view_capabilities: (viewId: number) => number;
   bunite_view_load_url: (viewId: number, url: CStringPointer) => void;
   bunite_view_load_html: (viewId: number, html: CStringPointer) => void;
@@ -366,6 +371,14 @@ const nativeSymbolDefinitions = {
   },
   bunite_view_set_download_policy: {
     args: [FFIType.u32, FFIType.i32, FFIType.cstring],
+    returns: FFIType.void
+  },
+  bunite_view_popup_accept: {
+    args: [FFIType.u32, FFIType.u32, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64],
+    returns: FFIType.void
+  },
+  bunite_view_popup_dismiss: {
+    args: [FFIType.u32],
     returns: FFIType.void
   },
   bunite_view_capabilities: {
@@ -658,6 +671,18 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
             downloadEventHandler?.(viewId, parsed);
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.webview.downloadEvent(parsed),
+              viewId
+            );
+            break;
+          }
+          case "popup-requested": {
+            const parsed = maybeParsePayload(payload) as {
+              newSurfaceId: number;
+              url: string;
+              disposition: "tab" | "window" | "popup";
+            };
+            buniteEventEmitter.emitEvent(
+              buniteEventEmitter.events.webview.popupRequested(parsed),
               viewId
             );
             break;

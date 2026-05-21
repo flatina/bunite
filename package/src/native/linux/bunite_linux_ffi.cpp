@@ -484,6 +484,14 @@ extern "C" BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t /*view_id
   // WebKitDownload integration deferred. The cap bit is 0; consumers shouldn't call.
 }
 
+extern "C" BUNITE_EXPORT void bunite_view_popup_accept(uint32_t /*new_view_id*/, uint32_t /*host_window_id*/,
+                                                       double /*x*/, double /*y*/, double /*w*/, double /*h*/) {
+  // Popup adoption deferred on WebKitGTK (create signal sync-return orchestration). Cap bit 0; no-op.
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_popup_dismiss(uint32_t /*new_view_id*/) {
+}
+
 extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
                                                        const char* format, int32_t quality) {
   std::string fmt = format ? format : "png";
