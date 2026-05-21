@@ -67,6 +67,10 @@ struct ViewState {
   // respondToDialog invokes them; the page execution is paused meanwhile.
   std::unordered_map<uint32_t, void(^)(bool /*accept*/, const std::string& /*text*/)> pending_dialogs;
   uint32_t next_dialog_request_id = 1;
+
+  // Download policy: 0=auto, 1=ask (treated as block), 2=block (default).
+  std::atomic<int32_t> download_policy{2};
+  std::string download_dir;
 };
 
 // ---------------------------------------------------------------------------
@@ -92,6 +96,11 @@ struct RuntimeState {
 
   BuniteWebviewEventHandler webview_event_handler = nullptr;
   BuniteWindowEventHandler window_event_handler = nullptr;
+
+  // Hidden NSWindow — popup-minted WKWebViews park here until adoption.
+  __strong NSWindow* popup_parent = nil;
+  // Parked popup webviews awaiting acceptPopup/dismissPopup. Key = popup view_id (>= 0x80000000).
+  __strong NSMutableDictionary<NSNumber*, WKWebView*>* parked_popups = nil;
 };
 
 extern RuntimeState g_runtime;
@@ -139,6 +148,10 @@ void destroyWindow(uint32_t window_id);
 // Defined in bunite_mac_view.mm.
 ViewState* findView(uint32_t view_id);
 uint32_t viewIdForWebView(WKWebView* wv);  // returns 0 if not tracked
+void registerWebViewId(WKWebView* wv, uint32_t view_id);
+void unregisterWebViewId(WKWebView* wv);
+bool acceptParkedPopup(uint32_t new_view_id, uint32_t host_window_id, double x, double y, double w, double h);
+void dismissParkedPopup(uint32_t new_view_id);
 bool createView(uint32_t view_id, uint32_t window_id,
                 NSString* url, NSString* html, NSString* preload, NSString* appres_root,
                 NSString* navigation_rules_json, NSString* preload_origins_json,

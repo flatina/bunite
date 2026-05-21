@@ -746,31 +746,140 @@ extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
          BUNITE_CAP_MOUSE | BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG |
          BUNITE_CAP_BOUNDING_RECT |
-         BUNITE_CAP_RESOLVE_AND_CLICK;
+         BUNITE_CAP_RESOLVE_AND_CLICK | BUNITE_CAP_DOWNLOADS | BUNITE_CAP_POPUPS |
+         BUNITE_CAP_AX | BUNITE_CAP_FRAMES;
 }
+
+namespace {
+
+// JS-bridge ax tree (mirrors linux backend) — WKWebView has no public host-side
+// ax API. Walks DOM + ARIA attrs, emits CDP-shaped flat list so TS-side
+// convertAxTree works unchanged. `ignored` always false (interestingOnly no-op).
+NSString* const kAxScript = @"(function(){"
+  "var nodes=[];"
+  "function add(el,parentId){"
+  "if(!el||el.nodeType!==1)return null;"
+  "var id=String(nodes.length+1);"
+  "var node={nodeId:id,parentId:parentId,"
+  "role:{value:el.getAttribute('role')||el.tagName.toLowerCase()},"
+  "name:{value:el.getAttribute('aria-label')||"
+  "(el.tagName==='INPUT'||el.tagName==='TEXTAREA'?'':"
+  "(el.firstChild&&el.firstChild.nodeType===3?el.firstChild.textContent.trim().slice(0,100):''))},"
+  "properties:[],childIds:[],ignored:false};"
+  "var d=el.getAttribute('aria-description');if(d)node.description={value:d};"
+  "if(el.tagName==='INPUT'||el.tagName==='TEXTAREA'){if(el.value)node.value={value:el.value};}"
+  "if(el.getAttribute('aria-disabled')==='true'||el.disabled)node.properties.push({name:'disabled',value:{value:true}});"
+  "var ck=el.getAttribute('aria-checked');"
+  "if(ck==='true')node.properties.push({name:'checked',value:{value:true}});"
+  "else if(ck==='false')node.properties.push({name:'checked',value:{value:false}});"
+  "else if(ck==='mixed')node.properties.push({name:'checked',value:{value:'mixed'}});"
+  "var pr=el.getAttribute('aria-pressed');"
+  "if(pr==='true')node.properties.push({name:'pressed',value:{value:true}});"
+  "else if(pr==='false')node.properties.push({name:'pressed',value:{value:false}});"
+  "else if(pr==='mixed')node.properties.push({name:'pressed',value:{value:'mixed'}});"
+  "if(el.getAttribute('aria-expanded')==='true')node.properties.push({name:'expanded',value:{value:true}});"
+  "if(el.getAttribute('aria-selected')==='true')node.properties.push({name:'selected',value:{value:true}});"
+  "if(el.getAttribute('aria-required')==='true')node.properties.push({name:'required',value:{value:true}});"
+  "if(el.getAttribute('aria-invalid')==='true')node.properties.push({name:'invalid',value:{value:true}});"
+  "var lv=el.getAttribute('aria-level');if(lv)node.properties.push({name:'level',value:{value:parseInt(lv,10)}});"
+  "if(document.activeElement===el)node.properties.push({name:'focused',value:{value:true}});"
+  "nodes.push(node);"
+  "for(var i=0;i<el.children.length;i++){var cid=add(el.children[i],id);if(cid)node.childIds.push(cid);}"
+  "return id;"
+  "}"
+  "add(document.documentElement,null);"
+  "return JSON.stringify({nodes:nodes});"
+  "})()";
+
+// JS-bridge frame tree — walks window.frames into CDP `Page.getFrameTree` shape.
+NSString* const kFramesScript = @"(function(){"
+  "var id=0;"
+  "function walk(win){"
+  "var fid=String(++id);"
+  "var frame={id:fid,securityOrigin:'',url:''};"
+  "try{frame.url=win.location.href;frame.securityOrigin=win.location.origin;"
+  "if(win.frameElement&&win.frameElement.name)frame.name=win.frameElement.name;}catch(e){}"
+  "var children=[];"
+  "try{for(var i=0;i<win.frames.length;i++)children.push(walk(win.frames[i]));}catch(e){}"
+  "return {frame:frame,childFrames:children};"
+  "}"
+  "return JSON.stringify({frameTree:walk(window)});"
+  "})()";
+
+}  // namespace
 
 extern "C" BUNITE_EXPORT void bunite_view_accessibility_snapshot(uint32_t view_id, uint32_t request_id,
                                                                   int32_t /*interesting_only*/) {
-  // WKWebView exposes no public ax tree API. Honest not_supported.
-  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
-                        ",\"ok\":false,\"code\":\"not_supported\","
-                        "\"message\":\"WKWebView has no public accessibility tree API\"}";
-  bunite_mac::emitWebviewEvent(view_id, "accessibility-result", payload);
+  runOnUiThreadSync([=]() {
+    auto* v = bunite_mac::findView(view_id);
+    if (!v || !v->webview) {
+      std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                            ",\"ok\":false,\"code\":\"not_supported\","
+                            "\"message\":\"view not ready\"}";
+      bunite_mac::emitWebviewEvent(view_id, "accessibility-result", payload);
+      return;
+    }
+    [v->webview evaluateJavaScript:kAxScript completionHandler:^(id result, NSError* error) {
+      std::string payload = "{\"requestId\":" + std::to_string(request_id);
+      if (error || ![result isKindOfClass:[NSString class]]) {
+        std::string msg = error ? std::string(error.localizedDescription.UTF8String ?: "evaluate failed")
+                                : std::string("non-string ax result");
+        payload += ",\"ok\":false,\"code\":\"runtime_error\","
+                   "\"message\":\"" + bunite_mac::escapeJsonString(msg) + "\"}";
+      } else {
+        std::string tree_json = ((NSString*)result).UTF8String ?: "{}";
+        payload += ",\"ok\":true,\"tree\":" + tree_json + "}";
+      }
+      bunite_mac::emitWebviewEvent(view_id, "accessibility-result", payload);
+    }];
+  });
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_list_frames(uint32_t view_id, uint32_t request_id) {
-  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
-                        ",\"ok\":false,\"code\":\"not_supported\","
-                        "\"message\":\"WKWebView has no frame addressing API\"}";
-  bunite_mac::emitWebviewEvent(view_id, "list-frames-result", payload);
+  runOnUiThreadSync([=]() {
+    auto* v = bunite_mac::findView(view_id);
+    if (!v || !v->webview) {
+      std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                            ",\"ok\":false,\"code\":\"not_supported\","
+                            "\"message\":\"view not ready\"}";
+      bunite_mac::emitWebviewEvent(view_id, "list-frames-result", payload);
+      return;
+    }
+    [v->webview evaluateJavaScript:kFramesScript completionHandler:^(id result, NSError* error) {
+      std::string payload = "{\"requestId\":" + std::to_string(request_id);
+      if (error || ![result isKindOfClass:[NSString class]]) {
+        std::string msg = error ? std::string(error.localizedDescription.UTF8String ?: "evaluate failed")
+                                : std::string("non-string frames result");
+        payload += ",\"ok\":false,\"code\":\"runtime_error\","
+                   "\"message\":\"" + bunite_mac::escapeJsonString(msg) + "\"}";
+      } else {
+        std::string tree_json = ((NSString*)result).UTF8String ?: "{}";
+        payload += ",\"ok\":true,\"raw\":" + tree_json + "}";
+      }
+      bunite_mac::emitWebviewEvent(view_id, "list-frames-result", payload);
+    }];
+  });
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_evaluate_in_frame(uint32_t view_id, uint32_t request_id,
-                                                              const char* /*script*/, const char* /*frame_id*/) {
-  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
-                        ",\"ok\":false,\"code\":\"not_supported\","
-                        "\"message\":\"WKWebView has no frame addressing API\"}";
-  bunite_mac::emitWebviewEvent(view_id, "evaluate-result", payload);
+                                                              const char* script_c, const char* frame_id_c) {
+  std::string script = script_c ? script_c : "";
+  std::string frame_id = frame_id_c ? frame_id_c : "";
+  if (frame_id.empty()) {
+    bunite_view_evaluate(view_id, request_id, script_c);
+    return;
+  }
+  std::string js_target = bunite_mac::escapeJsonString(frame_id);
+  std::string js_script = bunite_mac::escapeJsonString(script);
+  std::string inner =
+    "(function(){var target=\"" + js_target + "\";var id=0;var found=null;"
+    "function walk(win){var fid=String(++id);if(fid===target){found=win;return;}"
+    "try{for(var i=0;i<win.frames.length;i++){walk(win.frames[i]);if(found)return;}}catch(e){}}"
+    "walk(window);"
+    "if(!found)throw new Error('frame not found');"
+    "return found.eval(\"(\"+\"" + js_script + "\"+\")\");"
+    "})()";
+  bunite_view_evaluate(view_id, request_id, inner.c_str());
 }
 
 namespace {
@@ -894,19 +1003,21 @@ extern "C" BUNITE_EXPORT void bunite_view_resolve_and_click(
   });
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t /*view_id*/, int32_t /*policy*/, const char* /*download_dir*/) {
-  // WKDownload integration deferred — downloads are intercepted by WKWebView's
-  // default UI handler. The cap bit is 0 on this backend, so consumers shouldn't
-  // call this; treat as no-op.
+extern "C" BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t view_id, int32_t policy, const char* download_dir) {
+  auto* st = bunite_mac::findView(view_id);
+  if (!st) return;
+  if (policy < 0 || policy > 2) policy = 2;
+  st->download_policy.store(policy);
+  st->download_dir = download_dir ? download_dir : "";
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_popup_accept(uint32_t /*new_view_id*/, uint32_t /*host_window_id*/,
-                                                       double /*x*/, double /*y*/, double /*w*/, double /*h*/) {
-  // Popup adoption deferred on WKWebView (requires createWebViewWithConfiguration:
-  // eager-mint orchestration). Cap bit is 0; no-op.
+extern "C" BUNITE_EXPORT void bunite_view_popup_accept(uint32_t new_view_id, uint32_t host_window_id,
+                                                       double x, double y, double w, double h) {
+  runOnUiThreadSync([=]() { bunite_mac::acceptParkedPopup(new_view_id, host_window_id, x, y, w, h); });
 }
 
-extern "C" BUNITE_EXPORT void bunite_view_popup_dismiss(uint32_t /*new_view_id*/) {
+extern "C" BUNITE_EXPORT void bunite_view_popup_dismiss(uint32_t new_view_id) {
+  runOnUiThreadSync([=]() { bunite_mac::dismissParkedPopup(new_view_id); });
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
