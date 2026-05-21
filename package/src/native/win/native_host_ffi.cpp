@@ -20,7 +20,7 @@
 using bunite_win::runOnUiThreadSync;
 using bunite_win::runOnCefUiThreadSync;
 
-static constexpr int32_t BUNITE_ABI_VERSION = 10;
+static constexpr int32_t BUNITE_ABI_VERSION = 11;
 
 namespace {
 
@@ -1191,7 +1191,8 @@ extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
          BUNITE_CAP_MOUSE | BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG |
          BUNITE_CAP_AX | BUNITE_CAP_BOUNDING_RECT | BUNITE_CAP_FRAMES |
-         BUNITE_CAP_DOWNLOADS | BUNITE_CAP_POPUPS;
+         BUNITE_CAP_DOWNLOADS | BUNITE_CAP_POPUPS |
+         BUNITE_CAP_RESOLVE_AND_CLICK;
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t view_id, int32_t policy, const char* download_dir) {
@@ -1473,6 +1474,174 @@ extern "C" BUNITE_EXPORT void bunite_view_evaluate_in_frame(uint32_t view_id, ui
                                       ",\"ok\":true,\"value\":\"" + escVal + "\"}";
                 bunite_win::emitWebviewEvent(view_id, "evaluate-result", payload);
               });
+        });
+  });
+}
+
+namespace {
+
+void emitResolveAndClickError(uint32_t view_id, uint32_t request_id, const char* code, const std::string& msg) {
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"" + code + "\","
+                        "\"message\":\"" + bunite_win::escapeJsonString(msg) + "\"}";
+  bunite_win::emitWebviewEvent(view_id, "resolve-and-click-result", payload);
+}
+
+const char* cdpButtonName(int32_t b) {
+  switch (b) { case 1: return "middle"; case 2: return "right"; default: return "left"; }
+}
+
+std::string escapeForJsString(const std::string& s) {
+  std::string out; out.reserve(s.size() + 2);
+  for (char c : s) {
+    if (c == '"' || c == '\\') { out.push_back('\\'); out.push_back(c); }
+    else if (c == '\n') out += "\\n";
+    else if (c == '\r') out += "\\r";
+    else if (c == '\t') out += "\\t";
+    else out.push_back(c);
+  }
+  return out;
+}
+
+std::string escapeForJsonString(const std::string& s) {
+  std::string out; out.reserve(s.size());
+  for (char c : s) {
+    if (c == '"' || c == '\\') { out.push_back('\\'); out.push_back(c); }
+    else if (c == '\n') out += "\\n";
+    else if (c == '\r') out += "\\r";
+    else if (c == '\t') out += "\\t";
+    else out.push_back(c);
+  }
+  return out;
+}
+
+std::string buildResolveScript(const std::string& selector, bool walk_frames) {
+  // Frame-walk runs BEFORE selector resolve so a cross-origin ancestor doesn't
+  // leak scrollIntoView. rect is viewport-normalized to match click coords.
+  std::string sel_lit = "\"" + escapeForJsString(selector) + "\"";
+  std::string s =
+    "(function(){"
+      "var ox=0,oy=0;";
+  if (walk_frames) {
+    s +=
+      "try{var w=window;while(w!==w.parent){var fe=w.frameElement;"
+      "if(!fe)return{ok:false,code:\"cross_origin\"};"
+      "var fr=fe.getBoundingClientRect();ox+=fr.x;oy+=fr.y;w=w.parent;}}"
+      "catch(e){return{ok:false,code:\"cross_origin\"};}";
+  }
+  s +=
+      "var el=document.querySelector(" + sel_lit + ");"
+      "if(!el)return{ok:false,code:\"not_found\"};"
+      "el.scrollIntoView({block:\"nearest\",inline:\"nearest\",behavior:\"instant\"});"
+      "var r=el.getBoundingClientRect();"
+      "var vis=r.width>0&&r.height>0&&r.bottom>0&&r.right>0"
+      "&&r.top<innerHeight&&r.left<innerWidth;"
+      "if(!vis)return{ok:false,code:\"not_visible\"};"
+      "return{ok:true,x:ox+r.x,y:oy+r.y,w:r.width,h:r.height,"
+      "cx:ox+r.x+r.width/2,cy:oy+r.y+r.height/2};"
+    "})()";
+  return s;
+}
+
+CefRefPtr<CefDictionaryValue> parseEvaluateValue(
+    const std::string& evalResult,
+    std::function<void(const char*, const std::string&)> onErr) {
+  CefRefPtr<CefValue> ev = CefParseJSON(evalResult, JSON_PARSER_RFC);
+  if (!ev || ev->GetType() != VTYPE_DICTIONARY) { onErr("runtime_error", "Runtime.evaluate malformed"); return nullptr; }
+  CefRefPtr<CefDictionaryValue> d = ev->GetDictionary();
+  if (d->HasKey("exceptionDetails")) {
+    CefRefPtr<CefDictionaryValue> ex = d->GetDictionary("exceptionDetails");
+    std::string msg = ex && ex->HasKey("text") ? ex->GetString("text").ToString() : "runtime exception";
+    onErr("runtime_error", msg);
+    return nullptr;
+  }
+  CefRefPtr<CefDictionaryValue> result = d->GetDictionary("result");
+  if (!result || !result->HasKey("value")) { onErr("runtime_error", "evaluate returned no value"); return nullptr; }
+  CefRefPtr<CefValue> v = result->GetValue("value");
+  if (!v || v->GetType() != VTYPE_DICTIONARY) { onErr("runtime_error", "evaluate returned non-object"); return nullptr; }
+  return v->GetDictionary();
+}
+
+void dispatchCdpClick(ViewHost* view, double cx, double cy,
+                       int32_t button, int32_t click_count, uint32_t modifiers) {
+  if (click_count < 1) click_count = 1;
+  const char* btn = cdpButtonName(button);
+  for (int i = 1; i <= click_count; ++i) {
+    std::string base = "\"x\":" + std::to_string(cx) + ",\"y\":" + std::to_string(cy) +
+                       ",\"button\":\"" + btn + "\",\"clickCount\":" + std::to_string(i) +
+                       ",\"modifiers\":" + std::to_string(modifiers);
+    cefCdpCall(view, "Input.dispatchMouseEvent", "{\"type\":\"mousePressed\"," + base + "}");
+    cefCdpCall(view, "Input.dispatchMouseEvent", "{\"type\":\"mouseReleased\"," + base + "}");
+  }
+}
+
+}  // namespace
+
+extern "C" BUNITE_EXPORT void bunite_view_resolve_and_click(
+    uint32_t view_id, uint32_t request_id,
+    const char* selector_c, const char* frame_id_c,
+    int32_t button, int32_t click_count, uint32_t modifiers) {
+  std::string selector = selector_c ? selector_c : "";
+  std::string frameId = frame_id_c ? frame_id_c : "";
+  bunite_win::postCefUiTask([view_id, request_id, selector, frameId, button, click_count, modifiers]() {
+    auto* view = bunite_win::getViewHostById(view_id);
+    if (!view || !view->browser) { emitResolveAndClickError(view_id, request_id, "runtime_error", "view not ready"); return; }
+
+    const bool frame_targeted = !frameId.empty();
+    std::string script = buildResolveScript(selector, frame_targeted);
+    std::string escScript = escapeForJsonString(script);
+
+    auto onEvalResult = [view_id, request_id, button, click_count, modifiers](bool ok, std::string evalResult) {
+      auto onErr = [view_id, request_id](const char* code, const std::string& msg) {
+        emitResolveAndClickError(view_id, request_id, code, msg);
+      };
+      if (!ok) { onErr("runtime_error", "Runtime.evaluate failed"); return; }
+      auto value = parseEvaluateValue(evalResult, onErr);
+      if (!value) return;
+      const bool result_ok = value->HasKey("ok") && value->GetBool("ok");
+      if (!result_ok) {
+        std::string code = value->HasKey("code") ? value->GetString("code").ToString() : "runtime_error";
+        onErr(code.c_str(), "");
+        return;
+      }
+      double cx = value->GetDouble("cx"), cy = value->GetDouble("cy");
+      double x = value->GetDouble("x"), y = value->GetDouble("y");
+      double w = value->GetDouble("w"), h = value->GetDouble("h");
+      auto* v2 = bunite_win::getViewHostById(view_id);
+      if (!v2 || !v2->browser) { onErr("runtime_error", "view destroyed"); return; }
+      dispatchCdpClick(v2, cx, cy, button, click_count, modifiers);
+      // Chromium browser-process CDP → DOM trust=false.
+      std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                            ",\"ok\":true,\"rect\":{\"x\":" + std::to_string(x) +
+                            ",\"y\":" + std::to_string(y) +
+                            ",\"width\":" + std::to_string(w) +
+                            ",\"height\":" + std::to_string(h) + "},"
+                            "\"isTrustedEvent\":false}";
+      bunite_win::emitWebviewEvent(view_id, "resolve-and-click-result", payload);
+    };
+
+    if (!frame_targeted) {
+      std::string evalParams = "{\"expression\":\"" + escScript + "\",\"returnByValue\":true,\"awaitPromise\":true}";
+      cefCdpCall(view, "Runtime.evaluate", evalParams, onEvalResult);
+      return;
+    }
+
+    // OOPIF frameIds make createIsolatedWorld fail → spec-locked cross_origin.
+    std::string isoParams = "{\"frameId\":\"" + bunite_win::escapeJsonString(frameId) + "\",\"worldName\":\"bunite-rac\"}";
+    cefCdpCall(view, "Page.createIsolatedWorld", isoParams,
+        [view_id, request_id, escScript, onEvalResult](bool ok, std::string isoResult) {
+          if (!ok) { emitResolveAndClickError(view_id, request_id, "cross_origin", "createIsolatedWorld failed (cross-origin frame?)"); return; }
+          CefRefPtr<CefValue> val = CefParseJSON(isoResult, JSON_PARSER_RFC);
+          if (!val || val->GetType() != VTYPE_DICTIONARY) {
+            emitResolveAndClickError(view_id, request_id, "runtime_error", "createIsolatedWorld malformed"); return;
+          }
+          int contextId = val->GetDictionary()->GetInt("executionContextId");
+          auto* v2 = bunite_win::getViewHostById(view_id);
+          if (!v2) { emitResolveAndClickError(view_id, request_id, "runtime_error", "view destroyed"); return; }
+          std::string evalParams = "{\"expression\":\"" + escScript +
+                                   "\",\"contextId\":" + std::to_string(contextId) +
+                                   ",\"returnByValue\":true,\"awaitPromise\":true}";
+          cefCdpCall(v2, "Runtime.evaluate", evalParams, onEvalResult);
         });
   });
 }

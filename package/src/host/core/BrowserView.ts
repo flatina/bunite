@@ -11,6 +11,7 @@ import {
 import type {
   EvaluateResult, SurfaceCapabilities, ScreenshotResult, Modifier,
   AccessibilitySnapshotResult, AxNode, ListFramesResult,
+  ResolveAndClickArgs, ResolveAndClickResult,
 } from "../../rpc/framework";
 import { encodeModifiers, resolveKey } from "./inputDispatch";
 import { createEncryptedPipe } from "../encryptedPipe";
@@ -20,6 +21,7 @@ import {
   setScreenshotResultHandler, type NativeScreenshotResult,
   setAccessibilityResultHandler, type NativeAccessibilityResult,
   setListFramesResultHandler, type NativeListFramesResult,
+  setResolveAndClickResultHandler, type NativeResolveAndClickResult,
 } from "../native";
 import { attachBrowserViewRegistry, getRpcPort } from "./Socket";
 import { getAppRuntimeOrThrow } from "./App";
@@ -170,6 +172,23 @@ function rejectFramesForView(viewId: number) {
   }
 }
 
+type ResolveAndClickPending = { viewId: number; resolve: (result: ResolveAndClickResult) => void };
+let nextResolveAndClickRequestId = 1;
+const resolveAndClickResolvers = new Map<number, ResolveAndClickPending>();
+function registerResolveAndClickRequest(viewId: number, resolve: (result: ResolveAndClickResult) => void): number {
+  const id = nextResolveAndClickRequestId++;
+  resolveAndClickResolvers.set(id, { viewId, resolve });
+  return id;
+}
+function rejectResolveAndClickForView(viewId: number) {
+  for (const [reqId, entry] of resolveAndClickResolvers) {
+    if (entry.viewId === viewId) {
+      resolveAndClickResolvers.delete(reqId);
+      entry.resolve({ ok: false, code: "runtime_error", message: "view destroyed" });
+    }
+  }
+}
+
 function flattenFrameTree(raw: any): { frameId: string; parentFrameId: string | null; origin: string; url: string; name?: string }[] {
   const out: { frameId: string; parentFrameId: string | null; origin: string; url: string; name?: string }[] = [];
   const walk = (node: any, parent: string | null) => {
@@ -253,6 +272,19 @@ setScreenshotResultHandler((viewId, raw: NativeScreenshotResult) => {
   }
 });
 
+setResolveAndClickResultHandler((viewId, raw: NativeResolveAndClickResult) => {
+  const entry = resolveAndClickResolvers.get(raw.requestId);
+  if (!entry || entry.viewId !== viewId) return;
+  resolveAndClickResolvers.delete(raw.requestId);
+  if (raw.ok && raw.rect) {
+    entry.resolve({ ok: true, rect: raw.rect, isTrustedEvent: !!raw.isTrustedEvent });
+  } else {
+    type FailCode = "not_found" | "not_visible" | "runtime_error" | "cross_origin" | "not_supported";
+    const code = (raw.code as FailCode | undefined) ?? "runtime_error";
+    entry.resolve({ ok: false, code, message: raw.message ?? "resolveAndClick failed" });
+  }
+});
+
 setEvaluateResultHandler((viewId, raw: NativeEvaluateResult) => {
   const entry = evaluateResolvers.get(raw.requestId);
   if (!entry) return;
@@ -293,6 +325,7 @@ const CAP_BOUNDING_RECT        = 1 << 16;
 const CAP_FRAMES               = 1 << 17;
 const CAP_DOWNLOADS            = 1 << 18;
 const CAP_POPUPS               = 1 << 19;
+const CAP_RESOLVE_AND_CLICK    = 1 << 20;
 
 function decodeCapabilityBits(bits: number): SurfaceCapabilities {
   const formats: ("png" | "jpeg")[] = [];
@@ -316,6 +349,7 @@ function decodeCapabilityBits(bits: number): SurfaceCapabilities {
     frames: !!(bits & CAP_FRAMES),
     downloads: !!(bits & CAP_DOWNLOADS),
     popups: !!(bits & CAP_POPUPS),
+    resolveAndClick: !!(bits & CAP_RESOLVE_AND_CLICK),
     ...(formats.length > 0 ? { formats } : {}),
   };
 }
@@ -595,6 +629,28 @@ export class BrowserView {
     });
   }
 
+  resolveAndClick(args: ResolveAndClickArgs): Promise<ResolveAndClickResult> {
+    if (!this.nativeAttached) {
+      return Promise.resolve({ ok: false, code: "not_supported", message: "native runtime unavailable" });
+    }
+    return new Promise<ResolveAndClickResult>((resolve) => {
+      const requestId = registerResolveAndClickRequest(this.id, resolve);
+      const timer = setTimeout(() => {
+        if (resolveAndClickResolvers.delete(requestId)) {
+          resolve({ ok: false, code: "runtime_error", message: "resolveAndClick timed out after 5s" });
+        }
+      }, 5_000);
+      const wrappedResolve = (r: ResolveAndClickResult) => { clearTimeout(timer); resolve(r); };
+      resolveAndClickResolvers.set(requestId, { viewId: this.id, resolve: wrappedResolve });
+      const button = args.button === "right" ? 2 : args.button === "middle" ? 1 : 0;
+      getNativeLibrary()?.symbols.bunite_view_resolve_and_click(
+        this.id, requestId,
+        toCString(args.selector), toCString(args.frameId ?? ""),
+        button, args.clickCount ?? 1, encodeModifiers(args.modifiers),
+      );
+    });
+  }
+
   capabilities(): SurfaceCapabilities {
     if (!this.nativeAttached) return decodeCapabilityBits(0);
     const bits = getNativeLibrary()?.symbols.bunite_view_capabilities(this.id) ?? 0;
@@ -809,6 +865,7 @@ export class BrowserView {
     rejectScreenshotsForView(this.id);
     rejectAxForView(this.id);
     rejectFramesForView(this.id);
+    rejectResolveAndClickForView(this.id);
     this.nativeAttached = false;
     for (const eventName of [
       "will-navigate", "did-navigate", "dom-ready", "new-window-open", "permission-requested", "title-changed",

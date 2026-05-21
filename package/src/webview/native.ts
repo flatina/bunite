@@ -6,6 +6,7 @@ import type {
   SurfaceEvent, ConsoleEntry, WaitResult, NavigationState,
   AccessibilitySnapshotResult, BoundingRectResult, ListFramesResult,
   DownloadEvent, DownloadPolicy, WaitForDownloadResult,
+  ResolveAndClickResult,
 } from "../rpc/framework";
 
 declare const __buniteWebviewId: number;
@@ -289,7 +290,7 @@ class BuniteWebviewElement extends HTMLElement {
         nativeInputTrusted: false, click: false, type: false, press: false,
         scroll: false, mouse: false, dialogs: false, console: false,
         screenshot: false, accessibilitySnapshot: false, getBoundingRect: false,
-        frames: false, downloads: false, popups: false,
+        frames: false, downloads: false, popups: false, resolveAndClick: false,
       };
     }
     return callSurfaceTyped((s) => s.capabilities({ surfaceId: sid }));
@@ -395,6 +396,20 @@ class BuniteWebviewElement extends HTMLElement {
     const sid = this._surfaceId;
     if (sid == null) return { ok: false, code: "not_supported", message: "surface not ready" };
     return callSurfaceTyped((s) => s.listFrames({ surfaceId: sid }));
+  }
+
+  async resolveAndClick(
+    selector: string,
+    opts?: {
+      frameId?: string;
+      button?: "left" | "middle" | "right";
+      clickCount?: number;
+      modifiers?: Array<"alt" | "ctrl" | "meta" | "shift">;
+    }
+  ): Promise<ResolveAndClickResult> {
+    const sid = this._surfaceId;
+    if (sid == null) return { ok: false, code: "runtime_error", message: "surface not ready" };
+    return callSurfaceTyped((s) => s.resolveAndClick({ surfaceId: sid, selector, ...opts }));
   }
 
   async setDownloadPolicy(policy: DownloadPolicy, downloadDir?: string): Promise<void> {

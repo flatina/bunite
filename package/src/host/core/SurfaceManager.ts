@@ -520,7 +520,7 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
           nativeInputTrusted: false, click: false, type: false, press: false,
           scroll: false, mouse: false, dialogs: false, console: false,
           screenshot: false, accessibilitySnapshot: false, getBoundingRect: false,
-          frames: false, downloads: false, popups: false,
+          frames: false, downloads: false, popups: false, resolveAndClick: false,
         };
       }
       return record.view.capabilities();
@@ -599,6 +599,15 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       const record = ownedSurface(surfaceId);
       if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
       return record.view.listFrames();
+    },
+
+    resolveAndClick: async (args) => {
+      const record = ownedSurface(args.surfaceId);
+      if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
+      if (!record.view.capabilities().resolveAndClick) {
+        return { ok: false as const, code: "not_supported" as const, message: "resolveAndClick not supported on this backend" };
+      }
+      return record.view.resolveAndClick(args);
     },
 
     downloadEvents: ({ surfaceId: filterId }) => Stream.from<DownloadEvent>((emit, signal) => {

@@ -15,14 +15,7 @@
 extern "C" {
 #endif
 
-/** ABI version. Bump on any breaking change to symbol set / signatures.
- *  v10: agent surface deltas — `bunite_view_accessibility_snapshot`,
- *       `bunite_view_list_frames`, `bunite_view_evaluate_in_frame`,
- *       `bunite_view_set_download_policy`, `bunite_view_popup_accept`,
- *       `bunite_view_popup_dismiss`. New events `accessibility-result`,
- *       `list-frames-result`, `download-event`, `popup-requested`. Capability
- *       bits `AX` (1<<15), `BOUNDING_RECT` (1<<16), `FRAMES` (1<<17),
- *       `DOWNLOADS` (1<<18), `POPUPS` (1<<19). */
+/** ABI version. Bump on any breaking change to symbol set / signatures. */
 BUNITE_EXPORT int32_t bunite_abi_version(void);
 BUNITE_EXPORT void bunite_set_log_level(int32_t level);
 BUNITE_EXPORT bool bunite_init(
@@ -230,6 +223,7 @@ enum BuniteCapBit {
 	BUNITE_CAP_FRAMES               = 1u << 17,
 	BUNITE_CAP_DOWNLOADS            = 1u << 18,
 	BUNITE_CAP_POPUPS               = 1u << 19,
+	BUNITE_CAP_RESOLVE_AND_CLICK    = 1u << 20,
 };
 BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id);
 
@@ -279,6 +273,23 @@ BUNITE_EXPORT void bunite_view_evaluate_in_frame(
 	uint32_t request_id,
 	const char* script,
 	const char* frame_id
+);
+
+/** Atomic selector resolve + native click. Async via `resolve-and-click-result`:
+ *    { requestId, ok: true, rect, isTrustedEvent }
+ *    { requestId, ok: false, code, message }
+ *  Codes: not_found / not_visible / runtime_error / cross_origin / not_supported.
+ *  `frame_id` non-empty selects a same-origin iframe (rect viewport-normalized);
+ *  cross-origin → `cross_origin`, mac/linux → `not_supported`. scrollIntoView is
+ *  automatic. `isTrustedEvent` is empirical per backend (CEF false, WV2/mac true). */
+BUNITE_EXPORT void bunite_view_resolve_and_click(
+	uint32_t view_id,
+	uint32_t request_id,
+	const char* selector,
+	const char* frame_id,
+	int32_t button,
+	int32_t click_count,
+	uint32_t modifiers
 );
 
 /** Set per-view download policy. `policy`: 0=auto (allow + emit lifecycle),

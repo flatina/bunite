@@ -122,6 +122,8 @@ export interface SurfaceCapabilities {
    *  mint a new surface with the opener relationship preserved. Host adopts via
    *  `acceptPopup({newSurfaceId, hostViewId, bounds})`. */
   popups: boolean;
+  /** Atomic `resolveAndClick(selector)`. Click trust is per-call (see `ResolveAndClickResult`). */
+  resolveAndClick: boolean;
 }
 
 export interface AxNode {
@@ -371,6 +373,21 @@ export type ScreenshotResult =
   | { ok: true; data: Uint8Array; mime: string; format: "png" | "jpeg" }
   | { ok: false; code: "not_supported" | "runtime_error" | "timeout" | "black_frame"; message: string };
 
+export interface ResolveAndClickArgs {
+  surfaceId: number;
+  selector: string;
+  /** Same-origin iframe (CEF/WV2). OOPIF → `cross_origin`. mac/linux → `not_supported`. */
+  frameId?: string;
+  button?: "left" | "middle" | "right";
+  clickCount?: number;
+  modifiers?: Modifier[];
+}
+/** rect is viewport-normalized. `isTrustedEvent` is empirical per backend:
+ *  CEF false (browser-process CDP), WV2/mac true. */
+export type ResolveAndClickResult =
+  | { ok: true; rect: { x: number; y: number; width: number; height: number }; isTrustedEvent: boolean }
+  | { ok: false; code: "not_found" | "not_visible" | "runtime_error" | "cross_origin" | "not_supported"; message: string };
+
 export const SurfaceCap = defineCap("bunite.Surface", {
   init: call<{
     src: string;
@@ -415,6 +432,7 @@ export const SurfaceCap = defineCap("bunite.Surface", {
   acceptPopup: call<AcceptPopupArgs, AcceptPopupResult>(),
   dismissPopup: call<{ newSurfaceId: number }, void>(),
   extendPopupTimeout: call<ExtendPopupTimeoutArgs, ExtendPopupTimeoutResult>(),
+  resolveAndClick: call<ResolveAndClickArgs, ResolveAndClickResult>(),
 });
 
 export const RuntimeCap = defineCap("bunite.Runtime", {

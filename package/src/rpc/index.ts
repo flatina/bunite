@@ -139,6 +139,8 @@ export type {
   AcceptPopupResult,
   ExtendPopupTimeoutArgs,
   ExtendPopupTimeoutResult,
+  ResolveAndClickArgs,
+  ResolveAndClickResult,
 } from "./framework";
 
 export type {

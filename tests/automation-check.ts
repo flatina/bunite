@@ -99,7 +99,7 @@ if (caps.click) {
   ) as { ok: boolean; value?: unknown };
   if (rect.ok && rect.value && typeof rect.value === "object") {
     const { x, y } = rect.value as { x: number; y: number };
-    // single click + isTrusted check (CEF should be true, WebView2/mac false)
+    // single click + isTrusted check — gated on per-backend `nativeInputTrusted`.
     await v.evaluate(RESET_LOG);
     v.click({ x, y });
     await sleep(200);

@@ -20,7 +20,7 @@ using bunite_mac::runOnUiThreadSync;
 
 namespace {
 
-constexpr int32_t kBuniteAbiVersion = 10;
+constexpr int32_t kBuniteAbiVersion = 11;
 
 // warn-once — avoid log spam from tight JS call loops.
 #define BUNITE_MAC_TODO(name)                                       \
@@ -513,8 +513,9 @@ extern "C" BUNITE_EXPORT void bunite_view_remove(uint32_t view_id) {
   runOnUiThreadSync([=]() { bunite_mac::removeView(view_id); });
 }
 
-// Input dispatch — synthesized NSEvent + window sendEvent: (full responder chain).
-// `isTrusted` is false (synthetic), so `nativeInputTrusted` capability stays false.
+// Input dispatch — synthesized NSEvent directly to the WKWebView (not via
+// `[NSApp sendEvent:]` — see ctrl-strip note in `bunite_view_click`). WebKit
+// marks these events `isTrusted=true` on the page; capabilities flag matches.
 namespace {
 
 NSEventModifierFlags macModifiers(uint32_t bits) {
@@ -744,7 +745,8 @@ extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
          BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
          BUNITE_CAP_MOUSE | BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG |
-         BUNITE_CAP_BOUNDING_RECT;
+         BUNITE_CAP_BOUNDING_RECT |
+         BUNITE_CAP_RESOLVE_AND_CLICK;
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_accessibility_snapshot(uint32_t view_id, uint32_t request_id,
@@ -769,6 +771,127 @@ extern "C" BUNITE_EXPORT void bunite_view_evaluate_in_frame(uint32_t view_id, ui
                         ",\"ok\":false,\"code\":\"not_supported\","
                         "\"message\":\"WKWebView has no frame addressing API\"}";
   bunite_mac::emitWebviewEvent(view_id, "evaluate-result", payload);
+}
+
+namespace {
+
+void emitResolveAndClickErrorMac(uint32_t view_id, uint32_t request_id, const char* code, const std::string& msg) {
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"" + code + "\","
+                        "\"message\":\"" + bunite_mac::escapeJsonString(msg) + "\"}";
+  bunite_mac::emitWebviewEvent(view_id, "resolve-and-click-result", payload);
+}
+
+std::string escapeForJsStringMac(const std::string& s) {
+  std::string out; out.reserve(s.size() + 2);
+  for (char c : s) {
+    if (c == '"' || c == '\\') { out.push_back('\\'); out.push_back(c); }
+    else if (c == '\n') out += "\\n";
+    else if (c == '\r') out += "\\r";
+    else if (c == '\t') out += "\\t";
+    else out.push_back(c);
+  }
+  return out;
+}
+
+}  // namespace
+
+extern "C" BUNITE_EXPORT void bunite_view_resolve_and_click(
+    uint32_t view_id, uint32_t request_id,
+    const char* selector_c, const char* frame_id_c,
+    int32_t button, int32_t click_count, uint32_t modifiers) {
+  std::string selector = selector_c ? selector_c : "";
+  std::string frameId = frame_id_c ? frame_id_c : "";
+  if (!frameId.empty()) {
+    // No frame addressing on WKWebView — sync reject before UI hop.
+    emitResolveAndClickErrorMac(view_id, request_id, "not_supported",
+                                "WKWebView has no frame addressing API");
+    return;
+  }
+  if (click_count < 1) click_count = 1;
+  std::string sel_lit = "\"" + escapeForJsStringMac(selector) + "\"";
+  std::string script =
+    "(function(){"
+      "var el=document.querySelector(" + sel_lit + ");"
+      "if(!el)return{ok:false,code:\"not_found\"};"
+      "el.scrollIntoView({block:\"nearest\",inline:\"nearest\",behavior:\"instant\"});"
+      "var r=el.getBoundingClientRect();"
+      "var vis=r.width>0&&r.height>0&&r.bottom>0&&r.right>0"
+      "&&r.top<innerHeight&&r.left<innerWidth;"
+      "if(!vis)return{ok:false,code:\"not_visible\"};"
+      "return{ok:true,x:r.x,y:r.y,w:r.width,h:r.height,"
+      "cx:r.x+r.width/2,cy:r.y+r.height/2};"
+    "})()";
+  NSString* nsScript = [NSString stringWithUTF8String:script.c_str()];
+  runOnUiThreadSync([=]() {
+    auto* v = bunite_mac::findView(view_id);
+    if (!v || !v->webview || !v->webview.window) {
+      emitResolveAndClickErrorMac(view_id, request_id, "runtime_error", "view not ready");
+      return;
+    }
+    [v->webview evaluateJavaScript:nsScript completionHandler:^(id result, NSError* error) {
+      if (error || ![result isKindOfClass:[NSDictionary class]]) {
+        std::string msg = error ? std::string(error.localizedDescription.UTF8String ?: "evaluate failed")
+                                : std::string("evaluate returned non-object");
+        emitResolveAndClickErrorMac(view_id, request_id, "runtime_error", msg);
+        return;
+      }
+      NSDictionary* d = (NSDictionary*)result;
+      id okVal = d[@"ok"];
+      const bool ok = [okVal respondsToSelector:@selector(boolValue)] && [okVal boolValue];
+      if (!ok) {
+        id codeVal = d[@"code"];
+        std::string code = [codeVal isKindOfClass:[NSString class]]
+                             ? std::string([(NSString*)codeVal UTF8String] ?: "runtime_error")
+                             : std::string("runtime_error");
+        emitResolveAndClickErrorMac(view_id, request_id, code.c_str(), "");
+        return;
+      }
+      auto pickD = [&](NSString* k)->double {
+        id x = d[k];
+        return [x respondsToSelector:@selector(doubleValue)] ? [x doubleValue] : 0.0;
+      };
+      double x = pickD(@"x"), y = pickD(@"y"), w = pickD(@"w"), h = pickD(@"h");
+      double cx = pickD(@"cx"), cy = pickD(@"cy");
+      auto* v2 = bunite_mac::findView(view_id);
+      if (!v2 || !v2->webview || !v2->webview.window) {
+        emitResolveAndClickErrorMac(view_id, request_id, "runtime_error", "view destroyed");
+        return;
+      }
+      NSWindow* win = v2->webview.window;
+      NSPoint loc = viewPointToWindow(v2->webview, cx, cy);
+      NSEventModifierFlags flags = macModifiers(modifiers) & ~NSEventModifierFlagControl;
+      for (int i = 1; i <= click_count; ++i) {
+        NSEvent* down = [NSEvent mouseEventWithType:macMouseDownType(button)
+                                           location:loc modifierFlags:flags
+                                          timestamp:[[NSProcessInfo processInfo] systemUptime]
+                                       windowNumber:win.windowNumber context:nil
+                                        eventNumber:0 clickCount:i pressure:1.0];
+        NSEvent* up = [NSEvent mouseEventWithType:macMouseUpType(button)
+                                         location:loc modifierFlags:flags
+                                        timestamp:[[NSProcessInfo processInfo] systemUptime]
+                                     windowNumber:win.windowNumber context:nil
+                                      eventNumber:0 clickCount:i pressure:0.0];
+        if (down) {
+          if (button == 0)      [v2->webview mouseDown:down];
+          else if (button == 2) [v2->webview rightMouseDown:down];
+          else                  [v2->webview otherMouseDown:down];
+        }
+        if (up) {
+          if (button == 0)      [v2->webview mouseUp:up];
+          else if (button == 2) [v2->webview rightMouseUp:up];
+          else                  [v2->webview otherMouseUp:up];
+        }
+      }
+      std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                            ",\"ok\":true,\"rect\":{\"x\":" + std::to_string(x) +
+                            ",\"y\":" + std::to_string(y) +
+                            ",\"width\":" + std::to_string(w) +
+                            ",\"height\":" + std::to_string(h) + "},"
+                            "\"isTrustedEvent\":true}";
+      bunite_mac::emitWebviewEvent(view_id, "resolve-and-click-result", payload);
+    }];
+  });
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t /*view_id*/, int32_t /*policy*/, const char* /*download_dir*/) {

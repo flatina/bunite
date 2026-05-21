@@ -356,6 +356,15 @@ extern "C" BUNITE_EXPORT void bunite_view_press(uint32_t, int32_t, int32_t, cons
 extern "C" BUNITE_EXPORT void bunite_view_scroll(uint32_t, double, double, double, double, uint32_t) {}
 extern "C" BUNITE_EXPORT void bunite_view_mouse(uint32_t, int32_t, double, double, int32_t, uint32_t) {}
 
+extern "C" BUNITE_EXPORT void bunite_view_resolve_and_click(
+    uint32_t view_id, uint32_t request_id, const char* /*selector*/, const char* /*frame_id*/,
+    int32_t /*button*/, int32_t /*click_count*/, uint32_t /*modifiers*/) {
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"not_supported\","
+                        "\"message\":\"WebKitGTK has no synthetic input API\"}";
+  bunite_linux::emitWebviewEvent(view_id, "resolve-and-click-result", payload);
+}
+
 extern "C" BUNITE_EXPORT void bunite_view_respond_dialog(uint32_t view_id, uint32_t request_id,
                                                           bool accept, const char* text) {
   bunite_linux::respondToDialogRequest(view_id, request_id, accept, text ? text : "");

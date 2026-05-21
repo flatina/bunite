@@ -12,7 +12,7 @@ void setViewInputPassthrough(ViewHost* v, bool passthrough);
 
 extern "C" {
 
-BUNITE_EXPORT int32_t bunite_abi_version(void) { return 10; }
+BUNITE_EXPORT int32_t bunite_abi_version(void) { return 11; }
 
 BUNITE_EXPORT void bunite_set_log_level(int32_t level) {
   if (level < 0) level = 0;
@@ -379,7 +379,8 @@ BUNITE_EXPORT void bunite_view_reload(uint32_t view_id) {
 BUNITE_EXPORT void bunite_view_remove(uint32_t view_id) { destroyView(view_id); }
 
 // Input dispatch — CDP via CallDevToolsProtocolMethod (Playwright pattern).
-// MouseEvent.isTrusted is false (CDP-synthesized); capability honest.
+// Edge runtime injects below DevTools surface — DOM `isTrusted=true`
+// (see `bunite_view_capabilities` note).
 namespace {
 
 const char* cdpMouseButton(int32_t b) {
@@ -504,7 +505,8 @@ BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
          BUNITE_CAP_MOUSE | BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG |
          BUNITE_CAP_AX | BUNITE_CAP_BOUNDING_RECT | BUNITE_CAP_FRAMES |
-         BUNITE_CAP_DOWNLOADS | BUNITE_CAP_POPUPS;
+         BUNITE_CAP_DOWNLOADS | BUNITE_CAP_POPUPS |
+         BUNITE_CAP_RESOLVE_AND_CLICK;
 }
 
 BUNITE_EXPORT void bunite_view_set_download_policy(uint32_t view_id, int32_t policy, const char* download_dir) {
@@ -724,6 +726,207 @@ BUNITE_EXPORT void bunite_view_evaluate_in_frame(uint32_t view_id, uint32_t requ
                                     ",\"ok\":true,\"value\":\"" + escapeJsonString(valueJson) + "\"}";
               emitWebviewEvent(view_id, "evaluate-result", payload);
             });
+      });
+}
+
+}  // extern "C" — exit so the helpers below can return std::string.
+
+namespace {
+
+void emitResolveAndClickErrorWv2(uint32_t view_id, uint32_t request_id, const char* code, const std::string& message) {
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"" + code +
+                        "\",\"message\":\"" + escapeJsonString(message) + "\"}";
+  emitWebviewEvent(view_id, "resolve-and-click-result", payload);
+}
+
+const char* cdpButtonNameWv2(int32_t b) {
+  switch (b) { case 1: return "middle"; case 2: return "right"; default: return "left"; }
+}
+
+std::string extractJsonValueRaw(const std::string& s, const std::string& key) {
+  std::string needle = "\"" + key + "\":";
+  size_t p = s.find(needle);
+  if (p == std::string::npos) return {};
+  p += needle.size();
+  while (p < s.size() && (s[p] == ' ' || s[p] == '\t')) ++p;
+  if (p >= s.size()) return {};
+  size_t end = p;
+  char c = s[p];
+  if (c == '"') {
+    ++end;
+    while (end < s.size() && s[end] != '"') { if (s[end] == '\\' && end + 1 < s.size()) ++end; ++end; }
+    if (end < s.size()) ++end;
+  } else if (c == '{' || c == '[') {
+    int depth = 0; bool inStr = false;
+    while (end < s.size()) {
+      char ch = s[end];
+      if (inStr) { if (ch == '\\' && end + 1 < s.size()) ++end; else if (ch == '"') inStr = false; }
+      else if (ch == '"') inStr = true;
+      else if (ch == '{' || ch == '[') ++depth;
+      else if (ch == '}' || ch == ']') { --depth; if (depth == 0) { ++end; break; } }
+      ++end;
+    }
+  } else {
+    while (end < s.size()) {
+      char ch = s[end];
+      if (ch == ',' || ch == '}' || ch == ' ' || ch == '\t' || ch == '\n') break;
+      ++end;
+    }
+  }
+  return s.substr(p, end - p);
+}
+
+double extractJsonDouble(const std::string& s, const std::string& key, double dflt = 0.0) {
+  std::string raw = extractJsonValueRaw(s, key);
+  if (raw.empty()) return dflt;
+  try { return std::stod(raw); } catch (...) { return dflt; }
+}
+
+std::string extractJsonStringDecoded(const std::string& s, const std::string& key) {
+  std::string raw = extractJsonValueRaw(s, key);
+  if (raw.size() < 2 || raw.front() != '"' || raw.back() != '"') return {};
+  std::string out; out.reserve(raw.size());
+  for (size_t i = 1; i + 1 < raw.size(); ++i) {
+    if (raw[i] == '\\' && i + 1 < raw.size() - 1) {
+      char nxt = raw[++i];
+      switch (nxt) {
+        case '"': out += '"'; break;
+        case '\\': out += '\\'; break;
+        case 'n': out += '\n'; break;
+        case 'r': out += '\r'; break;
+        case 't': out += '\t'; break;
+        case '/': out += '/'; break;
+        default: out += nxt; break;
+      }
+    } else out += raw[i];
+  }
+  return out;
+}
+
+std::string escapeForJsStringWv2(const std::string& s) {
+  std::string out; out.reserve(s.size() + 2);
+  for (char c : s) {
+    if (c == '"' || c == '\\') { out.push_back('\\'); out.push_back(c); }
+    else if (c == '\n') out += "\\n";
+    else if (c == '\r') out += "\\r";
+    else if (c == '\t') out += "\\t";
+    else out.push_back(c);
+  }
+  return out;
+}
+
+std::string buildResolveScriptWv2(const std::string& selector, bool walk_frames) {
+  // Frame-walk runs BEFORE selector resolve so a cross-origin ancestor doesn't
+  // leak scrollIntoView. rect is viewport-normalized to match click coords.
+  std::string sel_lit = "\"" + escapeForJsStringWv2(selector) + "\"";
+  std::string s =
+    "(function(){"
+      "var ox=0,oy=0;";
+  if (walk_frames) {
+    s +=
+      "try{var w=window;while(w!==w.parent){var fe=w.frameElement;"
+      "if(!fe)return{ok:false,code:\"cross_origin\"};"
+      "var fr=fe.getBoundingClientRect();ox+=fr.x;oy+=fr.y;w=w.parent;}}"
+      "catch(e){return{ok:false,code:\"cross_origin\"};}";
+  }
+  s +=
+      "var el=document.querySelector(" + sel_lit + ");"
+      "if(!el)return{ok:false,code:\"not_found\"};"
+      "el.scrollIntoView({block:\"nearest\",inline:\"nearest\",behavior:\"instant\"});"
+      "var r=el.getBoundingClientRect();"
+      "var vis=r.width>0&&r.height>0&&r.bottom>0&&r.right>0"
+      "&&r.top<innerHeight&&r.left<innerWidth;"
+      "if(!vis)return{ok:false,code:\"not_visible\"};"
+      "return{ok:true,x:ox+r.x,y:oy+r.y,w:r.width,h:r.height,"
+      "cx:ox+r.x+r.width/2,cy:oy+r.y+r.height/2};"
+    "})()";
+  return s;
+}
+
+void dispatchCdpClickWv2(ViewHost* v, double cx, double cy,
+                          int32_t button, int32_t click_count, uint32_t modifiers) {
+  if (click_count < 1) click_count = 1;
+  const char* btn = cdpButtonNameWv2(button);
+  for (int i = 1; i <= click_count; ++i) {
+    std::string base = "\"x\":" + std::to_string(cx) + ",\"y\":" + std::to_string(cy) +
+                       ",\"button\":\"" + btn + "\",\"clickCount\":" + std::to_string(i) +
+                       ",\"modifiers\":" + std::to_string(modifiers);
+    cdpCall(v, L"Input.dispatchMouseEvent", "{\"type\":\"mousePressed\"," + base + "}");
+    cdpCall(v, L"Input.dispatchMouseEvent", "{\"type\":\"mouseReleased\"," + base + "}");
+  }
+}
+
+}  // namespace
+
+extern "C" {
+
+BUNITE_EXPORT void bunite_view_resolve_and_click(
+    uint32_t view_id, uint32_t request_id,
+    const char* selector_c, const char* frame_id_c,
+    int32_t button, int32_t click_count, uint32_t modifiers) {
+  ViewHost* v = getView(view_id);
+  if (!v || !v->webview) { emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "view not ready"); return; }
+  std::string selector = selector_c ? selector_c : "";
+  std::string frameId = frame_id_c ? frame_id_c : "";
+  const bool frame_targeted = !frameId.empty();
+  std::string script = buildResolveScriptWv2(selector, frame_targeted);
+
+  auto onEval = [view_id, request_id, button, click_count, modifiers](bool ok, std::string evalResult) {
+    if (!ok) { emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "Runtime.evaluate failed"); return; }
+    // Reject script-thrown failures.
+    if (evalResult.find("\"exceptionDetails\"") != std::string::npos) {
+      emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "evaluate threw"); return;
+    }
+    std::string value = extractJsonValueRaw(evalResult, "value");
+    if (value.empty()) { emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "evaluate returned no value"); return; }
+    std::string okRaw = extractJsonValueRaw(value, "ok");
+    if (okRaw != "true") {
+      std::string code = extractJsonStringDecoded(value, "code");
+      if (code.empty()) code = "runtime_error";
+      emitResolveAndClickErrorWv2(view_id, request_id, code.c_str(), "");
+      return;
+    }
+    double x = extractJsonDouble(value, "x");
+    double y = extractJsonDouble(value, "y");
+    double w = extractJsonDouble(value, "w");
+    double h = extractJsonDouble(value, "h");
+    double cx = extractJsonDouble(value, "cx");
+    double cy = extractJsonDouble(value, "cy");
+    ViewHost* v2 = getView(view_id);
+    if (!v2 || !v2->webview) { emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "view destroyed"); return; }
+    dispatchCdpClickWv2(v2, cx, cy, button, click_count, modifiers);
+    // Edge runtime CDP → DOM trust=true (empirical, matches existing click path).
+    std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                          ",\"ok\":true,\"rect\":{\"x\":" + std::to_string(x) +
+                          ",\"y\":" + std::to_string(y) +
+                          ",\"width\":" + std::to_string(w) +
+                          ",\"height\":" + std::to_string(h) + "},"
+                          "\"isTrustedEvent\":true}";
+    emitWebviewEvent(view_id, "resolve-and-click-result", payload);
+  };
+
+  if (!frame_targeted) {
+    std::string evalParams = "{\"expression\":\"" + escapeJsonString(script) + "\",\"returnByValue\":true,\"awaitPromise\":true}";
+    cdpCallWithResult(v, L"Runtime.evaluate", evalParams, onEval);
+    return;
+  }
+
+  // OOPIF frameIds make createIsolatedWorld fail → spec-locked cross_origin.
+  std::string isoParams = "{\"frameId\":\"" + escapeJsonString(frameId) + "\",\"worldName\":\"bunite-rac\"}";
+  cdpCallWithResult(v, L"Page.createIsolatedWorld", isoParams,
+      [view_id, request_id, script, onEval](bool ok, std::string isoResult) {
+        if (!ok) { emitResolveAndClickErrorWv2(view_id, request_id, "cross_origin", "createIsolatedWorld failed (cross-origin frame?)"); return; }
+        int contextId = 0;
+        if (!extractJsonInt(isoResult, "executionContextId", contextId)) {
+          emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "missing executionContextId"); return;
+        }
+        ViewHost* v2 = getView(view_id);
+        if (!v2 || !v2->webview) { emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "view destroyed"); return; }
+        std::string evalParams = "{\"expression\":\"" + escapeJsonString(script) +
+                                 "\",\"contextId\":" + std::to_string(contextId) +
+                                 ",\"returnByValue\":true,\"awaitPromise\":true}";
+        cdpCallWithResult(v2, L"Runtime.evaluate", evalParams, onEval);
       });
 }
 

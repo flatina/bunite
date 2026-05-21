@@ -233,6 +233,10 @@ function definePolyfillClass(): CustomElementConstructor {
       target.dispatchEvent(new MouseEvent("click", init));
     }
 
+    async resolveAndClick(_selector: string, _opts?: unknown) {
+      return { ok: false as const, code: "not_supported" as const, message: "polyfill iframe: atomic resolveAndClick not supported" };
+    }
+
     async sendType(text: string) {
       if (!this.isReachable()) return;
       const doc = this._iframe!.contentDocument!;

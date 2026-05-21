@@ -133,6 +133,11 @@ type NativeSymbols = {
   bunite_view_evaluate_in_frame: (
     viewId: number, requestId: number, script: CStringPointer, frameId: CStringPointer
   ) => void;
+  bunite_view_resolve_and_click: (
+    viewId: number, requestId: number,
+    selector: CStringPointer, frameId: CStringPointer,
+    button: number, clickCount: number, modifiers: number
+  ) => void;
   bunite_view_set_download_policy: (
     viewId: number, policy: number, downloadDir: CStringPointer
   ) => void;
@@ -369,6 +374,10 @@ const nativeSymbolDefinitions = {
     args: [FFIType.u32, FFIType.u32, FFIType.cstring, FFIType.cstring],
     returns: FFIType.void
   },
+  bunite_view_resolve_and_click: {
+    args: [FFIType.u32, FFIType.u32, FFIType.cstring, FFIType.cstring, FFIType.i32, FFIType.i32, FFIType.u32],
+    returns: FFIType.void
+  },
   bunite_view_set_download_policy: {
     args: [FFIType.u32, FFIType.i32, FFIType.cstring],
     returns: FFIType.void
@@ -483,6 +492,19 @@ export type NativeListFramesResult = {
 let listFramesResultHandler: ((viewId: number, result: NativeListFramesResult) => void) | null = null;
 export function setListFramesResultHandler(handler: (viewId: number, result: NativeListFramesResult) => void) {
   listFramesResultHandler = handler;
+}
+
+export type NativeResolveAndClickResult = {
+  requestId: number;
+  ok: boolean;
+  rect?: { x: number; y: number; width: number; height: number };
+  isTrustedEvent?: boolean;
+  code?: string;
+  message?: string;
+};
+let resolveAndClickResultHandler: ((viewId: number, result: NativeResolveAndClickResult) => void) | null = null;
+export function setResolveAndClickResultHandler(handler: (viewId: number, result: NativeResolveAndClickResult) => void) {
+  resolveAndClickResultHandler = handler;
 }
 
 export type NativeDownloadEvent = {
@@ -664,6 +686,11 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
           case "list-frames-result": {
             const parsed = maybeParsePayload(payload) as NativeListFramesResult;
             listFramesResultHandler?.(viewId, parsed);
+            break;
+          }
+          case "resolve-and-click-result": {
+            const parsed = maybeParsePayload(payload) as NativeResolveAndClickResult;
+            resolveAndClickResultHandler?.(viewId, parsed);
             break;
           }
           case "download-event": {
@@ -891,7 +918,7 @@ export async function initNativeRuntime(
     throw new Error(`bunite: failed to load native library at ${artifacts.nativeLibPath}.`);
   }
 
-  const EXPECTED_ABI = 10;
+  const EXPECTED_ABI = 11;
   const nativeAbi = nativeLibrary.symbols.bunite_abi_version();
   if (nativeAbi !== EXPECTED_ABI) {
     throw new Error(
