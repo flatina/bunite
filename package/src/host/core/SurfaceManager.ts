@@ -6,7 +6,8 @@ import {
 } from "./SurfaceRegistry";
 import {
   SurfaceCap, type ImplOf, IpcError,
-  type SurfaceEvent, type DialogEvent, type ConsoleEntry,
+  type SurfaceEvent, type SurfaceEventBase, type DialogEvent, type ConsoleEntry,
+  type NavigationState,
 } from "../../rpc/index";
 import { Stream } from "../../rpc/stream";
 
@@ -24,10 +25,32 @@ export function onSurfaceInit(cb: SurfaceInitCallback) {
 type SurfaceEventEmit = (event: { surfaceId: number; event: SurfaceEvent }) => void;
 const surfaceEventSubs = new Map<number, Set<SurfaceEventEmit>>();
 
-export function emitSurfaceEvent(hostViewId: number, surfaceId: number, event: SurfaceEvent) {
+export function emitSurfaceEvent(
+  hostViewId: number,
+  surfaceId: number,
+  event: SurfaceEventBase,
+) {
+  // Drop late events after dispose so dead surfaceIds don't resurrect state.
+  if (!getSurfaceRecord(surfaceId)) return;
+  // Mutate before the subscriber guard so `getNavigationState` stays correct.
+  const state = getOrCreateState(surfaceId);
+  if (event.type === "navigate") {
+    state.lastLoadEpoch++;
+    state.currentUrl = event.url;
+  } else if (event.type === "load-start") {
+    state.isLoading = true;
+  } else if (event.type === "load-finish" || event.type === "load-fail") {
+    state.isLoading = false;
+  }
+  const stamped: SurfaceEvent = { ...event, epoch: state.lastLoadEpoch };
   const subs = surfaceEventSubs.get(hostViewId);
   if (!subs) return;
-  for (const emit of subs) emit({ surfaceId, event });
+  for (const emit of subs) emit({ surfaceId, event: stamped });
+}
+
+export function seedNavigationState(surfaceId: number, initialUrl: string) {
+  const state = getOrCreateState(surfaceId);
+  if (state.currentUrl === "") state.currentUrl = initialUrl;
 }
 
 type DialogEmit = (event: { surfaceId: number; event: DialogEvent }) => void;
@@ -50,6 +73,9 @@ type SurfaceState = {
   consoleBuffer: ConsoleEntry[];
   dialogTimeoutMs: number | null;  // null = no auto-dismiss
   pendingDialogs: Map<number, PendingDialog>;
+  lastLoadEpoch: number;
+  isLoading: boolean;
+  currentUrl: string;
 };
 
 const surfaceState = new Map<number, SurfaceState>();
@@ -61,6 +87,9 @@ function getOrCreateState(surfaceId: number): SurfaceState {
       consoleBuffer: [],
       dialogTimeoutMs: DEFAULT_DIALOG_TIMEOUT_MS,
       pendingDialogs: new Map(),
+      lastLoadEpoch: 0,
+      isLoading: false,
+      currentUrl: "",
     };
     surfaceState.set(surfaceId, s);
   }
@@ -174,6 +203,7 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
         autoResize: false,
       });
       trackSurface(view.id, { view, hostViewId, hidden });
+      seedNavigationState(view.id, src);
       try {
         await view.whenReady();
       } catch {
@@ -406,6 +436,17 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
         if (set.size === 0) dialogSubs.delete(hostViewId);
       });
     }),
+
+    getNavigationState: ({ surfaceId }): NavigationState => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return { lastLoadEpoch: 0, isLoading: false, currentUrl: "" };
+      const state = getOrCreateState(surfaceId);
+      return {
+        lastLoadEpoch: state.lastLoadEpoch,
+        isLoading: state.isLoading,
+        currentUrl: state.currentUrl,
+      };
+    },
 
     consoleEvents: ({ surfaceId: filterId }) => Stream.from<ConsoleEntry>((emit, signal) => {
       let subs = consoleSubs.get(hostViewId);

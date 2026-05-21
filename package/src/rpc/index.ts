@@ -112,6 +112,8 @@ export type {
   DialogMessageOpts,
   SurfaceCapabilities,
   SurfaceEvent,
+  SurfaceEventBase,
+  NavigationState,
   SurfaceMask,
   Modifier,
   ClickArgs,

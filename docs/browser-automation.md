@@ -43,6 +43,7 @@
 | `waitForSelector(selector, timeoutMs?)` | `Promise<WaitResult>` | Poll `document.querySelector(selector)` until truthy or timeout (default 5000ms). `WaitResult` failure codes: `timeout` / `runtime_error` / `cross_origin`. |
 | `waitForFunction(expr, opts?)` | `Promise<WaitResult>` | Poll a JS expression until truthy. `{timeoutMs?, pollIntervalMs?}` — default 5000 / 50. Same failure codes as `waitForSelector`. |
 | `getConsoleBuffer(opts?)` | `Promise<ConsoleEntry[]>` | Snapshot of host-side console ring buffer (200 entries). `{clear: true}` empties after read. |
+| `getNavigationState()` | `Promise<NavigationState>` | `{lastLoadEpoch, isLoading, currentUrl}`. Use `lastLoadEpoch` to race-close waits on `surface-event` arms. |
 | `screenshot(args?)` | `Promise<ScreenshotResult>` | `{format?: "png" \| "jpeg", quality?}`. |
 
 `Modifier = "alt" | "ctrl" | "meta" | "shift"`.
@@ -55,12 +56,16 @@ A single stream replaces per-event subscriptions. `<bunite-webview>` dispatches 
 wv.addEventListener("surface-event", (e: CustomEvent<SurfaceEvent>) => { /* ... */ });
 
 type SurfaceEvent =
-  | { type: "navigate"; url: string }
-  | { type: "load-start"; url: string }
-  | { type: "load-finish"; url: string }
-  | { type: "load-fail"; url: string; reason?: string }
-  | { type: "title-change"; title: string };
+  | { type: "navigate"; epoch: number; url: string }
+  | { type: "load-start"; epoch: number; url: string }
+  | { type: "load-finish"; epoch: number; url: string }
+  | { type: "load-fail"; epoch: number; url: string; reason?: string }
+  | { type: "title-change"; epoch: number; title: string };
+
+type NavigationState = { lastLoadEpoch: number; isLoading: boolean; currentUrl: string };
 ```
+
+`epoch` bumps on every `navigate` (incl. SPA `pushState`). Other arms carry the current epoch. Combine with `getNavigationState()` to wait for the *next* navigation without racing pre-existing arms — see "Race-free navigation wait".
 
 Dialogs and console messages go through **separate streams** (`SurfaceCap.dialogs` and `SurfaceCap.consoleEvents`) — fire-and-forget surfaceEvents arms don't fit the request/response semantics of dialogs, and consoleEvents can be high-frequency.
 
@@ -82,7 +87,7 @@ Invariants:
 
 - A navigation emits **`load-finish` OR `load-fail`**, never both.
 - SPA history mutations (`history.pushState`) emit only `navigate` — no `load-*`.
-- The relative ordering of `navigate` / `load-start` / `load-finish` follows each backend's native hook sequence (e.g. WV2 fires `navigate` before `load-finish`, CEF fires `navigate` from URL commit). Do not assume a fixed order; dispatch on `type`.
+- For a given navigation, `navigate` always precedes `load-finish` (epoch is incremented on `navigate`, so terminal arms carry the *new* epoch — required for the race-free wait pattern). `load-start` may precede `navigate`.
 
 ## Press: modifier-held wrap
 
@@ -158,17 +163,24 @@ Limitations vs. native:
 
 ## Common patterns
 
-**Wait for the page to commit a navigation:**
+**Race-free navigation wait** — capture the current epoch *before* triggering, then await an arm with a strictly greater epoch:
 
 ```js
-const url = await new Promise(resolve => {
+const { lastLoadEpoch } = await wv.getNavigationState();
+const finished = new Promise(resolve => {
   const handler = (e) => {
-    if (e.detail.type === "navigate") { wv.removeEventListener("surface-event", handler); resolve(e.detail.url); }
+    if (e.detail.type === "load-finish" && e.detail.epoch > lastLoadEpoch) {
+      wv.removeEventListener("surface-event", handler);
+      resolve(e.detail.url);
+    }
   };
   wv.addEventListener("surface-event", handler);
-  wv.navigate("https://example.com");
 });
+await wv.sendClick({ x, y });   // or wv.navigate(...), or any nav-triggering action
+const url = await finished;
 ```
+
+Without the epoch gate, the listener may fire on a previous page's `load-finish` between trigger dispatch and attachment. For SPA navigations, gate on `navigate` instead — no `load-*` arms follow.
 
 **Locate an element by selector, then click it:**
 

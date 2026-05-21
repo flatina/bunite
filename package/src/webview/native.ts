@@ -3,7 +3,7 @@
 import type { ClientOf } from "../rpc/index";
 import type {
   SurfaceCap, EvaluateResult, SurfaceCapabilities, ScreenshotResult,
-  SurfaceEvent, ConsoleEntry, WaitResult,
+  SurfaceEvent, ConsoleEntry, WaitResult, NavigationState,
 } from "../rpc/framework";
 
 declare const host: {
@@ -359,6 +359,12 @@ class BuniteWebviewElement extends HTMLElement {
     const sid = this._surfaceId;
     if (sid == null) return [];
     return (await callSurfaceTyped((s) => s.getConsoleBuffer({ surfaceId: sid, clear: opts?.clear }))) ?? [];
+  }
+
+  async getNavigationState(): Promise<NavigationState> {
+    const sid = this._surfaceId;
+    if (sid == null) return { lastLoadEpoch: 0, isLoading: false, currentUrl: "" };
+    return callSurfaceTyped((s) => s.getNavigationState({ surfaceId: sid }));
   }
 
   async screenshot(args?: { format?: "png" | "jpeg"; quality?: number }): Promise<ScreenshotResult> {

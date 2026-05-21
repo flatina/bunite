@@ -112,17 +112,23 @@ export interface SurfaceCapabilities {
   formats?: ("png" | "jpeg")[];
 }
 
-/** Surface lifecycle event arm. Backends emit a subset honestly — SPA
- *  `history.pushState` fires only `navigate`; classic navigation fires
- *  `load-start` → `navigate` → `load-finish` (order varies per backend hook
- *  sequence and isn't a strict invariant). A navigation produces `load-finish`
- *  OR `load-fail`, never both. */
-export type SurfaceEvent =
+/** Surface lifecycle event arm before the surface pipeline stamps `epoch`. */
+export type SurfaceEventBase =
   | { type: "navigate"; url: string }
   | { type: "load-start"; url: string }
   | { type: "load-finish"; url: string }
   | { type: "load-fail"; url: string; reason?: string }
   | { type: "title-change"; title: string };
+
+/** Wire form of `SurfaceEventBase`. `epoch` bumps on every `navigate` (incl. SPA
+ *  `pushState`); other arms carry the current epoch. See `docs/browser-automation.md`. */
+export type SurfaceEvent = SurfaceEventBase & { epoch: number };
+
+export interface NavigationState {
+  lastLoadEpoch: number;
+  isLoading: boolean;
+  currentUrl: string;
+}
 
 export type EvaluateResult =
   | { ok: true; value: unknown }
@@ -282,6 +288,7 @@ export const SurfaceCap = defineCap("bunite.Surface", {
   surfaceEvents: stream<{ surfaceId: number }, SurfaceEvent>(),
   dialogs: stream<{ surfaceId: number }, DialogEvent>(),
   consoleEvents: stream<{ surfaceId: number }, ConsoleEntry>(),
+  getNavigationState: call<{ surfaceId: number }, NavigationState>({ idempotent: true }),
 });
 
 export const RuntimeCap = defineCap("bunite.Runtime", {

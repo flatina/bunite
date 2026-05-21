@@ -1,6 +1,6 @@
 // Iframe fallback for web (no-op if native already registered). HTMLElement deref'd lazily so module is import-safe in Node/Bun.
 
-import type { SurfaceEvent } from "../rpc/framework";
+import type { SurfaceEvent, SurfaceEventBase } from "../rpc/framework";
 
 // Default sandbox omits allow-same-origin / allow-top-navigation / allow-modals /
 // allow-popups-to-escape-sandbox — popup escape stays opt-in so a sandboxed page
@@ -31,6 +31,9 @@ function definePolyfillClass(): CustomElementConstructor {
     private _iframe: HTMLIFrameElement | null = null;
     private _titleObserver: MutationObserver | null = null;
     private _lastTitle: string = "";
+    private _epoch: number = 0;
+    private _isLoading: boolean = false;
+    private _currentUrl: string = "";
 
     private isReachable(): boolean {
       if (!this._iframe) return false;
@@ -50,8 +53,17 @@ function definePolyfillClass(): CustomElementConstructor {
       };
     }
 
-    private emit(event: SurfaceEvent) {
-      this.dispatchEvent(new CustomEvent<SurfaceEvent>("surface-event", { detail: event }));
+    private emit(event: SurfaceEventBase) {
+      if (event.type === "navigate") {
+        this._epoch++;
+        this._currentUrl = event.url;
+      } else if (event.type === "load-start") {
+        this._isLoading = true;
+      } else if (event.type === "load-finish" || event.type === "load-fail") {
+        this._isLoading = false;
+      }
+      const stamped: SurfaceEvent = { ...event, epoch: this._epoch };
+      this.dispatchEvent(new CustomEvent<SurfaceEvent>("surface-event", { detail: stamped }));
     }
 
     private setupTitleObserver() {
@@ -100,6 +112,7 @@ function definePolyfillClass(): CustomElementConstructor {
           this.dispatchBlocked(src);
         } else {
           iframe.src = src;
+          this._currentUrl = src;
           this.emit({ type: "load-start", url: src });
         }
       }
@@ -112,8 +125,9 @@ function definePolyfillClass(): CustomElementConstructor {
         // Suppress the spurious about:blank load that fires after a blocked
         // navigation (or before any explicit navigate).
         if (isBlockedSrc(url)) return;
-        this.emit({ type: "load-finish", url });
+        // navigate first so load-finish carries the bumped epoch.
         this.emit({ type: "navigate", url });
+        this.emit({ type: "load-finish", url });
         this.setupTitleObserver();
       });
 
@@ -311,6 +325,10 @@ function definePolyfillClass(): CustomElementConstructor {
     async getConsoleBuffer(_opts?: { clear?: boolean }) {
       // iframe polyfill doesn't inject a preload — no console capture available.
       return [] as { level: string; args: string[]; ts: number }[];
+    }
+
+    async getNavigationState() {
+      return { lastLoadEpoch: this._epoch, isLoading: this._isLoading, currentUrl: this._currentUrl };
     }
 
     async screenshot(_args?: { format?: "png" | "jpeg"; quality?: number }) {
