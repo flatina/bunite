@@ -503,7 +503,7 @@ BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
          BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
          BUNITE_CAP_MOUSE | BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG |
-         BUNITE_CAP_AX | BUNITE_CAP_BOUNDING_RECT;
+         BUNITE_CAP_AX | BUNITE_CAP_BOUNDING_RECT | BUNITE_CAP_FRAMES;
 }
 
 namespace {
@@ -514,6 +514,159 @@ void emitAxError(uint32_t view_id, uint32_t request_id, const char* code, const 
   emitWebviewEvent(view_id, "accessibility-result", payload);
 }
 }  // namespace
+
+namespace {
+// Extract integer field from a CDP JSON response — used to pluck
+// `executionContextId` without pulling in a JSON parser.
+bool extractJsonInt(const std::string& json, const std::string& key, int& out) {
+  std::string needle = "\"" + key + "\":";
+  auto p = json.find(needle);
+  if (p == std::string::npos) return false;
+  p += needle.size();
+  while (p < json.size() && (json[p] == ' ' || json[p] == '\t')) ++p;
+  auto end = p;
+  while (end < json.size() && (json[end] == '-' || (json[end] >= '0' && json[end] <= '9'))) ++end;
+  if (end == p) return false;
+  out = std::stoi(json.substr(p, end - p));
+  return true;
+}
+void emitListFramesErrorWv2(uint32_t view_id, uint32_t request_id, const char* code, const std::string& message) {
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"" + code +
+                        "\",\"message\":\"" + escapeJsonString(message) + "\"}";
+  emitWebviewEvent(view_id, "list-frames-result", payload);
+}
+}  // namespace
+
+BUNITE_EXPORT void bunite_view_list_frames(uint32_t view_id, uint32_t request_id) {
+  ViewHost* v = getView(view_id);
+  if (!v || !v->webview) { emitListFramesErrorWv2(view_id, request_id, "not_supported", "view not ready"); return; }
+  cdpCallWithResult(v, L"Page.getFrameTree", "{}",
+      [view_id, request_id](bool ok, std::string result) {
+        if (!ok) { emitListFramesErrorWv2(view_id, request_id, "runtime_error", "getFrameTree failed: " + result); return; }
+        std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                              ",\"ok\":true,\"raw\":" + result + "}";
+        emitWebviewEvent(view_id, "list-frames-result", payload);
+      });
+}
+
+BUNITE_EXPORT void bunite_view_evaluate_in_frame(uint32_t view_id, uint32_t request_id,
+                                                  const char* script_c, const char* frame_id_c) {
+  std::string script = script_c ? script_c : "";
+  std::string frameId = frame_id_c ? frame_id_c : "";
+  if (frameId.empty()) {
+    bunite_view_evaluate(view_id, request_id, script_c);
+    return;
+  }
+  ViewHost* v = getView(view_id);
+  if (!v || !v->webview) {
+    std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                          ",\"ok\":false,\"code\":\"not_supported\",\"message\":\"view not ready\"}";
+    emitWebviewEvent(view_id, "evaluate-result", payload);
+    return;
+  }
+  std::string isoParams = "{\"frameId\":\"" + frameId + "\",\"worldName\":\"bunite-eval\"}";
+  cdpCallWithResult(v, L"Page.createIsolatedWorld", isoParams,
+      [view_id, request_id, script, v](bool ok, std::string isoResult) {
+        if (!ok) {
+          std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                ",\"ok\":false,\"code\":\"runtime_error\","
+                                "\"message\":\"createIsolatedWorld failed\"}";
+          emitWebviewEvent(view_id, "evaluate-result", payload);
+          return;
+        }
+        int contextId = 0;
+        if (!extractJsonInt(isoResult, "executionContextId", contextId)) {
+          std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                ",\"ok\":false,\"code\":\"runtime_error\","
+                                "\"message\":\"missing executionContextId\"}";
+          emitWebviewEvent(view_id, "evaluate-result", payload);
+          return;
+        }
+        std::string evalParams = "{\"expression\":\"" + escapeJsonString(script) +
+                                 "\",\"contextId\":" + std::to_string(contextId) +
+                                 ",\"returnByValue\":true,\"awaitPromise\":true}";
+        cdpCallWithResult(v, L"Runtime.evaluate", evalParams,
+            [view_id, request_id](bool ok2, std::string evalResult) {
+              if (!ok2) {
+                std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                      ",\"ok\":false,\"code\":\"runtime_error\","
+                                      "\"message\":\"Runtime.evaluate failed\"}";
+                emitWebviewEvent(view_id, "evaluate-result", payload);
+                return;
+              }
+              // Normalize CDP shape to the flat `{requestId, ok, value/code/message}`
+              // that the host's evaluate-result handler expects. Substring-based —
+              // edge cases (value containing the literal "exceptionDetails":) misclassify.
+              auto excPos = evalResult.find("\"exceptionDetails\"");
+              if (excPos != std::string::npos) {
+                std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                      ",\"ok\":false,\"code\":\"runtime_error\","
+                                      "\"message\":\"evaluate threw\"}";
+                emitWebviewEvent(view_id, "evaluate-result", payload);
+                return;
+              }
+              // Extract result.value as a JSON substring. CDP returns
+              // `{"result":{"type":"...","value":<json>}}`. We find the `"value":`
+              // token inside the inner object and slice until the matching close.
+              auto resPos = evalResult.find("\"result\":");
+              if (resPos == std::string::npos) {
+                std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                      ",\"ok\":true,\"value\":\"null\"}";
+                emitWebviewEvent(view_id, "evaluate-result", payload);
+                return;
+              }
+              auto valKey = evalResult.find("\"value\":", resPos);
+              if (valKey == std::string::npos) {
+                // type === "undefined" — no value field.
+                std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                      ",\"ok\":true,\"value\":\"null\"}";
+                emitWebviewEvent(view_id, "evaluate-result", payload);
+                return;
+              }
+              size_t start = valKey + 8;  // past `"value":`
+              // Skip whitespace.
+              while (start < evalResult.size() && (evalResult[start] == ' ' || evalResult[start] == '\t')) ++start;
+              // Find balanced end of the JSON value.
+              size_t end = start;
+              if (start < evalResult.size()) {
+                char c = evalResult[start];
+                if (c == '"') {
+                  ++end;
+                  while (end < evalResult.size() && evalResult[end] != '"') {
+                    if (evalResult[end] == '\\' && end + 1 < evalResult.size()) ++end;
+                    ++end;
+                  }
+                  if (end < evalResult.size()) ++end;
+                } else if (c == '{' || c == '[') {
+                  int depth = 0;
+                  bool inStr = false;
+                  while (end < evalResult.size()) {
+                    char ch = evalResult[end];
+                    if (inStr) {
+                      if (ch == '\\' && end + 1 < evalResult.size()) ++end;
+                      else if (ch == '"') inStr = false;
+                    } else if (ch == '"') inStr = true;
+                    else if (ch == '{' || ch == '[') ++depth;
+                    else if (ch == '}' || ch == ']') { --depth; if (depth == 0) { ++end; break; } }
+                    ++end;
+                  }
+                } else {
+                  // Number / true / false / null — read until non-token char.
+                  while (end < evalResult.size()) {
+                    char ch = evalResult[end];
+                    if (ch == ',' || ch == '}' || ch == ' ' || ch == '\t' || ch == '\n') break;
+                    ++end;
+                  }
+                }
+              }
+              std::string valueJson = evalResult.substr(start, end - start);
+              std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                    ",\"ok\":true,\"value\":\"" + escapeJsonString(valueJson) + "\"}";
+              emitWebviewEvent(view_id, "evaluate-result", payload);
+            });
+      });
+}
 
 BUNITE_EXPORT void bunite_view_accessibility_snapshot(uint32_t view_id, uint32_t request_id,
                                                        int32_t /*interesting_only*/) {

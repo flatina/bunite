@@ -44,6 +44,10 @@
 | `waitForFunction(expr, opts?)` | `Promise<WaitResult>` | Poll a JS expression until truthy. `{timeoutMs?, pollIntervalMs?}` — default 5000 / 50. Same failure codes as `waitForSelector`. |
 | `getConsoleBuffer(opts?)` | `Promise<ConsoleEntry[]>` | Snapshot of host-side console ring buffer (200 entries). `{clear: true}` empties after read. |
 | `getNavigationState()` | `Promise<NavigationState>` | `{lastLoadEpoch, isLoading, currentUrl}`. Use `lastLoadEpoch` to race-close waits on `surface-event` arms. |
+| `accessibilitySnapshot(opts?)` | `Promise<AccessibilitySnapshotResult>` | CDP `Accessibility.getFullAXTree` (Chromium-backed only). `{interestingOnly?}` defaults true (drops ignored nodes). |
+| `getBoundingRect(selector, opts?)` | `Promise<BoundingRectResult>` | `document.querySelector(...).getBoundingClientRect()` + viewport intersect. `opts.frameId` queries inside that frame. |
+| `listFrames()` | `Promise<ListFramesResult>` | Enumerate frames (CDP `Page.getFrameTree`). Chromium-backed only; mac/linux return `not_supported`. |
+| `evaluate(script, opts?)` | `Promise<EvaluateResult>` | `opts.frameId` evaluates inside the target frame's isolated world — page main-world JS variables are not visible; DOM access works. |
 | `screenshot(args?)` | `Promise<ScreenshotResult>` | `{format?: "png" \| "jpeg", quality?}`. |
 
 `Modifier = "alt" | "ctrl" | "meta" | "shift"`.
@@ -120,6 +124,9 @@ The same pattern works for any modifier (Shift / Alt / Meta) when you need the p
 | `console` (page log capture) | ✔ | ✔ | ✔ | ✔ |
 | `screenshot` | ✔ | ✔ † | ✔ | ✔ |
 | `formats` | png, jpeg | png, jpeg | png, jpeg | png, jpeg |
+| `accessibilitySnapshot` | ✔ | ✔ | ✘ | ✘ |
+| `getBoundingRect` | ✔ | ✔ | ✔ | ✔ |
+| `frames` (`listFrames`, `evaluate({frameId})`) | ✔ | ✔ | ✘ | ✘ |
 
 † On CEF, `scroll` and `screenshot` route through Chrome DevTools Protocol (`Input.dispatchMouseEvent` / `Page.captureScreenshot`) — native `SendMouseWheelEvent` doesn't reach the page in windowed mode, and `PrintWindow` misses hardware-composited surfaces.
 

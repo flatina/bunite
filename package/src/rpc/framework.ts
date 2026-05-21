@@ -112,6 +112,9 @@ export interface SurfaceCapabilities {
   formats?: ("png" | "jpeg")[];
   accessibilitySnapshot: boolean;
   getBoundingRect: boolean;
+  /** `listFrames` works + `evaluate({frameId})` reaches the target frame's
+   *  isolated world. Frame-targeted input dispatch is not yet implemented. */
+  frames: boolean;
 }
 
 export interface AxNode {
@@ -147,12 +150,23 @@ export type AccessibilitySnapshotResult =
 export interface BoundingRectArgs {
   surfaceId: number;
   selector: string;
-  /** Reserved. Currently ignored — only main frame is queried. */
   frameId?: string;
 }
 export type BoundingRectResult =
   | { ok: true; rect: { x: number; y: number; width: number; height: number }; visible: boolean }
-  | { ok: false; code: "not_found" | "runtime_error" | "cross_origin"; message: string };
+  | { ok: false; code: "not_found" | "runtime_error" | "cross_origin" | "not_supported"; message: string };
+
+export interface Frame {
+  frameId: string;
+  parentFrameId: string | null;
+  origin: string;
+  url: string;
+  name?: string;
+}
+
+export type ListFramesResult =
+  | { ok: true; frames: Frame[] }
+  | { ok: false; code: "not_supported" | "runtime_error"; message: string };
 
 /** Surface lifecycle event arm before the surface pipeline stamps `epoch`. */
 export type SurfaceEventBase =
@@ -254,6 +268,7 @@ export interface WaitForSelectorArgs {
   selector: string;
   /** Default 5000ms. Polled at 50ms intervals via `evaluate`. */
   timeoutMs?: number;
+  frameId?: string;
 }
 export interface WaitForFunctionArgs {
   surfaceId: number;
@@ -263,6 +278,7 @@ export interface WaitForFunctionArgs {
   timeoutMs?: number;
   /** Default 50ms. Increase for heavy expressions to reduce IPC load. */
   pollIntervalMs?: number;
+  frameId?: string;
 }
 export type WaitResult =
   | { ok: true }
@@ -314,7 +330,7 @@ export const SurfaceCap = defineCap("bunite.Surface", {
   navigate: call<{ surfaceId: number; url: string }, void>(),
   goBack: call<{ surfaceId: number }, void>(),
   reload: call<{ surfaceId: number }, void>(),
-  evaluate: call<{ surfaceId: number; script: string }, EvaluateResult>(),
+  evaluate: call<{ surfaceId: number; script: string; frameId?: string }, EvaluateResult>(),
   capabilities: call<{ surfaceId: number }, SurfaceCapabilities>(),
   click: call<ClickArgs, void>(),
   type: call<TypeArgs, void>(),
@@ -333,6 +349,7 @@ export const SurfaceCap = defineCap("bunite.Surface", {
   getNavigationState: call<{ surfaceId: number }, NavigationState>({ idempotent: true }),
   accessibilitySnapshot: call<AccessibilitySnapshotArgs, AccessibilitySnapshotResult>(),
   getBoundingRect: call<BoundingRectArgs, BoundingRectResult>({ idempotent: true }),
+  listFrames: call<{ surfaceId: number }, ListFramesResult>({ idempotent: true }),
 });
 
 export const RuntimeCap = defineCap("bunite.Runtime", {

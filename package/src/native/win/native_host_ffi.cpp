@@ -1190,7 +1190,7 @@ extern "C" BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id) {
          BUNITE_CAP_CLICK | BUNITE_CAP_TYPE | BUNITE_CAP_PRESS | BUNITE_CAP_SCROLL |
          BUNITE_CAP_MOUSE | BUNITE_CAP_DIALOGS | BUNITE_CAP_CONSOLE |
          BUNITE_CAP_SCREENSHOT | BUNITE_CAP_FORMAT_PNG | BUNITE_CAP_FORMAT_JPEG |
-         BUNITE_CAP_AX | BUNITE_CAP_BOUNDING_RECT;
+         BUNITE_CAP_AX | BUNITE_CAP_BOUNDING_RECT | BUNITE_CAP_FRAMES;
 }
 
 extern "C" BUNITE_EXPORT void bunite_view_screenshot(uint32_t view_id, uint32_t request_id,
@@ -1263,6 +1263,146 @@ extern "C" BUNITE_EXPORT void bunite_view_accessibility_snapshot(uint32_t view_i
           std::string payload = "{\"requestId\":" + std::to_string(request_id) +
                                 ",\"ok\":true,\"tree\":" + result + "}";
           bunite_win::emitWebviewEvent(view_id, "accessibility-result", payload);
+        });
+  });
+}
+
+static void emitListFramesError(uint32_t view_id, uint32_t request_id, const char* code, const std::string& message) {
+  std::string esc; esc.reserve(message.size());
+  for (char c : message) {
+    if (c == '"' || c == '\\') { esc.push_back('\\'); esc.push_back(c); }
+    else esc.push_back(c);
+  }
+  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                        ",\"ok\":false,\"code\":\"" + code +
+                        "\",\"message\":\"" + esc + "\"}";
+  bunite_win::emitWebviewEvent(view_id, "list-frames-result", payload);
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_list_frames(uint32_t view_id, uint32_t request_id) {
+  bunite_win::postCefUiTask([view_id, request_id]() {
+    auto* view = bunite_win::getViewHostById(view_id);
+    if (!view) { emitListFramesError(view_id, request_id, "not_supported", "view not ready"); return; }
+    cefCdpCall(view, "Page.getFrameTree", "{}",
+        [view_id, request_id](bool ok, std::string result) {
+          if (!ok) { emitListFramesError(view_id, request_id, "runtime_error", "getFrameTree failed: " + result); return; }
+          // Raw CDP `{frameTree:{frame,childFrames}}` — TS flattens.
+          std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                ",\"ok\":true,\"raw\":" + result + "}";
+          bunite_win::emitWebviewEvent(view_id, "list-frames-result", payload);
+        });
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_view_evaluate_in_frame(uint32_t view_id, uint32_t request_id,
+                                                              const char* script_c, const char* frame_id_c) {
+  std::string script = script_c ? script_c : "";
+  std::string frameId = frame_id_c ? frame_id_c : "";
+  if (frameId.empty()) {
+    bunite_view_evaluate(view_id, request_id, script_c);
+    return;
+  }
+  bunite_win::postCefUiTask([view_id, request_id, script, frameId]() {
+    auto* view = bunite_win::getViewHostById(view_id);
+    if (!view) {
+      std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                            ",\"ok\":false,\"code\":\"not_supported\",\"message\":\"view not ready\"}";
+      bunite_win::emitWebviewEvent(view_id, "evaluate-result", payload);
+      return;
+    }
+    // Step 1: create an isolated world in the target frame.
+    std::string isoParams = "{\"frameId\":\"" + frameId + "\",\"worldName\":\"bunite-eval\"}";
+    cefCdpCall(view, "Page.createIsolatedWorld", isoParams,
+        [view_id, request_id, script](bool ok, std::string isoResult) {
+          if (!ok) {
+            std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                  ",\"ok\":false,\"code\":\"runtime_error\","
+                                  "\"message\":\"createIsolatedWorld failed\"}";
+            bunite_win::emitWebviewEvent(view_id, "evaluate-result", payload);
+            return;
+          }
+          CefRefPtr<CefValue> val = CefParseJSON(isoResult, JSON_PARSER_RFC);
+          if (!val || val->GetType() != VTYPE_DICTIONARY) {
+            std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                  ",\"ok\":false,\"code\":\"runtime_error\","
+                                  "\"message\":\"createIsolatedWorld malformed\"}";
+            bunite_win::emitWebviewEvent(view_id, "evaluate-result", payload);
+            return;
+          }
+          int contextId = val->GetDictionary()->GetInt("executionContextId");
+          // Re-lookup view — async gap may have destroyed it.
+          auto* view2 = bunite_win::getViewHostById(view_id);
+          if (!view2) {
+            std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                  ",\"ok\":false,\"code\":\"not_supported\","
+                                  "\"message\":\"view destroyed\"}";
+            bunite_win::emitWebviewEvent(view_id, "evaluate-result", payload);
+            return;
+          }
+          // Step 2: Runtime.evaluate in that context.
+          std::string escScript; escScript.reserve(script.size());
+          for (char c : script) {
+            if (c == '"' || c == '\\') { escScript.push_back('\\'); escScript.push_back(c); }
+            else if (c == '\n') escScript += "\\n";
+            else if (c == '\r') escScript += "\\r";
+            else if (c == '\t') escScript += "\\t";
+            else escScript.push_back(c);
+          }
+          std::string evalParams = "{\"expression\":\"" + escScript +
+                                   "\",\"contextId\":" + std::to_string(contextId) +
+                                   ",\"returnByValue\":true,\"awaitPromise\":true}";
+          cefCdpCall(view2, "Runtime.evaluate", evalParams,
+              [view_id, request_id](bool ok2, std::string evalResult) {
+                if (!ok2) {
+                  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                        ",\"ok\":false,\"code\":\"runtime_error\","
+                                        "\"message\":\"Runtime.evaluate failed\"}";
+                  bunite_win::emitWebviewEvent(view_id, "evaluate-result", payload);
+                  return;
+                }
+                CefRefPtr<CefValue> ev = CefParseJSON(evalResult, JSON_PARSER_RFC);
+                if (!ev || ev->GetType() != VTYPE_DICTIONARY) {
+                  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                        ",\"ok\":false,\"code\":\"runtime_error\","
+                                        "\"message\":\"Runtime.evaluate malformed\"}";
+                  bunite_win::emitWebviewEvent(view_id, "evaluate-result", payload);
+                  return;
+                }
+                CefRefPtr<CefDictionaryValue> d = ev->GetDictionary();
+                if (d->HasKey("exceptionDetails")) {
+                  CefRefPtr<CefDictionaryValue> ex = d->GetDictionary("exceptionDetails");
+                  std::string msg = ex && ex->HasKey("text") ? ex->GetString("text").ToString() : "runtime exception";
+                  std::string escMsg; escMsg.reserve(msg.size());
+                  for (char c : msg) {
+                    if (c == '"' || c == '\\') { escMsg.push_back('\\'); escMsg.push_back(c); }
+                    else escMsg.push_back(c);
+                  }
+                  std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                        ",\"ok\":false,\"code\":\"runtime_error\","
+                                        "\"message\":\"" + escMsg + "\"}";
+                  bunite_win::emitWebviewEvent(view_id, "evaluate-result", payload);
+                  return;
+                }
+                // result.value (JSON-serialized into "value") -> stringify.
+                CefRefPtr<CefDictionaryValue> result = d->GetDictionary("result");
+                std::string valueJson = "null";
+                if (result && result->HasKey("value")) {
+                  CefRefPtr<CefValue> v = result->GetValue("value");
+                  if (v) valueJson = CefWriteJSON(v, JSON_WRITER_DEFAULT);
+                }
+                // The host expects "value" to be a JSON STRING (it re-parses).
+                std::string escVal; escVal.reserve(valueJson.size());
+                for (char c : valueJson) {
+                  if (c == '"' || c == '\\') { escVal.push_back('\\'); escVal.push_back(c); }
+                  else if (c == '\n') escVal += "\\n";
+                  else if (c == '\r') escVal += "\\r";
+                  else if (c == '\t') escVal += "\\t";
+                  else escVal.push_back(c);
+                }
+                std::string payload = "{\"requestId\":" + std::to_string(request_id) +
+                                      ",\"ok\":true,\"value\":\"" + escVal + "\"}";
+                bunite_win::emitWebviewEvent(view_id, "evaluate-result", payload);
+              });
         });
   });
 }

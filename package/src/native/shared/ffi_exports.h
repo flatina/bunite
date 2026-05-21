@@ -16,8 +16,10 @@ extern "C" {
 #endif
 
 /** ABI version. Bump on any breaking change to symbol set / signatures.
- *  v10: `bunite_view_accessibility_snapshot` + `accessibility-result` event.
- *       Capability bits `AX` (1<<15), `BOUNDING_RECT` (1<<16). */
+ *  v10: agent surface deltas — `bunite_view_accessibility_snapshot`,
+ *       `bunite_view_list_frames`, `bunite_view_evaluate_in_frame`. New events
+ *       `accessibility-result`, `list-frames-result`. Capability bits `AX`
+ *       (1<<15), `BOUNDING_RECT` (1<<16), `FRAMES` (1<<17). */
 BUNITE_EXPORT int32_t bunite_abi_version(void);
 BUNITE_EXPORT void bunite_set_log_level(int32_t level);
 BUNITE_EXPORT bool bunite_init(
@@ -222,6 +224,7 @@ enum BuniteCapBit {
 	BUNITE_CAP_CONSOLE              = 1u << 13,
 	BUNITE_CAP_AX                   = 1u << 15,
 	BUNITE_CAP_BOUNDING_RECT        = 1u << 16,
+	BUNITE_CAP_FRAMES               = 1u << 17,
 };
 BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id);
 
@@ -252,6 +255,25 @@ BUNITE_EXPORT void bunite_view_accessibility_snapshot(
 	uint32_t view_id,
 	uint32_t request_id,
 	int32_t interesting_only
+);
+
+/** Enumerate frames in the view. Async — result reported via webview event
+ *  `list-frames-result` payload
+ *    { requestId, ok: true, frames: [{frameId, parentFrameId, origin, url, name?}] }
+ *    { requestId, ok: false, code, message }
+ *  Codes: `not_supported`, `runtime_error`. mac/linux emit `not_supported`. */
+BUNITE_EXPORT void bunite_view_list_frames(uint32_t view_id, uint32_t request_id);
+
+/** Evaluate `script` in the target frame's isolated world (CDP
+ *  `Page.createIsolatedWorld` + `Runtime.evaluate`). Page main-world JS
+ *  variables are NOT visible; DOM access works. Result reused via the
+ *  existing `evaluate-result` event. `frame_id` empty/null delegates to
+ *  `bunite_view_evaluate` (main frame, main world). */
+BUNITE_EXPORT void bunite_view_evaluate_in_frame(
+	uint32_t view_id,
+	uint32_t request_id,
+	const char* script,
+	const char* frame_id
 );
 
 BUNITE_EXPORT void bunite_view_open_devtools(uint32_t view_id);

@@ -129,6 +129,10 @@ type NativeSymbols = {
   bunite_view_accessibility_snapshot: (
     viewId: number, requestId: number, interestingOnly: number
   ) => void;
+  bunite_view_list_frames: (viewId: number, requestId: number) => void;
+  bunite_view_evaluate_in_frame: (
+    viewId: number, requestId: number, script: CStringPointer, frameId: CStringPointer
+  ) => void;
   bunite_view_capabilities: (viewId: number) => number;
   bunite_view_load_url: (viewId: number, url: CStringPointer) => void;
   bunite_view_load_html: (viewId: number, html: CStringPointer) => void;
@@ -349,6 +353,14 @@ const nativeSymbolDefinitions = {
     args: [FFIType.u32, FFIType.u32, FFIType.i32],
     returns: FFIType.void
   },
+  bunite_view_list_frames: {
+    args: [FFIType.u32, FFIType.u32],
+    returns: FFIType.void
+  },
+  bunite_view_evaluate_in_frame: {
+    args: [FFIType.u32, FFIType.u32, FFIType.cstring, FFIType.cstring],
+    returns: FFIType.void
+  },
   bunite_view_capabilities: {
     args: [FFIType.u32],
     returns: FFIType.u32
@@ -438,6 +450,19 @@ export type NativeAccessibilityResult = {
 let accessibilityResultHandler: ((viewId: number, result: NativeAccessibilityResult) => void) | null = null;
 export function setAccessibilityResultHandler(handler: (viewId: number, result: NativeAccessibilityResult) => void) {
   accessibilityResultHandler = handler;
+}
+
+export type NativeListFramesResult = {
+  requestId: number;
+  ok: boolean;
+  /** Raw CDP `Page.getFrameTree` result (`{frameTree: {frame, childFrames}}`). TS flattens. */
+  raw?: unknown;
+  code?: string;
+  message?: string;
+};
+let listFramesResultHandler: ((viewId: number, result: NativeListFramesResult) => void) | null = null;
+export function setListFramesResultHandler(handler: (viewId: number, result: NativeListFramesResult) => void) {
+  listFramesResultHandler = handler;
 }
 
 // Per-view deferred resolvers for "view-ready" (OnAfterCreated).
@@ -597,6 +622,11 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
           case "accessibility-result": {
             const parsed = maybeParsePayload(payload) as NativeAccessibilityResult;
             accessibilityResultHandler?.(viewId, parsed);
+            break;
+          }
+          case "list-frames-result": {
+            const parsed = maybeParsePayload(payload) as NativeListFramesResult;
+            listFramesResultHandler?.(viewId, parsed);
             break;
           }
           case "title-changed": {

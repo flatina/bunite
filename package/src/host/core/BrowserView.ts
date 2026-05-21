@@ -10,7 +10,7 @@ import {
 } from "../../rpc/index";
 import type {
   EvaluateResult, SurfaceCapabilities, ScreenshotResult, Modifier,
-  AccessibilitySnapshotResult, AxNode,
+  AccessibilitySnapshotResult, AxNode, ListFramesResult,
 } from "../../rpc/framework";
 import { encodeModifiers, resolveKey } from "./inputDispatch";
 import { createEncryptedPipe } from "../encryptedPipe";
@@ -19,6 +19,7 @@ import {
   setEvaluateResultHandler, type NativeEvaluateResult,
   setScreenshotResultHandler, type NativeScreenshotResult,
   setAccessibilityResultHandler, type NativeAccessibilityResult,
+  setListFramesResultHandler, type NativeListFramesResult,
 } from "../native";
 import { attachBrowserViewRegistry, getRpcPort } from "./Socket";
 import { getAppRuntimeOrThrow } from "./App";
@@ -151,6 +152,63 @@ function convertAxTree(cdpResult: { nodes?: any[] } | undefined, interestingOnly
   return build(flat[0]);
 }
 
+type FramesPending = { viewId: number; resolve: (result: ListFramesResult) => void };
+let nextFramesRequestId = 1;
+const framesResolvers = new Map<number, FramesPending>();
+function registerFramesRequest(viewId: number, resolve: (result: ListFramesResult) => void): number {
+  const id = nextFramesRequestId++;
+  framesResolvers.set(id, { viewId, resolve });
+  return id;
+}
+function rejectFramesForView(viewId: number) {
+  for (const [reqId, entry] of framesResolvers) {
+    if (entry.viewId === viewId) {
+      framesResolvers.delete(reqId);
+      entry.resolve({ ok: false, code: "not_supported", message: "view destroyed" });
+    }
+  }
+}
+
+function flattenFrameTree(raw: any): { frameId: string; parentFrameId: string | null; origin: string; url: string; name?: string }[] {
+  const out: { frameId: string; parentFrameId: string | null; origin: string; url: string; name?: string }[] = [];
+  const walk = (node: any, parent: string | null) => {
+    const f = node?.frame;
+    if (!f) return;
+    const entry: { frameId: string; parentFrameId: string | null; origin: string; url: string; name?: string } = {
+      frameId: String(f.id ?? ""),
+      parentFrameId: parent,
+      origin: String(f.securityOrigin ?? ""),
+      url: String(f.url ?? ""),
+    };
+    if (typeof f.name === "string" && f.name.length > 0) entry.name = f.name;
+    out.push(entry);
+    if (Array.isArray(node.childFrames)) for (const c of node.childFrames) walk(c, entry.frameId);
+  };
+  const root = raw?.frameTree;
+  if (root) walk(root, null);
+  return out;
+}
+
+setListFramesResultHandler((viewId, raw: NativeListFramesResult) => {
+  const entry = framesResolvers.get(raw.requestId);
+  if (!entry || entry.viewId !== viewId) return;
+  framesResolvers.delete(raw.requestId);
+  if (raw.ok && raw.raw) {
+    try {
+      const frames = flattenFrameTree(raw.raw);
+      entry.resolve({ ok: true, frames });
+    } catch (e) {
+      entry.resolve({ ok: false, code: "runtime_error", message: `frame tree flatten failed: ${(e as Error).message}` });
+    }
+  } else {
+    entry.resolve({
+      ok: false,
+      code: (raw.code as "not_supported" | "runtime_error") ?? "runtime_error",
+      message: raw.message ?? "list frames failed",
+    });
+  }
+});
+
 setAccessibilityResultHandler((viewId, raw: NativeAccessibilityResult) => {
   const entry = axResolvers.get(raw.requestId);
   if (!entry || entry.viewId !== viewId) return;
@@ -231,6 +289,7 @@ const CAP_DIALOGS              = 1 << 12;
 const CAP_CONSOLE              = 1 << 13;
 const CAP_AX                   = 1 << 15;
 const CAP_BOUNDING_RECT        = 1 << 16;
+const CAP_FRAMES               = 1 << 17;
 
 function decodeCapabilityBits(bits: number): SurfaceCapabilities {
   const formats: ("png" | "jpeg")[] = [];
@@ -251,6 +310,7 @@ function decodeCapabilityBits(bits: number): SurfaceCapabilities {
     screenshot: !!(bits & CAP_SCREENSHOT),
     accessibilitySnapshot: !!(bits & CAP_AX),
     getBoundingRect: !!(bits & CAP_BOUNDING_RECT),
+    frames: !!(bits & CAP_FRAMES),
     ...(formats.length > 0 ? { formats } : {}),
   };
 }
@@ -444,13 +504,35 @@ export class BrowserView {
     }
   }
 
-  evaluate(script: string): Promise<EvaluateResult> {
+  evaluate(script: string, frameId?: string): Promise<EvaluateResult> {
     if (!this.nativeAttached) {
       return Promise.resolve({ ok: false, code: "not_supported", message: "native runtime unavailable" });
     }
     return new Promise<EvaluateResult>((resolve) => {
       const requestId = registerEvaluateRequest(this.id, resolve);
-      getNativeLibrary()?.symbols.bunite_view_evaluate(this.id, requestId, toCString(script));
+      const lib = getNativeLibrary();
+      if (frameId) {
+        lib?.symbols.bunite_view_evaluate_in_frame(this.id, requestId, toCString(script), toCString(frameId));
+      } else {
+        lib?.symbols.bunite_view_evaluate(this.id, requestId, toCString(script));
+      }
+    });
+  }
+
+  listFrames(): Promise<ListFramesResult> {
+    if (!this.nativeAttached) {
+      return Promise.resolve({ ok: false, code: "not_supported", message: "native runtime unavailable" });
+    }
+    return new Promise<ListFramesResult>((resolve) => {
+      const requestId = registerFramesRequest(this.id, resolve);
+      const timer = setTimeout(() => {
+        if (framesResolvers.delete(requestId)) {
+          resolve({ ok: false, code: "runtime_error", message: "list frames timed out after 10s" });
+        }
+      }, 10_000);
+      const wrappedResolve = (r: ListFramesResult) => { clearTimeout(timer); resolve(r); };
+      framesResolvers.set(requestId, { viewId: this.id, resolve: wrappedResolve });
+      getNativeLibrary()?.symbols.bunite_view_list_frames(this.id, requestId);
     });
   }
 
@@ -667,6 +749,7 @@ export class BrowserView {
     rejectEvaluatesForView(this.id);
     rejectScreenshotsForView(this.id);
     rejectAxForView(this.id);
+    rejectFramesForView(this.id);
     this.nativeAttached = false;
     for (const eventName of [
       "will-navigate", "did-navigate", "dom-ready", "new-window-open", "permission-requested", "title-changed"

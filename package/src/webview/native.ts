@@ -4,7 +4,7 @@ import type { ClientOf } from "../rpc/index";
 import type {
   SurfaceCap, EvaluateResult, SurfaceCapabilities, ScreenshotResult,
   SurfaceEvent, ConsoleEntry, WaitResult, NavigationState,
-  AccessibilitySnapshotResult, BoundingRectResult,
+  AccessibilitySnapshotResult, BoundingRectResult, ListFramesResult,
 } from "../rpc/framework";
 
 declare const host: {
@@ -265,10 +265,10 @@ class BuniteWebviewElement extends HTMLElement {
     this.setAttribute("src", url);
   }
 
-  async evaluate(script: string): Promise<EvaluateResult> {
+  async evaluate(script: string, opts?: { frameId?: string }): Promise<EvaluateResult> {
     const sid = this._surfaceId;
     if (sid == null) return { ok: false, code: "not_supported", message: "surface not ready" };
-    return callSurfaceTyped((s) => s.evaluate({ surfaceId: sid, script }));
+    return callSurfaceTyped((s) => s.evaluate({ surfaceId: sid, script, frameId: opts?.frameId }));
   }
 
   async capabilities(): Promise<SurfaceCapabilities> {
@@ -279,6 +279,7 @@ class BuniteWebviewElement extends HTMLElement {
         nativeInputTrusted: false, click: false, type: false, press: false,
         scroll: false, mouse: false, dialogs: false, console: false,
         screenshot: false, accessibilitySnapshot: false, getBoundingRect: false,
+        frames: false,
       };
     }
     return callSurfaceTyped((s) => s.capabilities({ surfaceId: sid }));
@@ -374,10 +375,16 @@ class BuniteWebviewElement extends HTMLElement {
     return callSurfaceTyped((s) => s.accessibilitySnapshot({ surfaceId: sid, interestingOnly: opts?.interestingOnly }));
   }
 
-  async getBoundingRect(selector: string): Promise<BoundingRectResult> {
+  async getBoundingRect(selector: string, opts?: { frameId?: string }): Promise<BoundingRectResult> {
     const sid = this._surfaceId;
     if (sid == null) return { ok: false, code: "runtime_error", message: "surface not ready" };
-    return callSurfaceTyped((s) => s.getBoundingRect({ surfaceId: sid, selector }));
+    return callSurfaceTyped((s) => s.getBoundingRect({ surfaceId: sid, selector, frameId: opts?.frameId }));
+  }
+
+  async listFrames(): Promise<ListFramesResult> {
+    const sid = this._surfaceId;
+    if (sid == null) return { ok: false, code: "not_supported", message: "surface not ready" };
+    return callSurfaceTyped((s) => s.listFrames({ surfaceId: sid }));
   }
 
   async screenshot(args?: { format?: "png" | "jpeg"; quality?: number }): Promise<ScreenshotResult> {

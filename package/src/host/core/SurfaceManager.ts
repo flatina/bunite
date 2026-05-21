@@ -288,10 +288,10 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       record?.view.reload();
     },
 
-    evaluate: async ({ surfaceId, script }) => {
+    evaluate: async ({ surfaceId, script, frameId }) => {
       const record = ownedSurface(surfaceId);
       if (!record) return { ok: false, code: "not_supported", message: "surface not found" };
-      return record.view.evaluate(script);
+      return record.view.evaluate(script, frameId);
     },
 
     click: ({ surfaceId, ...args }) => {
@@ -330,17 +330,15 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       return record.view.screenshot(format, quality);
     },
 
-    waitForSelector: async ({ surfaceId, selector, timeoutMs = 5000 }) => {
+    waitForSelector: async ({ surfaceId, selector, timeoutMs = 5000, frameId }) => {
       const record = ownedSurface(surfaceId);
       if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
       const deadline = Date.now() + timeoutMs;
       const expr = `!!document.querySelector(${JSON.stringify(selector)})`;
       while (Date.now() < deadline) {
-        const res = await record.view.evaluate(expr);
+        const res = await record.view.evaluate(expr, frameId);
         if (res.ok && res.value === true) return { ok: true as const };
         if (!res.ok && res.code !== "timeout") {
-          // Propagate cross_origin distinct from runtime_error — consumer
-          // may want to retry with a same-origin sub-surface vs. fix the script.
           const code = res.code === "cross_origin" ? "cross_origin" as const : "runtime_error" as const;
           return { ok: false as const, code, message: res.message };
         }
@@ -349,12 +347,12 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       return { ok: false as const, code: "timeout" as const, message: `selector ${JSON.stringify(selector)} not found within ${timeoutMs}ms` };
     },
 
-    waitForFunction: async ({ surfaceId, expression, timeoutMs = 5000, pollIntervalMs = 50 }) => {
+    waitForFunction: async ({ surfaceId, expression, timeoutMs = 5000, pollIntervalMs = 50, frameId }) => {
       const record = ownedSurface(surfaceId);
       if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
-        const res = await record.view.evaluate(expression);
+        const res = await record.view.evaluate(expression, frameId);
         if (res.ok && res.value) return { ok: true as const };
         if (!res.ok && res.code !== "timeout") {
           const code = res.code === "cross_origin" ? "cross_origin" as const : "runtime_error" as const;
@@ -396,6 +394,7 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
           nativeInputTrusted: false, click: false, type: false, press: false,
           scroll: false, mouse: false, dialogs: false, console: false,
           screenshot: false, accessibilitySnapshot: false, getBoundingRect: false,
+          frames: false,
         };
       }
       return record.view.capabilities();
@@ -454,18 +453,26 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       return record.view.accessibilitySnapshot(interestingOnly);
     },
 
-    getBoundingRect: async ({ surfaceId, selector }) => {
+    getBoundingRect: async ({ surfaceId, selector, frameId }) => {
       const record = ownedSurface(surfaceId);
       if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
       const expr = `(function(){var el=document.querySelector(${JSON.stringify(selector)});if(!el)return null;var r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,visible:r.width>0&&r.height>0&&r.bottom>0&&r.right>0&&r.top<innerHeight&&r.left<innerWidth};})()`;
-      const res = await record.view.evaluate(expr);
+      const res = await record.view.evaluate(expr, frameId);
       if (!res.ok) {
-        const code = res.code === "cross_origin" ? "cross_origin" as const : "runtime_error" as const;
+        const code = res.code === "cross_origin" ? "cross_origin" as const
+          : res.code === "not_supported" ? "not_supported" as const
+          : "runtime_error" as const;
         return { ok: false as const, code, message: res.message };
       }
       const v = res.value as null | { x: number; y: number; width: number; height: number; visible: boolean };
       if (!v) return { ok: false as const, code: "not_found" as const, message: `selector ${JSON.stringify(selector)} not found` };
       return { ok: true as const, rect: { x: v.x, y: v.y, width: v.width, height: v.height }, visible: v.visible };
+    },
+
+    listFrames: async ({ surfaceId }) => {
+      const record = ownedSurface(surfaceId);
+      if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
+      return record.view.listFrames();
     },
 
     consoleEvents: ({ surfaceId: filterId }) => Stream.from<ConsoleEntry>((emit, signal) => {
