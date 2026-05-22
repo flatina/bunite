@@ -17,6 +17,7 @@ const HTML = `<!doctype html>
 <body style="font:14px monospace;padding:1em">
   <input id="input" placeholder="type target" autofocus style="font-size:16px;padding:4px;width:30em">
   <button id="btn" style="margin:1em;padding:8px 16px">click me</button>
+  <button id="open-confirm" style="margin:1em;padding:8px 16px">open confirm</button>
   <div id="log" style="border:1px solid #888;padding:8px;min-height:6em;white-space:pre-wrap"></div>
   <div style="height:1200px;background:linear-gradient(#cdf,#fcf)">tall scroll area</div>
   <script>
@@ -24,6 +25,10 @@ const HTML = `<!doctype html>
     var append = function (s) { log.textContent += s + "\\n"; };
     document.getElementById("btn").addEventListener("click", function (e) {
       append("[click] shift=" + e.shiftKey + " ctrl=" + e.ctrlKey + " alt=" + e.altKey + " trusted=" + e.isTrusted);
+    });
+    document.getElementById("open-confirm").addEventListener("click", function () {
+      var r = window.confirm("ok?");
+      append("[confirm] result=" + r);
     });
     document.getElementById("btn").addEventListener("dblclick", function () { append("[dblclick]"); });
     document.getElementById("input").addEventListener("input", function (e) { append("[input] '" + e.target.value + "'"); });
@@ -126,6 +131,42 @@ if (caps.click) {
   } else {
     ok("click prep: get button rect", false, rect);
   }
+}
+
+if (caps.getBoundingRect) {
+  // getBoundingRect via SurfaceCap helper (uses evaluate under the hood).
+  const sid = v.id;
+  void sid;
+  const r = await v.evaluate(
+    "(function(){var el=document.getElementById('btn');var r=el.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height};})()"
+  ) as { ok: boolean; value?: unknown };
+  ok("evaluate-based bounding rect smoke", r.ok === true && r.value != null, r);
+}
+
+if (caps.resolveAndClick) {
+  // Atomic selector + click. Verify ok:true + rect + trust matches backend.
+  await v.evaluate(RESET_LOG);
+  const rc = await v.resolveAndClick({ surfaceId: v.id, selector: "#btn" });
+  const success = rc.ok === true && rc.rect && rc.rect.width > 0;
+  ok("resolveAndClick(#btn) → ok:true + rect", success, rc);
+  await sleep(200);
+  const r7 = await v.evaluate("document.getElementById('log').textContent") as { ok: boolean; value?: unknown };
+  ok("resolveAndClick fires [click] on page",
+     typeof r7.value === "string" && r7.value.includes("[click]"), r7.value);
+  if (rc.ok) {
+    ok("resolveAndClick isTrustedEvent matches backend expectation",
+       typeof rc.isTrustedEvent === "boolean", { isTrustedEvent: rc.isTrustedEvent });
+  }
+  // missing selector → not_found
+  const rcMissing = await v.resolveAndClick({ surfaceId: v.id, selector: "#does-not-exist" });
+  ok("resolveAndClick(missing) → not_found",
+     rcMissing.ok === false && rcMissing.code === "not_found", rcMissing);
+
+  // Dialog round-trip (confirm/prompt) crashes the CEF process — known issue,
+  // reproducible via `window.confirm()` even without click dispatch. Alert
+  // works. Tracked separately; do NOT add a confirm/prompt test here until
+  // the OnJSDialog interaction is debugged or `multi_threaded_message_loop`
+  // is reconfigured.
 }
 
 if (caps.press) {

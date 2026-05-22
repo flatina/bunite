@@ -1603,6 +1603,9 @@ std::string buildResolveScript(const std::string& selector) {
     "})()";
 }
 
+// Extract the user-returned value dict from a Runtime.evaluate response.
+// Complex (dict/list) CefValue handles reference parent storage — round-trip
+// through JSON so the returned dict has independent lifetime.
 CefRefPtr<CefDictionaryValue> parseEvaluateValue(
     const std::string& evalResult,
     std::function<void(const char*, const std::string&)> onErr) {
@@ -1619,7 +1622,12 @@ CefRefPtr<CefDictionaryValue> parseEvaluateValue(
   if (!result || !result->HasKey("value")) { onErr("runtime_error", "evaluate returned no value"); return nullptr; }
   CefRefPtr<CefValue> v = result->GetValue("value");
   if (!v || v->GetType() != VTYPE_DICTIONARY) { onErr("runtime_error", "evaluate returned non-object"); return nullptr; }
-  return v->GetDictionary();
+  std::string userJson = CefWriteJSON(v, JSON_WRITER_DEFAULT);
+  CefRefPtr<CefValue> independent = CefParseJSON(userJson, JSON_PARSER_RFC);
+  if (!independent || independent->GetType() != VTYPE_DICTIONARY) {
+    onErr("runtime_error", "evaluate value re-parse failed"); return nullptr;
+  }
+  return independent->GetDictionary();
 }
 
 void dispatchCdpClick(ViewHost* view, double cx, double cy,
@@ -1646,17 +1654,30 @@ void finishResolveAndClick(uint32_t view_id, uint32_t request_id, double x, doub
   auto* v = bunite_win::getViewHostById(view_id);
   if (!v || !v->browser) { emitResolveAndClickError(view_id, request_id, "runtime_error", "view destroyed"); return; }
   dispatchCdpClick(v, cx, cy, button, click_count, modifiers);
-  // Chromium browser-process CDP → DOM trust=false (matches existing CEF click cap).
+  // CEF CDP `Input.dispatchMouseEvent` produces DOM events with isTrusted=true
+  // (empirical — `e.isTrusted` on page-side listener reports true).
   std::string payload = "{\"requestId\":" + std::to_string(request_id) +
                         ",\"ok\":true,\"rect\":{\"x\":" + std::to_string(x) +
                         ",\"y\":" + std::to_string(y) +
                         ",\"width\":" + std::to_string(w) +
                         ",\"height\":" + std::to_string(h) + "},"
-                        "\"isTrustedEvent\":false}";
+                        "\"isTrustedEvent\":true}";
   bunite_win::emitWebviewEvent(view_id, "resolve-and-click-result", payload);
 }
 
 struct FrameResolveOk { double x, y, w, h, cx, cy, iw, ih; };
+
+// CefDictionaryValue::GetDouble returns 0 for VTYPE_INT — JSON.stringify
+// serializes integer-valued numbers without `.0` so values like rect.height==35
+// re-parse as VTYPE_INT. Coerce here.
+double dictNumber(CefRefPtr<CefDictionaryValue> d, const char* key) {
+  if (!d || !d->HasKey(key)) return 0.0;
+  switch (d->GetType(key)) {
+    case VTYPE_INT:    return static_cast<double>(d->GetInt(key));
+    case VTYPE_DOUBLE: return d->GetDouble(key);
+    default: return 0.0;
+  }
+}
 
 // Parse a Runtime.evaluate response (either main-session or sessionId-routed)
 // and forward the script's frame-local fields to `onOk`. The script's failure
@@ -1675,11 +1696,10 @@ void parseEvalAndContinue(uint32_t view_id, uint32_t request_id, bool ok, const 
     return;
   }
   onOk(FrameResolveOk{
-      value->GetDouble("x"), value->GetDouble("y"),
-      value->GetDouble("w"), value->GetDouble("h"),
-      value->GetDouble("cx"), value->GetDouble("cy"),
-      value->HasKey("iw") ? value->GetDouble("iw") : 0.0,
-      value->HasKey("ih") ? value->GetDouble("ih") : 0.0,
+      dictNumber(value, "x"),  dictNumber(value, "y"),
+      dictNumber(value, "w"),  dictNumber(value, "h"),
+      dictNumber(value, "cx"), dictNumber(value, "cy"),
+      dictNumber(value, "iw"), dictNumber(value, "ih"),
   });
 }
 
@@ -1769,7 +1789,14 @@ bool parseQuadFromBoxModel(const std::string& result, std::array<double, 8>& out
   if (!model) return false;
   auto content = model->HasKey("content") ? model->GetList("content") : nullptr;
   if (!content || content->GetSize() < 8) return false;
-  for (int i = 0; i < 8; ++i) out[i] = content->GetDouble(i);
+  for (int i = 0; i < 8; ++i) {
+    // CDP serializes integer pixel positions without `.0`; coerce from INT.
+    switch (content->GetType(i)) {
+      case VTYPE_INT:    out[i] = static_cast<double>(content->GetInt(i)); break;
+      case VTYPE_DOUBLE: out[i] = content->GetDouble(i); break;
+      default: out[i] = 0.0;
+    }
+  }
   return true;
 }
 
@@ -1896,7 +1923,7 @@ void fetchAncestorInner(std::shared_ptr<ChainState> s, size_t i) {
         std::string vs = result->GetString("value").ToString();
         CefRefPtr<CefValue> inner = CefParseJSON(vs, JSON_PARSER_RFC);
         if (!inner || inner->GetType() != VTYPE_DICTIONARY) { emitResolveAndClickError(s->view_id, s->request_id, "runtime_error", "ancestor inner malformed"); return; }
-        s->ancestor_inner.push_back({inner->GetDictionary()->GetDouble("iw"), inner->GetDictionary()->GetDouble("ih")});
+        s->ancestor_inner.push_back({dictNumber(inner->GetDictionary(), "iw"), dictNumber(inner->GetDictionary(), "ih")});
         fetchAncestorInner(s, i + 1);
       });
 }

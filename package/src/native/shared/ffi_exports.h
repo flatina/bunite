@@ -281,7 +281,8 @@ BUNITE_EXPORT void bunite_view_evaluate_in_frame(
  *  Codes: not_found / not_visible / runtime_error / cross_origin / not_supported.
  *  `frame_id` non-empty selects a same-origin iframe (rect viewport-normalized);
  *  cross-origin → `cross_origin`, mac/linux → `not_supported`. scrollIntoView is
- *  automatic. `isTrustedEvent` is empirical per backend (CEF false, WV2/mac true). */
+ *  automatic. `isTrustedEvent` is empirical per backend; CEF/WV2 CDP path and
+ *  mac NSEvent direct dispatch all produce trusted events (all `true`). */
 BUNITE_EXPORT void bunite_view_resolve_and_click(
 	uint32_t view_id,
 	uint32_t request_id,

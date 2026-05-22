@@ -643,7 +643,19 @@ static void wireView(ViewHost* view, std::function<void()> on_attached) {
             //  - main frame only (matching CEF's OnContextCreated main-frame gate)
             //  - origin allowlist when `preload_origins` is non-empty
             // Empty allowlist = inject on every main frame (CEF parity default).
-            if (!v->preload_script.empty() && v->webview) {
+            //
+            // AddScriptToExecuteOnDocumentCreated is async — registration must
+            // complete BEFORE Navigate() or the first document load runs without
+            // the preload. Defer Navigate into the completion handler.
+            const bool inject = !v->preload_script.empty() && v->webview;
+            auto doInitialNav = [v]() {
+              if (!v->url.empty()) {
+                v->webview->Navigate(utf8ToWide(v->url).c_str());
+              } else if (!v->html.empty()) {
+                v->webview->NavigateToString(utf8ToWide(v->html).c_str());
+              }
+            };
+            if (inject) {
               std::string allowlist = "[";
               for (size_t i = 0; i < v->preload_origins.size(); ++i) {
                 if (i) allowlist += ",";
@@ -668,19 +680,18 @@ static void wireView(ViewHost* view, std::function<void()> on_attached) {
               v->webview->AddScriptToExecuteOnDocumentCreated(
                   wpreload.c_str(),
                   Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
-                      [lt, view_id](HRESULT, LPCWSTR id) -> HRESULT {
+                      [lt, view_id, doInitialNav](HRESULT hr, LPCWSTR id) -> HRESULT {
                         if (!lt || !lt->alive.load()) return S_OK;
+                        if (FAILED(hr)) {
+                          BUNITE_ERROR("AddScriptToExecuteOnDocumentCreated failed hr=0x%08x", static_cast<unsigned>(hr));
+                        }
                         ViewHost* vv = getView(view_id);
                         if (vv && id) vv->add_script_id = id;
+                        doInitialNav();
                         return S_OK;
                       }).Get());
-            }
-
-            // Initial navigation.
-            if (!v->url.empty()) {
-              v->webview->Navigate(utf8ToWide(v->url).c_str());
-            } else if (!v->html.empty()) {
-              v->webview->NavigateToString(utf8ToWide(v->html).c_str());
+            } else {
+              doInitialNav();
             }
 
             emitWebviewEvent(v->id, "view-ready");

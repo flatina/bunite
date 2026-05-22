@@ -34,6 +34,9 @@ function definePolyfillClass(): CustomElementConstructor {
     private _epoch: number = 0;
     private _isLoading: boolean = false;
     private _currentUrl: string = "";
+    // Local history stack for goBack — cross-origin contentWindow.history is
+    // inaccessible, so we track navigations ourselves.
+    private _history: string[] = [];
 
     private isReachable(): boolean {
       if (!this._iframe) return false;
@@ -56,6 +59,11 @@ function definePolyfillClass(): CustomElementConstructor {
     private emit(event: SurfaceEventBase) {
       if (event.type === "navigate") {
         this._epoch++;
+        // Avoid pushing duplicate / same-as-top entries (reload doesn't grow history).
+        if (this._currentUrl && this._currentUrl !== event.url &&
+            this._history[this._history.length - 1] !== this._currentUrl) {
+          this._history.push(this._currentUrl);
+        }
         this._currentUrl = event.url;
       } else if (event.type === "load-start") {
         this._isLoading = true;
@@ -162,19 +170,22 @@ function definePolyfillClass(): CustomElementConstructor {
     }
 
     goBack() {
-      try {
-        this._iframe?.contentWindow?.history.back();
-      } catch {}
+      // Same-origin path uses native history. Cross-origin throws → fall back
+      // to our tracked stack (push on every navigate; pop here).
+      try { this._iframe?.contentWindow?.history.back(); return; } catch {}
+      const prev = this._history.pop();
+      if (prev && this._iframe) this._iframe.src = prev;
     }
 
     reload() {
-      try {
-        this._iframe?.contentWindow?.location.reload();
-      } catch {
-        if (this._iframe) {
-          this._iframe.src = this._iframe.src;
-        }
-      }
+      try { this._iframe?.contentWindow?.location.reload(); return; } catch {}
+      // Cross-origin fallback: reassigning the same src is a no-op in WHATWG;
+      // cycle via about:blank to force a fresh navigation.
+      const iframe = this._iframe;
+      if (!iframe) return;
+      const url = this._currentUrl || iframe.src;
+      iframe.src = "about:blank";
+      requestAnimationFrame(() => { if (this._iframe) this._iframe.src = url; });
     }
 
     setHidden(hidden: boolean) {
@@ -235,6 +246,50 @@ function definePolyfillClass(): CustomElementConstructor {
 
     async resolveAndClick(_selector: string, _opts?: unknown) {
       return { ok: false as const, code: "not_supported" as const, message: "polyfill iframe: atomic resolveAndClick not supported" };
+    }
+
+    async getBoundingRect(selector: string, _opts?: unknown) {
+      if (!this.isReachable()) return { ok: false as const, code: "not_supported" as const, message: "iframe not reachable" };
+      try {
+        const el = this._iframe!.contentDocument!.querySelector(selector) as Element | null;
+        if (!el) return { ok: false as const, code: "not_found" as const, message: `selector ${selector} not found` };
+        const r = el.getBoundingClientRect();
+        const win = this._iframe!.contentWindow!;
+        const visible = r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0
+                       && r.top < win.innerHeight && r.left < win.innerWidth;
+        return { ok: true as const, rect: { x: r.x, y: r.y, width: r.width, height: r.height }, visible };
+      } catch (e: any) {
+        const code = e?.name === "SecurityError" ? "cross_origin" as const : "runtime_error" as const;
+        return { ok: false as const, code, message: e?.message ?? String(e) };
+      }
+    }
+
+    async listFrames() {
+      return { ok: false as const, code: "not_supported" as const, message: "polyfill: not implemented" };
+    }
+
+    async accessibilitySnapshot(_opts?: unknown) {
+      return { ok: false as const, code: "not_supported" as const, message: "polyfill: not implemented" };
+    }
+
+    async setDownloadPolicy(_policy: unknown, _dir?: unknown) {
+      // No-op — iframe has no download lifecycle hook.
+    }
+
+    async waitForDownload(_opts?: unknown) {
+      return { ok: false as const, code: "not_supported" as const, message: "polyfill: not implemented" };
+    }
+
+    async acceptPopup(_opts?: unknown) {
+      return { ok: false as const, code: "not_found" as const, message: "polyfill: no popup orchestration" };
+    }
+
+    async dismissPopup(_id?: unknown) {
+      // No-op.
+    }
+
+    async extendAdoptionTimeout(_id?: unknown, _ms?: unknown) {
+      return { ok: false as const, code: "not_found" as const, message: "polyfill: no popup orchestration" };
     }
 
     async sendType(text: string) {

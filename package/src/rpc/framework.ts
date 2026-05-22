@@ -382,8 +382,9 @@ export interface ResolveAndClickArgs {
   clickCount?: number;
   modifiers?: Modifier[];
 }
-/** rect is viewport-normalized. `isTrustedEvent` is empirical per backend:
- *  CEF false (browser-process CDP), WV2/mac true. */
+/** rect is viewport-normalized. `isTrustedEvent` is empirical per backend —
+ *  CEF/WV2 CDP `Input.dispatchMouseEvent` produces trusted events; mac NSEvent
+ *  direct dispatch is also trusted. All shipped backends report `true`. */
 export type ResolveAndClickResult =
   | { ok: true; rect: { x: number; y: number; width: number; height: number }; isTrustedEvent: boolean }
   | { ok: false; code: "not_found" | "not_visible" | "runtime_error" | "cross_origin" | "not_supported"; message: string };
