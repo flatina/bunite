@@ -70,11 +70,16 @@ export function buildViewPreloadScript(options: {
 }) {
   const secretKeyBase64 = Buffer.from(options.secretKey).toString("base64");
 
-  // Per-view config — these globals are consumed by the pre-built runtime
+  // Per-view config — these globals are consumed by the pre-built runtime.
   const config = `var __buniteWebviewId=${options.webviewId},__buniteRpcSocketPort=${options.rpcSocketPort},__buniteSecretKeyBase64=${JSON.stringify(secretKeyBase64)};`;
 
   const runtime = getPreloadRuntime();
   const customPreload = readCustomPreload(options.preload, options.appresRoot).trim();
 
-  return [config, runtime, customPreload].filter(Boolean).join("\n");
+  // `;\n` between segments guards against ASI / token-boundary issues.
+  const inner = [config, runtime, customPreload].filter(Boolean).join(";\n");
+  // Catch top-level errors so a broken segment doesn't abort the surrounding
+  // native IIFE wrapper. Stashes the error on globalThis for programmatic
+  // inspection in addition to console.error.
+  return `try{${inner}\n}catch(e){try{globalThis.__bunitePreloadError=e}catch(_){}try{console.error("[bunite preload] failed:",e&&e.stack||e)}catch(_){}}`;
 }
