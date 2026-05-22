@@ -8,7 +8,12 @@ const levels: Record<LogLevel, number> = {
   silent: 4
 };
 
-let currentLevel: LogLevel = "warn";
+function initialLevel(): LogLevel {
+  const v = (typeof process !== "undefined" ? process.env?.BUNITE_LOG_LEVEL : undefined);
+  return v === "debug" || v === "info" || v === "warn" || v === "error" || v === "silent" ? v : "warn";
+}
+
+let currentLevel: LogLevel = initialLevel();
 
 function shouldLog(level: LogLevel): boolean {
   return levels[level] >= levels[currentLevel];
