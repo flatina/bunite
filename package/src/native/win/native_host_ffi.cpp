@@ -264,6 +264,7 @@ extern "C" BUNITE_EXPORT bool bunite_init(
   bool popup_blocking,
   const char* engine_config_json
 ) {
+  buniteApplyEnvLogLevel();
   reapChildrenOnExit();
   {
     std::lock_guard<std::mutex> lock(g_runtime.lifecycle_mutex);

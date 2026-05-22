@@ -173,7 +173,8 @@ public:
                      : (dialog_type == JSDIALOGTYPE_CONFIRM) ? "confirm" : "prompt";
     const uint32_t rid = view_->next_dialog_request_id++;
     view_->pending_dialogs[rid] = callback;
-    suppress_message = true;  // we control the dialog UX; host sends the answer.
+    // CEF asserts !suppress_message when return=true (custom dialog path).
+    suppress_message = false;
     std::string payload = "{\"requestId\":" + std::to_string(rid) +
                           ",\"kind\":\"" + kind +
                           "\",\"message\":\"" + bunite_win::escapeJsonString(message_text.ToString()) + "\"";

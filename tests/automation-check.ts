@@ -161,12 +161,6 @@ if (caps.resolveAndClick) {
   const rcMissing = await v.resolveAndClick({ surfaceId: v.id, selector: "#does-not-exist" });
   ok("resolveAndClick(missing) → not_found",
      rcMissing.ok === false && rcMissing.code === "not_found", rcMissing);
-
-  // Dialog round-trip (confirm/prompt) crashes the CEF process — known issue,
-  // reproducible via `window.confirm()` even without click dispatch. Alert
-  // works. Tracked separately; do NOT add a confirm/prompt test here until
-  // the OnJSDialog interaction is debugged or `multi_threaded_message_loop`
-  // is reconfigured.
 }
 
 if (caps.press) {
@@ -257,15 +251,34 @@ if (caps.mouse) {
      /mousedown:true.+mouseup:true/.test(seq), seq);
 }
 
-// dialog handler — confirm + prompt round-trip. Subscribe via BrowserView
-// event surface; respond via view.respondToDialog.
-if (caps.dialogs) {
-  // dialog round-trip needs an appres-based test harness (separate from
-  // this NavigateToString-based smoke). Capability bit is verified above
-  // and the native handlers compile + attach (hr=0 on WV2). Round-trip
-  // semantics — host responds, page resumes with correct return value —
-  // covered by a future surface-based test suite.
-  ok("dialogs capability advertised (round-trip test deferred to surface harness)", true);
+// dialog round-trip. CEF-gated: WV2 ScriptDialogOpening doesn't fire on
+// data: URLs for confirm/prompt — needs a real-origin (appres) harness.
+if (caps.dialogs && app.engineName === "cef") {
+  const dialogCases: Array<{ kind: "alert" | "confirm" | "prompt"; accept: boolean; text: string; expr: string; expect: unknown }> = [
+    { kind: "alert",   accept: true,  text: "",        expr: "(function(){window.alert('a');return 'ok'})()",                expect: "ok" },
+    { kind: "confirm", accept: true,  text: "",        expr: "window.confirm('c?')",                                          expect: true },
+    { kind: "confirm", accept: false, text: "",        expr: "window.confirm('c?')",                                          expect: false },
+    { kind: "prompt",  accept: true,  text: "typed",   expr: "window.prompt('p?', 'def')",                                    expect: "typed" },
+    { kind: "prompt",  accept: false, text: "ignored", expr: "window.prompt('p?', 'def')",                                    expect: null },
+  ];
+  const seen: string[] = [];
+  const handler = (event: any) => {
+    const d = event.data as { requestId: number; kind: string };
+    seen.push(d.kind);
+    const c = dialogCases[seen.length - 1];
+    if (!c) return;
+    v.respondToDialog(d.requestId, c.accept, c.text);
+  };
+  v.on("dialog", handler);
+  for (const c of dialogCases) {
+    const r = await v.evaluate(c.expr) as { ok: boolean; value?: unknown };
+    ok(`dialog ${c.kind} accept=${c.accept} → ${JSON.stringify(c.expect)}`,
+       r.ok === true && r.value === c.expect, r);
+  }
+  ok("dialog kinds observed in order",
+     seen.length === dialogCases.length && seen.every((k, i) => k === dialogCases[i].kind), seen);
+} else if (caps.dialogs) {
+  ok("dialogs capability advertised (WV2 round-trip on data: URL deferred — appres harness)", true);
 }
 
 // waitForSelector — exposed on SurfaceCap, not BrowserView; skip on this
