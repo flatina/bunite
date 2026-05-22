@@ -2,8 +2,10 @@ import {
   onSurfaceInit, emitSurfaceEvent, emitConsole, emitDownload, emitPopupRequested,
   registerDialogRequest, disposeSurfaceState, clearConsoleBuffer,
 } from "./SurfaceManager";
+import { log } from "../log";
 
 onSurfaceInit((surfaceId, hostViewId, view) => {
+  log.debug("surface/init surfaceId=" + surfaceId + " hostViewId=" + hostViewId);
   view.on("did-navigate", (event: any) => {
     emitSurfaceEvent(hostViewId, surfaceId, { type: "navigate", url: event.data.detail });
   });
@@ -32,6 +34,7 @@ onSurfaceInit((surfaceId, hostViewId, view) => {
       message: string;
       defaultPrompt?: string;
     };
+    log.debug("surface/dialog-ipc surfaceId=" + surfaceId + " hostViewId=" + hostViewId + " kind=" + d.kind);
     registerDialogRequest(hostViewId, surfaceId, d);
   });
   view.on("console-message", (event: any) => {

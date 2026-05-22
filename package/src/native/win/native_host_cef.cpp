@@ -173,6 +173,7 @@ public:
                      : (dialog_type == JSDIALOGTYPE_CONFIRM) ? "confirm" : "prompt";
     const uint32_t rid = view_->next_dialog_request_id++;
     view_->pending_dialogs[rid] = callback;
+    BUNITE_INFO("cef/dialog: OnJSDialog view=%u kind=%s rid=%u", view_->id, kind, rid);
     // CEF asserts !suppress_message when return=true (custom dialog path).
     suppress_message = false;
     std::string payload = "{\"requestId\":" + std::to_string(rid) +

@@ -1688,7 +1688,12 @@ void parseEvalAndContinue(uint32_t view_id, uint32_t request_id, bool ok, const 
   auto onErr = [view_id, request_id](const char* code, const std::string& msg) {
     emitResolveAndClickError(view_id, request_id, code, msg);
   };
-  if (!ok) { onErr("runtime_error", "Runtime.evaluate failed"); return; }
+  if (!ok) {
+    BUNITE_INFO("cef/eval: Runtime.evaluate failed view=%u request=%u body=%.300s%s",
+                view_id, request_id, evalResult.c_str(),
+                evalResult.size() > 300 ? "..." : "");
+    onErr("runtime_error", "Runtime.evaluate failed"); return;
+  }
   auto value = parseEvaluateValue(evalResult, onErr);
   if (!value) return;
   if (!value->HasKey("ok") || !value->GetBool("ok")) {

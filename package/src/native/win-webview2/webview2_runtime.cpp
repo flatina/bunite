@@ -971,6 +971,8 @@ static void attachControllerCallbacks(ViewHost* view) {
                                  : "alert";
             const uint32_t rid = v->next_dialog_request_id++;
             v->pending_dialogs[rid] = ViewHost::PendingDialog{ args, std::move(deferral) };
+            BUNITE_INFO("webview2/dialog: ScriptDialogOpening view=%u kind=%s rid=%u",
+                        view_id, kind_str, rid);
             std::string payload = "{\"requestId\":" + std::to_string(rid) +
                                   ",\"kind\":\"" + kind_str +
                                   "\",\"message\":\"" + escapeJsonString(message) + "\"";

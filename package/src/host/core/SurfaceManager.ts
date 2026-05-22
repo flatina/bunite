@@ -10,6 +10,7 @@ import {
   type NavigationState, type DownloadEvent, type WaitForDownloadResult,
 } from "../../rpc/index";
 import { Stream } from "../../rpc/stream";
+import { log } from "../log";
 
 function applyHostOffset(hostView: BrowserView, x: number, y: number) {
   return { x: x + hostView.frame.x, y: y + hostView.frame.y };
@@ -248,6 +249,8 @@ export function clearConsoleBuffer(surfaceId: number) {
 
 export function emitDialog(hostViewId: number, surfaceId: number, event: DialogEvent) {
   const subs = dialogSubs.get(hostViewId);
+  log.debug("dialog/emit hostViewId=" + hostViewId + " surfaceId=" + surfaceId +
+            " kind=" + (event as { kind?: string }).kind + " subscribers=" + (subs?.size ?? 0));
   if (!subs) return;
   for (const emit of subs) emit({ surfaceId, event });
 }
@@ -270,6 +273,8 @@ export function registerDialogRequest(
   surfaceId: number,
   request: { requestId: number; kind: "alert" | "confirm" | "prompt" | "beforeunload"; message: string; defaultPrompt?: string }
 ) {
+  log.debug("dialog/register hostViewId=" + hostViewId + " surfaceId=" + surfaceId +
+            " kind=" + request.kind + " rid=" + request.requestId);
   const state = getOrCreateState(surfaceId);
   const view = getSurfaceRecord(surfaceId)?.view;
 
@@ -561,10 +566,12 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
         if (surfaceId === filterId) emit(event);
       };
       subs.add(wrapped);
+      log.debug("dialog/subscribe hostViewId=" + hostViewId + " filterId=" + filterId + " total=" + subs.size);
       signal.addEventListener("abort", () => {
         const set = dialogSubs.get(hostViewId);
         if (!set) return;
         set.delete(wrapped);
+        log.debug("dialog/unsubscribe hostViewId=" + hostViewId + " filterId=" + filterId + " remaining=" + set.size);
         if (set.size === 0) dialogSubs.delete(hostViewId);
       });
     }),
