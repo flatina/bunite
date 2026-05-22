@@ -251,9 +251,8 @@ if (caps.mouse) {
      /mousedown:true.+mouseup:true/.test(seq), seq);
 }
 
-// dialog round-trip. CEF-gated: WV2 ScriptDialogOpening doesn't fire on
-// data: URLs for confirm/prompt — needs a real-origin (appres) harness.
-if (caps.dialogs && app.engineName === "cef") {
+// dialog round-trip (alert/confirm/prompt × accept/dismiss).
+if (caps.dialogs) {
   const dialogCases: Array<{ kind: "alert" | "confirm" | "prompt"; accept: boolean; text: string; expr: string; expect: unknown }> = [
     { kind: "alert",   accept: true,  text: "",        expr: "(function(){window.alert('a');return 'ok'})()",                expect: "ok" },
     { kind: "confirm", accept: true,  text: "",        expr: "window.confirm('c?')",                                          expect: true },
@@ -277,8 +276,6 @@ if (caps.dialogs && app.engineName === "cef") {
   }
   ok("dialog kinds observed in order",
      seen.length === dialogCases.length && seen.every((k, i) => k === dialogCases[i].kind), seen);
-} else if (caps.dialogs) {
-  ok("dialogs capability advertised (WV2 round-trip on data: URL deferred — appres harness)", true);
 }
 
 // waitForSelector — exposed on SurfaceCap, not BrowserView; skip on this

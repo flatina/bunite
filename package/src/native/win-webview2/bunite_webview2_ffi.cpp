@@ -450,6 +450,10 @@ BUNITE_EXPORT void bunite_view_press(uint32_t view_id, int32_t windows_vk_code,
   std::string key_str = key ? key : "";
   std::string code_str = code ? code : "";
 
+  // CDP modifier mask: 1=alt, 2=ctrl, 4=meta, 8=shift. Suppress text when any
+  // non-shift modifier is set so shortcuts like Ctrl+A don't insert "a".
+  const bool has_non_shift_modifier = (modifiers & ~static_cast<uint32_t>(8)) != 0;
+
   auto buildPart = [&](const char* type, bool include_text) {
     std::string out = "{\"type\":\"";
     out += type;
@@ -459,7 +463,7 @@ BUNITE_EXPORT void bunite_view_press(uint32_t view_id, int32_t windows_vk_code,
     if (!code_str.empty()) out += ",\"code\":\"" + escapeJsonString(code_str) + "\"";
     // CDP `location`: 0 standard, 1 left mod, 2 right mod, 3 numpad.
     if (location > 0) out += ",\"location\":" + std::to_string(location);
-    if (include_text && !char_str.empty())
+    if (include_text && !char_str.empty() && !has_non_shift_modifier)
       out += ",\"text\":\"" + escapeJsonString(char_str) + "\"";
     out += "}";
     return out;
@@ -944,7 +948,12 @@ struct FrameResolveOkWv2 { double x, y, w, h, cx, cy, iw, ih; };
 // frame-local fields to `onOk`. Script's failure branch routes through error emit.
 void parseEvalAndContinueWv2(uint32_t view_id, uint32_t request_id, bool ok, const std::string& evalResult,
                               std::function<void(const FrameResolveOkWv2&)> onOk) {
-  if (!ok) { emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "Runtime.evaluate failed"); return; }
+  if (!ok) {
+    BUNITE_INFO("webview2/eval: Runtime.evaluate failed view=%u request=%u body=%.300s%s",
+                view_id, request_id, evalResult.c_str(),
+                evalResult.size() > 300 ? "..." : "");
+    emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "Runtime.evaluate failed"); return;
+  }
   if (evalResult.find("\"exceptionDetails\"") != std::string::npos) {
     emitResolveAndClickErrorWv2(view_id, request_id, "runtime_error", "evaluate threw"); return;
   }

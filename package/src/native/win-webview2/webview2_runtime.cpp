@@ -945,9 +945,15 @@ static void attachControllerCallbacks(ViewHost* view) {
           }).Get(),
       &tok);
 
+  // Disable default WV2 dialog UI so ScriptDialogOpening drives all dialogs.
+  ComPtr<ICoreWebView2Settings> settings;
+  if (SUCCEEDED(view->webview->get_Settings(&settings)) && settings) {
+    settings->put_AreDefaultScriptDialogsEnabled(FALSE);
+  }
+
   // ScriptDialogOpening — alert / confirm / prompt / beforeunload. Defer the
   // event so host can decide via `respondToDialog`.
-  view->webview->add_ScriptDialogOpening(
+  HRESULT dlg_hr = view->webview->add_ScriptDialogOpening(
       Callback<ICoreWebView2ScriptDialogOpeningEventHandler>(
           [lifetime, view_id](ICoreWebView2*, ICoreWebView2ScriptDialogOpeningEventArgs* args) -> HRESULT {
             if (!lifetime || !lifetime->alive.load()) return S_OK;
@@ -984,6 +990,8 @@ static void attachControllerCallbacks(ViewHost* view) {
             return S_OK;
           }).Get(),
       &tok);
+  BUNITE_INFO("webview2/dialog: add_ScriptDialogOpening view=%u hr=0x%08x token=%lld",
+              view_id, static_cast<unsigned>(dlg_hr), static_cast<long long>(tok.value));
 
   // Capture preload IIFE markers. Production IPC is on the encrypted WS, so
   // skip registering entirely when markers aren't emitted.
