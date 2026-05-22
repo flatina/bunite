@@ -650,8 +650,13 @@ static void wireView(ViewHost* view, std::function<void()> on_attached) {
             const bool inject = !v->preload_script.empty() && v->webview;
             auto doInitialNav = [v]() {
               if (!v->url.empty()) {
+                BUNITE_INFO("webview2/preload-race: view=%u t=%llu navigate-call url=%.200s%s",
+                            v->id, static_cast<unsigned long long>(GetTickCount64()),
+                            v->url.c_str(), v->url.size() > 200 ? "..." : "");
                 v->webview->Navigate(utf8ToWide(v->url).c_str());
               } else if (!v->html.empty()) {
+                BUNITE_INFO("webview2/preload-race: view=%u t=%llu navigate-tostring-call",
+                            v->id, static_cast<unsigned long long>(GetTickCount64()));
                 v->webview->NavigateToString(utf8ToWide(v->html).c_str());
               }
             };
@@ -662,8 +667,18 @@ static void wireView(ViewHost* view, std::function<void()> on_attached) {
                 allowlist += "\"" + escapeJsonString(v->preload_origins[i]) + "\"";
               }
               allowlist += "]";
+              // Diagnostic IIFE-start/end markers, gated by log level. Leading
+              // `;` defends against preload_script with no trailing semicolon.
+              const bool emitMarkers = buniteShouldLog(BuniteLogLevel::Info);
+              const char* markerStart = emitMarkers
+                  ? ";try{(self.chrome&&chrome.webview&&chrome.webview.postMessage)&&chrome.webview.postMessage('__bunite_preload_iife_start__');}catch(_){}"
+                  : "";
+              const char* markerEnd = emitMarkers
+                  ? ";try{(self.chrome&&chrome.webview&&chrome.webview.postMessage)&&chrome.webview.postMessage('__bunite_preload_iife_end__');}catch(_){}"
+                  : "";
               std::string body =
-                  "(function(){if(window.self!==window.top)return;"
+                  "(function(){"
+                  "if(window.self!==window.top)return;"
                   "var __a=" + allowlist +
                   ",__o=location.origin;"
                   "if(__a.length){var __m=function(p,v){var i=0,j=0,s=-1,k=0,L=function(c){return c.charCodeAt(0)|32;};"
@@ -673,10 +688,14 @@ static void wireView(ViewHost* view, std::function<void()> on_attached) {
                   "while(i<p.length&&p[i]===\"*\")i++;return i===p.length;};"
                   "var __ok=false;for(var i=0;i<__a.length;i++){if(__m(__a[i],__o)){__ok=true;break;}}"
                   "if(!__ok)return;}"
-                  + v->preload_script +
+                  + markerStart
+                  + v->preload_script
+                  + markerEnd +
                   "})();";
               std::wstring wpreload = utf8ToWide(body);
               auto lt = lifetime;
+              BUNITE_INFO("webview2/preload-race: view=%u t=%llu addscript-request",
+                          view_id, static_cast<unsigned long long>(GetTickCount64()));
               v->webview->AddScriptToExecuteOnDocumentCreated(
                   wpreload.c_str(),
                   Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
@@ -687,6 +706,9 @@ static void wireView(ViewHost* view, std::function<void()> on_attached) {
                         }
                         ViewHost* vv = getView(view_id);
                         if (vv && id) vv->add_script_id = id;
+                        BUNITE_INFO("webview2/preload-race: view=%u t=%llu addscript-completion hr=0x%08x",
+                                    view_id, static_cast<unsigned long long>(GetTickCount64()),
+                                    static_cast<unsigned>(hr));
                         doInitialNav();
                         return S_OK;
                       }).Get());
@@ -852,6 +874,9 @@ static void attachControllerCallbacks(ViewHost* view) {
             args->get_Uri(&uri_raw);
             std::string url = wideToUtf8(uri_raw);
             if (uri_raw) CoTaskMemFree(uri_raw);
+            BUNITE_INFO("webview2/preload-race: view=%u t=%llu nav-starting url=%.200s%s",
+                        view_id, static_cast<unsigned long long>(GetTickCount64()),
+                        url.c_str(), url.size() > 200 ? "..." : "");
             emitWebviewEvent(v->id, "will-navigate", url);
             if (!shouldAllowNavigation(v, url)) {
               args->put_Cancel(TRUE);
@@ -892,6 +917,9 @@ static void attachControllerCallbacks(ViewHost* view) {
             args->get_IsSuccess(&ok);
             UINT64 nav_id = 0;
             args->get_NavigationId(&nav_id);
+            BUNITE_INFO("webview2/preload-race: view=%u t=%llu nav-completed ok=%d nav_id=%llu",
+                        view_id, static_cast<unsigned long long>(GetTickCount64()),
+                        ok ? 1 : 0, static_cast<unsigned long long>(nav_id));
             std::string url;
             auto it = g_nav_uris.find(navKey(view_id, nav_id));
             if (it != g_nav_uris.end()) {
@@ -954,6 +982,29 @@ static void attachControllerCallbacks(ViewHost* view) {
             return S_OK;
           }).Get(),
       &tok);
+
+  // Capture preload IIFE markers. Production IPC is on the encrypted WS, so
+  // skip registering entirely when markers aren't emitted.
+  if (buniteShouldLog(BuniteLogLevel::Info)) {
+    view->webview->add_WebMessageReceived(
+        Callback<ICoreWebView2WebMessageReceivedEventHandler>(
+            [lifetime, view_id](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT {
+              if (!lifetime || !lifetime->alive.load()) return S_OK;
+              LPWSTR raw = nullptr;
+              if (FAILED(args->TryGetWebMessageAsString(&raw)) || !raw) return S_OK;
+              std::string s = wideToUtf8(raw);
+              CoTaskMemFree(raw);
+              if (s == "__bunite_preload_iife_start__") {
+                BUNITE_INFO("webview2/preload-race: view=%u t=%llu preload-iife-start",
+                            view_id, static_cast<unsigned long long>(GetTickCount64()));
+              } else if (s == "__bunite_preload_iife_end__") {
+                BUNITE_INFO("webview2/preload-race: view=%u t=%llu preload-iife-end",
+                            view_id, static_cast<unsigned long long>(GetTickCount64()));
+              }
+              return S_OK;
+            }).Get(),
+        &tok);
+  }
 
   // DocumentTitleChanged — surface for automation surfaceEvents title-change arm.
   view->webview->add_DocumentTitleChanged(
