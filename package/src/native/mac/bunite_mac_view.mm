@@ -28,15 +28,19 @@
 using bunite_mac::g_runtime;
 using bunite_mac::utf8ToNSString;
 
-// WKDownload delegate — `download.delegate` is set by NavigationDelegate's
-// didBecomeDownload hooks (response or action). Lifecycle: decideDestination
-// gates host policy + emits `started`/`blocked`, didFinishDownload/didFail
-// emit terminal events. Progress events deferred (would need NSProgress KVO).
+// WKDownload delegate — decideDestination gates host policy + emits
+// started/blocked, KVO on download.progress emits progress, didFinish/didFail
+// emit terminal events.
 @interface BuniteDownloadDelegate : NSObject <WKDownloadDelegate>
 @property (nonatomic) uint32_t viewId;
 @property (nonatomic) uint64_t downloadId;
-@property (nonatomic, strong) NSString* destinationPath;  // for `completed.localPath`
+@property (nonatomic, strong) NSString* destinationPath;
+@property (nonatomic, weak) NSProgress* observedProgress;
+@property (nonatomic) int64_t lastReportedBytes;
+@property (atomic) BOOL terminalReached;
 @end
+
+static char kBuniteProgressCtx;
 
 @implementation BuniteDownloadDelegate
 
@@ -76,10 +80,52 @@ using bunite_mac::utf8ToNSString;
   if (total > 0) started += ",\"sizeBytes\":" + std::to_string(total);
   started += "}";
   bunite_mac::emitWebviewEvent(self.viewId, "download-event", started);
+  NSProgress* prog = download.progress;
+  if (prog) {
+    self.observedProgress = prog;
+    self.lastReportedBytes = 0;
+    [prog addObserver:self
+           forKeyPath:@"completedUnitCount"
+              options:NSKeyValueObservingOptionNew
+              context:&kBuniteProgressCtx];
+  }
   completionHandler([NSURL fileURLWithPath:path]);
 }
 
+- (void)observeValueForKeyPath:(NSString*)keyPath
+                      ofObject:(id)object
+                        change:(NSDictionary*)change
+                       context:(void*)context
+{
+  if (context != &kBuniteProgressCtx) {
+    [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+    return;
+  }
+  if (self.terminalReached) return;
+  NSProgress* prog = (NSProgress*)object;
+  int64_t received = prog.completedUnitCount;
+  int64_t total = prog.totalUnitCount;
+  if (received <= self.lastReportedBytes) return;
+  self.lastReportedBytes = received;
+  std::string payload = "{\"kind\":\"progress\",\"id\":\"mac-" + std::to_string(self.downloadId) +
+                        "\",\"receivedBytes\":" + std::to_string(received);
+  if (total > 0) payload += ",\"totalBytes\":" + std::to_string(total);
+  payload += "}";
+  bunite_mac::emitWebviewEvent(self.viewId, "download-event", payload);
+}
+
+- (void)_detachProgressObserver {
+  NSProgress* prog = self.observedProgress;
+  if (!prog) return;
+  @try {
+    [prog removeObserver:self forKeyPath:@"completedUnitCount" context:&kBuniteProgressCtx];
+  } @catch (NSException* ex) {}  // tolerate over-remove on edge lifecycles
+  self.observedProgress = nil;
+}
+
 - (void)downloadDidFinish:(WKDownload*)download {
+  self.terminalReached = YES;
+  [self _detachProgressObserver];
   std::string dest = self.destinationPath ? std::string(self.destinationPath.UTF8String ?: "") : "";
   std::string payload = "{\"kind\":\"completed\",\"id\":\"mac-" + std::to_string(self.downloadId) +
                         "\",\"localPath\":\"" + bunite_mac::escapeJsonString(dest) + "\"}";
@@ -87,10 +133,16 @@ using bunite_mac::utf8ToNSString;
 }
 
 - (void)download:(WKDownload*)download didFailWithError:(NSError*)error resumeData:(NSData*)resumeData {
+  self.terminalReached = YES;
+  [self _detachProgressObserver];
   std::string reason = error ? std::string(error.localizedDescription.UTF8String ?: "unknown") : "unknown";
   std::string payload = "{\"kind\":\"failed\",\"id\":\"mac-" + std::to_string(self.downloadId) +
                         "\",\"reason\":\"" + bunite_mac::escapeJsonString(reason) + "\"}";
   bunite_mac::emitWebviewEvent(self.viewId, "download-event", payload);
+}
+
+- (void)dealloc {
+  [self _detachProgressObserver];
 }
 
 @end
