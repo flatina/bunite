@@ -200,21 +200,18 @@ BUNITE_EXPORT void bunite_view_respond_dialog(
 	const char* text
 );
 
-/** Per-view automation capability bitset. Each backend returns the bits it
- *  actually supports — TS layer decodes to `SurfaceCapabilities` object.
- *  Bits are locked at ABI v6; append-only. */
+/** Per-view automation capability bitset. Two categories: method gate
+ *  (bit=false → method must not be called) and property advertise (bit=false
+ *  → method runs, property degrades). See `.agents/architecture.md`. */
 enum BuniteCapBit {
+	/* method gate */
 	BUNITE_CAP_EVALUATE             = 1u << 0,
-	BUNITE_CAP_CROSS_ORIGIN_EVAL    = 1u << 1,
 	BUNITE_CAP_SURFACE_EVENTS       = 1u << 2,
-	BUNITE_CAP_NATIVE_INPUT_TRUSTED = 1u << 3,  /* click/type/press/mouse all isTrusted=true */
 	BUNITE_CAP_CLICK                = 1u << 4,
 	BUNITE_CAP_TYPE                 = 1u << 5,
 	BUNITE_CAP_PRESS                = 1u << 6,
 	BUNITE_CAP_SCROLL               = 1u << 7,
 	BUNITE_CAP_SCREENSHOT           = 1u << 8,
-	BUNITE_CAP_FORMAT_PNG           = 1u << 9,
-	BUNITE_CAP_FORMAT_JPEG          = 1u << 10,
 	BUNITE_CAP_MOUSE                = 1u << 11,
 	BUNITE_CAP_DIALOGS              = 1u << 12,
 	BUNITE_CAP_CONSOLE              = 1u << 13,
@@ -224,6 +221,12 @@ enum BuniteCapBit {
 	BUNITE_CAP_DOWNLOADS            = 1u << 18,
 	BUNITE_CAP_POPUPS               = 1u << 19,
 	BUNITE_CAP_RESOLVE_AND_CLICK    = 1u << 20,
+
+	/* property advertise */
+	BUNITE_CAP_CROSS_ORIGIN_EVAL    = 1u << 1,
+	BUNITE_CAP_NATIVE_INPUT_TRUSTED = 1u << 3,  /* click/type/press/mouse isTrusted */
+	BUNITE_CAP_FORMAT_PNG           = 1u << 9,
+	BUNITE_CAP_FORMAT_JPEG          = 1u << 10,
 };
 BUNITE_EXPORT uint32_t bunite_view_capabilities(uint32_t view_id);
 

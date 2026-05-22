@@ -82,9 +82,9 @@ export const PageReportingCap = defineCap("bunite.PageReporting", {
 
 export type SurfaceMask = { x: number; y: number; w: number; h: number };
 
-/** Automation feature flags reported per surface. Append-only — consumers
- *  treat missing fields as `false`. Backend-honest: a method may exist on the
- *  RPC surface but return `not_supported` when the backend can't fulfil it. */
+/** Automation feature flags reported per surface. Two categories: method
+ *  gate (false → must not call) and property advertise (false → method runs,
+ *  property degrades; per-field JSDoc below). See `.agents/architecture.md`. */
 export interface SurfaceCapabilities {
   evaluate: boolean;
   crossOriginEval: boolean;
