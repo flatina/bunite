@@ -16,7 +16,7 @@ void setViewInputPassthrough(ViewHost* v, bool passthrough);
 
 extern "C" {
 
-BUNITE_EXPORT int32_t bunite_abi_version(void) { return 11; }
+BUNITE_EXPORT int32_t bunite_abi_version(void) { return 12; }
 
 BUNITE_EXPORT void bunite_set_log_level(int32_t level) {
   if (level < 0) level = 0;
@@ -90,8 +90,11 @@ BUNITE_EXPORT void bunite_window_show(uint32_t window_id) {
 }
 
 BUNITE_EXPORT void bunite_window_close(uint32_t window_id) {
+  // WM_CLOSE (not DestroyWindow) so it routes through the vetoable
+  // close-requested path + destroyWindow cleanup (windows_by_id erase +
+  // all-windows-closed), matching the CEF backend.
   WindowHost* w = getWindow(window_id);
-  if (w && w->hwnd) DestroyWindow(w->hwnd);
+  if (w && w->hwnd) SendMessageW(w->hwnd, WM_CLOSE, 0, 0);
 }
 
 BUNITE_EXPORT void bunite_window_set_title(uint32_t window_id, const char* title) {
@@ -138,6 +141,41 @@ BUNITE_EXPORT void bunite_window_set_frame(uint32_t window_id,
                  static_cast<int>(w), static_cast<int>(h),
                  SWP_NOZORDER | SWP_NOACTIVATE);
   }
+}
+
+// Capture-based move-drag — windowProc follows WM_MOUSEMOVE, ends on
+// WM_LBUTTONUP/CAPTURECHANGED/CANCELMODE/DESTROY (webview2_runtime.cpp). No
+// WM_NCLBUTTONDOWN modal loop: it would freeze the shared Bun/UI thread for
+// the whole drag. Trade-off: no Win11 snap/aero-shake.
+BUNITE_EXPORT void bunite_window_begin_move_drag(uint32_t window_id) {
+  WindowHost* win = getWindow(window_id);
+  if (!win || !win->hwnd || win->drag_active) return;
+  if (!(GetAsyncKeyState(VK_LBUTTON) & 0x8000)) return;  // button already released
+  POINT cur;
+  if (!GetCursorPos(&cur)) return;
+
+  if (IsZoomed(win->hwnd)) {  // restore under the cursor before dragging
+    RECT maxRect{};
+    WINDOWPLACEMENT wp{ sizeof(wp) };
+    GetWindowRect(win->hwnd, &maxRect);
+    GetWindowPlacement(win->hwnd, &wp);
+    const int maxW = maxRect.right - maxRect.left;
+    const int restoredW = wp.rcNormalPosition.right - wp.rcNormalPosition.left;
+    const double fx = maxW > 0 ? double(cur.x - maxRect.left) / maxW : 0.5;
+    ShowWindow(win->hwnd, SW_RESTORE);
+    win->maximized = false;
+    SetWindowPos(win->hwnd, nullptr, cur.x - static_cast<int>(restoredW * fx),
+                 maxRect.top, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    win = getWindow(window_id);  // re-validate: SW_RESTORE dispatched messages
+    if (!win || !win->hwnd) return;
+  }
+
+  RECT r;
+  if (!GetWindowRect(win->hwnd, &r)) return;
+  win->drag_anchor_cursor = cur;
+  win->drag_anchor_origin = { r.left, r.top };
+  win->drag_active = true;
+  SetCapture(win->hwnd);
 }
 
 // ---- views ------------------------------------------------------------

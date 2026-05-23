@@ -24,7 +24,7 @@
 using bunite_win::runOnUiThreadSync;
 using bunite_win::runOnCefUiThreadSync;
 
-static constexpr int32_t BUNITE_ABI_VERSION = 11;
+static constexpr int32_t BUNITE_ABI_VERSION = 12;
 
 namespace {
 
@@ -638,6 +638,19 @@ extern "C" BUNITE_EXPORT void bunite_window_set_frame(
       static_cast<int>(std::max(height, 100.0)),
       SWP_NOZORDER | SWP_NOACTIVATE
     );
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_window_begin_move_drag(uint32_t window_id) {
+  // CEF runs Bun on a separate thread, so WM_NCLBUTTONDOWN's modal move loop
+  // doesn't freeze JS — keep the OS-native drag (Win11 snap/aero-shake). Post
+  // to the HWND-owning Win32 UI thread (ReleaseCapture + the loop are
+  // thread-local there).
+  bunite_win::postUiTask([window_id]() {
+    auto* window = bunite_win::getWindowHostById(window_id);
+    if (!window || !window->hwnd) return;
+    ReleaseCapture();
+    SendMessageW(window->hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
   });
 }
 

@@ -70,6 +70,10 @@ BUNITE_EXPORT void bunite_window_set_frame(
 	double width,
 	double height
 );
+/** Start an OS-driven window move drag (frameless titlebar). Call from a
+ *  page mousedown; the OS handles tracking through mouse-up. No-op if the
+ *  window is unknown. */
+BUNITE_EXPORT void bunite_window_begin_move_drag(uint32_t window_id);
 
 BUNITE_EXPORT bool bunite_view_create(
 	uint32_t view_id,

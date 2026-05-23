@@ -111,6 +111,24 @@ static LRESULT CALLBACK buniteWindowProc(HWND hwnd, UINT message, WPARAM w_param
     case WM_ERASEBKGND:
       return 1;
 
+    case WM_GETMINMAXINFO:
+      // Frameless (WS_POPUP) maximize clamps to the monitor work area (else
+      // covers the taskbar).
+      if (window && (window->title_bar_style == L"hidden" || window->title_bar_style == L"hiddenInset")) {
+        HMONITOR mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi{ sizeof(mi) };
+        if (GetMonitorInfoW(mon, &mi)) {
+          auto* mmi = reinterpret_cast<MINMAXINFO*>(l_param);
+          mmi->ptMaxPosition.x = mi.rcWork.left - mi.rcMonitor.left;
+          mmi->ptMaxPosition.y = mi.rcWork.top - mi.rcMonitor.top;
+          mmi->ptMaxSize.x = mi.rcWork.right - mi.rcWork.left;
+          mmi->ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top;
+          mmi->ptMaxTrackSize = mmi->ptMaxSize;
+          return 0;
+        }
+      }
+      break;
+
     case WM_SIZE:
       if (window) {
         syncWindowFrame(window);

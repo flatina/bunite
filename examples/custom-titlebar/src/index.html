@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Custom Titlebar</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; font-family: system-ui, sans-serif; }
+    body { display: flex; flex-direction: column; background: #0f172a; color: #e2e8f0; }
+
+    /* The titlebar: whole bar is draggable; interactive bits opt out. */
+    .titlebar {
+      height: 40px; flex: 0 0 40px; display: flex; align-items: center;
+      background: #1e293b; border-bottom: 1px solid #334155; user-select: none;
+    }
+    .titlebar.blurred { background: #172033; color: #64748b; }
+    .title { padding: 0 14px; font-size: 13px; font-weight: 600; }
+    .spacer { flex: 1; }
+
+    .controls { display: flex; height: 100%; }
+    .controls button {
+      width: 46px; height: 100%; border: none; background: transparent;
+      color: inherit; font-size: 15px; cursor: pointer; line-height: 1;
+    }
+    .controls button:hover { background: #334155; }
+    .controls button.close:hover { background: #dc2626; color: #fff; }
+
+    main { flex: 1; padding: 20px; overflow: auto; }
+    code { background: #1e293b; padding: 2px 6px; border-radius: 4px; }
+    #state { margin-top: 12px; color: #94a3b8; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="titlebar" id="titlebar" data-bunite-drag-region data-doubleclick="maximize">
+    <span class="title">⬡ Custom Titlebar</span>
+    <span class="spacer"></span>
+    <div class="controls" data-bunite-no-drag>
+      <button id="min" title="Minimize">&#x2013;</button>
+      <button id="max" title="Maximize">&#x25a1;</button>
+      <button class="close" id="close" title="Close">&#x2715;</button>
+    </div>
+  </div>
+
+  <main>
+    <h2>Frameless window with an HTML titlebar</h2>
+    <p>Drag the bar to move (double-click to maximize). Buttons use
+      <code>runtime.window().current()</code>. The bar reflects window state via
+      <code>stateWatch</code>.</p>
+    <div id="state">state: …</div>
+  </main>
+
+  <script type="module">
+    const runtime = await window.host.runtime();
+    const win = await (await runtime.window()).current();
+
+    document.getElementById("min").onclick = () => win.minimize();
+    document.getElementById("max").onclick = () => win.toggleMaximize();
+    document.getElementById("close").onclick = () => win.close();
+
+    const bar = document.getElementById("titlebar");
+    const maxBtn = document.getElementById("max");
+    const stateEl = document.getElementById("state");
+
+    (async () => {
+      for await (const s of win.stateWatch()) {
+        maxBtn.innerHTML = s.maximized ? "&#x2750;" : "&#x25a1;";  // restore vs maximize glyph
+        bar.classList.toggle("blurred", !s.focused);
+        stateEl.textContent = `state: maximized=${s.maximized} minimized=${s.minimized} focused=${s.focused}`;
+      }
+    })();
+  </script>
+</body>
+</html>

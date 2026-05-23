@@ -264,12 +264,102 @@ static void layoutViewsForWindow(WindowHost* w) {
   for (ViewHost* v : w->views) applyViewLayout(v);
 }
 
+// Set drag_active=false before ReleaseCapture so the WM_CAPTURECHANGED it
+// posts is a no-op (re-entrancy guard).
+static void endMoveDrag(WindowHost* w, HWND hwnd) {
+  w->drag_active = false;
+  if (GetCapture() == hwnd) ReleaseCapture();
+}
+
 LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
+    case WM_NCCALCSIZE: {
+      // Frameless windows keep WS_THICKFRAME (Win11 snap + native resize), so
+      // DefWindowProc reserves a sizing frame on every edge. The HTML titlebar
+      // fills the client rect, leaving the DWM frame exposed as thin bands.
+      if (wp != TRUE) break;
+      WindowHost* w = findWindowByHwnd(hwnd);
+      if (!w || (w->title_bar_style != L"hidden" && w->title_bar_style != L"hiddenInset"))
+        break;
+      auto* p = reinterpret_cast<NCCALCSIZE_PARAMS*>(lp);
+      // Maximized: the window rect is clamped to the work area (WM_GETMINMAXINFO),
+      // so there is no off-screen frame — reclaim every edge to fill it with no
+      // frame slivers. Restored: reclaim only the top edge so the titlebar reaches
+      // y=0 (kills the top light band); keep L/R/B borders grabbable for native
+      // resize. The top is the HTML titlebar (move region), not a resize edge.
+      if (IsZoomed(hwnd)) return 0;
+      LONG top = p->rgrc[0].top;
+      LRESULT r = DefWindowProcW(hwnd, msg, wp, lp);
+      p->rgrc[0].top = top;
+      return r;
+    }
+    case WM_MOUSEMOVE: {
+      WindowHost* w = findWindowByHwnd(hwnd);
+      if (!w || !w->drag_active) break;
+      if (!(wp & MK_LBUTTON)) { endMoveDrag(w, hwnd); return 0; }
+      POINT cur;
+      if (GetCursorPos(&cur)) {
+        SetWindowPos(hwnd, nullptr,
+                     w->drag_anchor_origin.x + (cur.x - w->drag_anchor_cursor.x),
+                     w->drag_anchor_origin.y + (cur.y - w->drag_anchor_cursor.y),
+                     0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+      }
+      return 0;  // don't deref w past SetWindowPos (may re-enter windowProc)
+    }
+    case WM_LBUTTONUP: {
+      WindowHost* w = findWindowByHwnd(hwnd);
+      if (w && w->drag_active) { endMoveDrag(w, hwnd); return 0; }
+      break;
+    }
+    case WM_CAPTURECHANGED:
+    case WM_CANCELMODE: {
+      WindowHost* w = findWindowByHwnd(hwnd);
+      if (w && w->drag_active) endMoveDrag(w, hwnd);
+      break;
+    }
     case WM_SIZE: {
       WindowHost* w = findWindowByHwnd(hwnd);
-      if (w) layoutViewsForWindow(w);
+      if (!w) break;
+      layoutViewsForWindow(w);
+      RECT r{};
+      GetWindowRect(hwnd, &r);
+      std::string payload = "{\"x\":" + std::to_string(r.left) + ",\"y\":" + std::to_string(r.top) +
+        ",\"width\":" + std::to_string(r.right - r.left) + ",\"height\":" + std::to_string(r.bottom - r.top) +
+        ",\"maximized\":" + (wp == SIZE_MAXIMIZED ? "true" : "false") +
+        ",\"minimized\":" + (wp == SIZE_MINIMIZED ? "true" : "false") + "}";
+      emitWindowEvent(w->id, "resize", payload);
       return 0;
+    }
+    case WM_MOVE: {
+      WindowHost* w = findWindowByHwnd(hwnd);
+      if (w) {
+        RECT r{};
+        GetWindowRect(hwnd, &r);
+        emitWindowEvent(w->id, "move",
+          "{\"x\":" + std::to_string(r.left) + ",\"y\":" + std::to_string(r.top) +
+          ",\"maximized\":" + (IsZoomed(hwnd) ? "true" : "false") +
+          ",\"minimized\":" + (IsIconic(hwnd) ? "true" : "false") + "}");
+      }
+      break;
+    }
+    case WM_GETMINMAXINFO: {
+      // Frameless (WS_POPUP) windows maximize over the taskbar unless clamped
+      // to the monitor work area.
+      WindowHost* w = findWindowByHwnd(hwnd);
+      if (w && (w->title_bar_style == L"hidden" || w->title_bar_style == L"hiddenInset")) {
+        HMONITOR mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi{ sizeof(mi) };
+        if (GetMonitorInfoW(mon, &mi)) {
+          auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
+          mmi->ptMaxPosition.x = mi.rcWork.left - mi.rcMonitor.left;
+          mmi->ptMaxPosition.y = mi.rcWork.top - mi.rcMonitor.top;
+          mmi->ptMaxSize.x = mi.rcWork.right - mi.rcWork.left;
+          mmi->ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top;
+          mmi->ptMaxTrackSize = mmi->ptMaxSize;
+          return 0;
+        }
+      }
+      break;
     }
     case WM_CLOSE: {
       WindowHost* w = findWindowByHwnd(hwnd);
@@ -281,19 +371,17 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       DestroyWindow(hwnd);
       return 0;
     }
-    case WM_SETFOCUS:
     case WM_ACTIVATE: {
       WindowHost* w = findWindowByHwnd(hwnd);
-      if (w) emitWindowEvent(w->id, "focus");
+      // Top-level activation drives focus (not WM_SETFOCUS, which can be child focus).
+      if (w) emitWindowEvent(w->id, LOWORD(wp) == WA_INACTIVE ? "blur" : "focus");
       break;
     }
-    case WM_KILLFOCUS: {
+    case WM_DESTROY: {
       WindowHost* w = findWindowByHwnd(hwnd);
-      if (w) emitWindowEvent(w->id, "blur");
-      break;
-    }
-    case WM_DESTROY:
+      if (w && w->drag_active) endMoveDrag(w, hwnd);
       return 0;
+    }
   }
   return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -513,6 +601,14 @@ bool createWindow(uint32_t window_id, double x, double y, double w, double h,
   {
     std::lock_guard<std::mutex> g(g_runtime.object_mutex);
     g_runtime.windows_by_id[window_id] = host;
+  }
+
+  // CreateWindowExW dispatched WM_NCCALCSIZE before the window was registered,
+  // so the frameless top-frame reclaim (windowProc) couldn't run yet. Force a
+  // frame recalc now that findWindowByHwnd can resolve it.
+  if (host->title_bar_style == L"hidden" || host->title_bar_style == L"hiddenInset") {
+    SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
+                 SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
   }
 
   if (maximized) ShowWindow(hwnd, SW_MAXIMIZE);
@@ -946,6 +1042,9 @@ static void attachControllerCallbacks(ViewHost* view) {
       &tok);
 
   // Disable default WV2 dialog UI so ScriptDialogOpening drives all dialogs.
+  // NB: NonClientRegionSupport (app-region:drag) is intentionally NOT enabled —
+  // its native window-move runs a modal loop on the shared Bun/UI thread and
+  // freezes JS for the whole drag (spike-confirmed). WV2 drag stays capture-based.
   ComPtr<ICoreWebView2Settings> settings;
   if (SUCCEEDED(view->webview->get_Settings(&settings)) && settings) {
     settings->put_AreDefaultScriptDialogsEnabled(FALSE);

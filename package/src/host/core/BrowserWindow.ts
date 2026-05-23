@@ -22,6 +22,7 @@ export type WindowOptionsType = {
   preload: string | null;
   appresRoot: string | null;
   preloadOrigins?: string[];
+  label?: string;
   /** Setup callback fired when the window's renderer connection attaches. */
   serve?: (conn: Connection) => void;
   titleBarStyle: "hidden" | "hiddenInset" | "default";
@@ -63,6 +64,7 @@ export class BrowserWindow {
   id = getNextWindowId();
   private nativeAttached = false;
   title: string;
+  label = "";
   frame: WindowOptionsType["frame"];
   url: string | null;
   html: string | null;
@@ -77,6 +79,9 @@ export class BrowserWindow {
   webviewId: number;
   private closed = false;
   private restoreMaximizedAfterMinimize = false;
+  private _focused = false;
+  private readonly handleNativeFocus = () => { lastFocusedWindowId = this.id; this._focused = true; };
+  private readonly handleNativeBlur = () => { this._focused = false; };
   private readonly handleNativeMove = (event: unknown) => {
     const data = (event as {
       data?: { x?: number; y?: number; maximized?: boolean; minimized?: boolean };
@@ -122,6 +127,8 @@ export class BrowserWindow {
     }
     BrowserView.getById(this.webviewId)?.detachFromNative();
     delete BrowserWindowMap[this.id];
+    buniteEventEmitter.off(`focus-${this.id}`, this.handleNativeFocus);
+    buniteEventEmitter.off(`blur-${this.id}`, this.handleNativeBlur);
     buniteEventEmitter.off(`move-${this.id}`, this.handleNativeMove);
     buniteEventEmitter.off(`resize-${this.id}`, this.handleNativeResize);
     buniteEventEmitter.off(`close-${this.id}`, this.handleNativeClose);
@@ -132,6 +139,7 @@ export class BrowserWindow {
     ensureNativeRuntime();
 
     this.title = options.title ?? defaultOptions.title;
+    this.label = options.label ?? "";
     this.frame = { ...defaultOptions.frame, ...options.frame };
     this.html = options.html ?? defaultOptions.html;
     this.preload = options.preload ?? defaultOptions.preload;
@@ -160,6 +168,15 @@ export class BrowserWindow {
     this.navigationRules = options.navigationRules ?? defaultOptions.navigationRules;
     this.sandbox = options.sandbox ?? defaultOptions.sandbox;
 
+    // Register before native create — create shows the window and the initial
+    // WM_ACTIVATE fires synchronously, so listeners must be in place first.
+    BrowserWindowMap[this.id] = this;
+    buniteEventEmitter.on(`focus-${this.id}`, this.handleNativeFocus);
+    buniteEventEmitter.on(`blur-${this.id}`, this.handleNativeBlur);
+    buniteEventEmitter.on(`move-${this.id}`, this.handleNativeMove);
+    buniteEventEmitter.on(`resize-${this.id}`, this.handleNativeResize);
+    buniteEventEmitter.on(`close-${this.id}`, this.handleNativeClose);
+
     const native = getNativeLibrary();
     this.nativeAttached =
       native?.symbols.bunite_window_create(
@@ -181,12 +198,6 @@ export class BrowserWindow {
         `window will be unusable. Check native log (BUNITE_LOG_LEVEL=info).`
       );
     }
-
-    BrowserWindowMap[this.id] = this;
-    buniteEventEmitter.on(`focus-${this.id}`, () => { lastFocusedWindowId = this.id; });
-    buniteEventEmitter.on(`move-${this.id}`, this.handleNativeMove);
-    buniteEventEmitter.on(`resize-${this.id}`, this.handleNativeResize);
-    buniteEventEmitter.on(`close-${this.id}`, this.handleNativeClose);
 
     const webview = new BrowserView({
       url: this.url,
@@ -223,6 +234,15 @@ export class BrowserWindow {
     return Object.values(BrowserWindowMap);
   }
 
+  /** The window owning a given view id — its main webview, or a surface view
+   *  whose `windowId` points back to the window. */
+  static getByWebviewId(viewId: number) {
+    const direct = Object.values(BrowserWindowMap).find((w) => w.webviewId === viewId);
+    if (direct) return direct;
+    const view = BrowserView.getById(viewId) as { windowId?: number } | undefined;
+    return view?.windowId != null ? BrowserWindowMap[view.windowId] : undefined;
+  }
+
   get webview(): BrowserView | undefined {
     return BrowserView.getById(this.webviewId) as BrowserView | undefined;
   }
@@ -232,6 +252,11 @@ export class BrowserWindow {
     if (this.nativeAttached) {
       getNativeLibrary()?.symbols.bunite_window_show(this.id);
     }
+  }
+
+  /** Best-effort — no native focus FFI yet; show() brings the window up. */
+  focus() {
+    this.show();
   }
 
   close() {
@@ -258,6 +283,8 @@ export class BrowserWindow {
       this.nativeAttached = false;
     }
     delete BrowserWindowMap[this.id];
+    buniteEventEmitter.off(`focus-${this.id}`, this.handleNativeFocus);
+    buniteEventEmitter.off(`blur-${this.id}`, this.handleNativeBlur);
     buniteEventEmitter.off(`move-${this.id}`, this.handleNativeMove);
     buniteEventEmitter.off(`resize-${this.id}`, this.handleNativeResize);
     buniteEventEmitter.off(`close-${this.id}`, this.handleNativeClose);
@@ -356,6 +383,18 @@ export class BrowserWindow {
     return minimized;
   }
 
+  isFocused() {
+    return this._focused;
+  }
+
+  toggleMaximize() {
+    if (this.isMaximized()) this.unmaximize(); else this.maximize();
+  }
+
+  getState() {
+    return { maximized: this.isMaximized(), minimized: this.isMinimized(), focused: this._focused };
+  }
+
   setTitle(title: string) {
     this.title = title;
     if (this.nativeAttached) {
@@ -372,6 +411,13 @@ export class BrowserWindow {
 
   getFrame() {
     return this.frame;
+  }
+
+  /** Start an OS-driven window move drag. Call from a renderer mousedown on a
+   *  custom titlebar region; the OS tracks the drag through mouse-up. */
+  beginMoveDrag() {
+    if (!this.nativeAttached) return;
+    getNativeLibrary()?.symbols.bunite_window_begin_move_drag(this.id);
   }
 
   on(name: "close-requested" | "close" | "focus" | "blur" | "move" | "resize", handler: (event: unknown) => void) {

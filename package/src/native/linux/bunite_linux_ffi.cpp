@@ -113,6 +113,26 @@ extern "C" BUNITE_EXPORT void bunite_window_set_frame(
   });
 }
 
+extern "C" BUNITE_EXPORT void bunite_window_begin_move_drag(uint32_t window_id) {
+  // GTK4 begin_move via default seat pointer (no-arg API → best-effort).
+  // GDK_CURRENT_TIME may be rejected by Wayland (validates the event serial).
+  runOnUiThreadSync([=]() {
+    auto* s = bunite_linux::findWindow(window_id);
+    if (!s) return;
+    GdkSurface* surface = gtk_native_get_surface(GTK_NATIVE(s->window));
+    if (!surface || !GDK_IS_TOPLEVEL(surface)) return;
+    GdkDisplay* display = gtk_widget_get_display(GTK_WIDGET(s->window));
+    GdkSeat* seat = gdk_display_get_default_seat(display);
+    GdkDevice* pointer = seat ? gdk_seat_get_pointer(seat) : nullptr;
+    if (!pointer) return;
+    double px = 0, py = 0;
+    GdkModifierType mask;
+    if (!gdk_surface_get_device_position(surface, pointer, &px, &py, &mask)) return;
+    gdk_toplevel_begin_move(GDK_TOPLEVEL(surface), pointer, /*button=*/1,
+                            px, py, GDK_CURRENT_TIME);
+  });
+}
+
 extern "C" BUNITE_EXPORT bool bunite_view_create(
   uint32_t view_id, uint32_t window_id,
   const char* url, const char* html, const char* preload,

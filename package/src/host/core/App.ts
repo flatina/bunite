@@ -16,9 +16,10 @@ import {
 import { ensureRpcServer } from "./Socket";
 import { BrowserWindow } from "./BrowserWindow";
 import { createSurfaceCapImpl, getPopupMetricsSnapshot } from "./SurfaceManager";
+import { createWindowCapImpl } from "./windowCap";
 import "./SurfaceBrowserIPC";
 import { log, logLevelToInt } from "../log";
-import { RuntimeCap, SurfaceCap, PageReportingCap, IpcError, type ImplOf } from "../../rpc/index";
+import { RuntimeCap, WindowCap, SurfaceCap, PageReportingCap, IpcError, type ImplOf } from "../../rpc/index";
 
 import type { LogLevel } from "../log";
 
@@ -179,7 +180,8 @@ export class AppRuntime {
       throw new IpcError({ code: "not_found", message: `Runtime.${name}` });
     };
     const impl = {
-      window: () => notImpl("window"),
+      window: (_: void, ctx: Parameters<ImplOf<typeof RuntimeCap>["window"]>[1]) =>
+        ctx.exportCap(WindowCap, createWindowCapImpl(viewId)),
       dialogs: () => notImpl("dialogs"),
       clipboard: () => notImpl("clipboard"),
       shell: () => notImpl("shell"),

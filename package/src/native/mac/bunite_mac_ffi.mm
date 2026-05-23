@@ -20,7 +20,7 @@ using bunite_mac::runOnUiThreadSync;
 
 namespace {
 
-constexpr int32_t kBuniteAbiVersion = 11;
+constexpr int32_t kBuniteAbiVersion = 12;
 
 // warn-once — avoid log spam from tight JS call loops.
 #define BUNITE_MAC_TODO(name)                                       \
@@ -240,6 +240,21 @@ extern "C" BUNITE_EXPORT void bunite_window_set_frame(
   runOnUiThreadSync([=]() {
     auto* s = bunite_mac::findWindow(window_id);
     if (s) [s->window setFrame:bunite_mac::topLeftToBottomLeft(x, y, width, height) display:YES];
+  });
+}
+
+extern "C" BUNITE_EXPORT void bunite_window_begin_move_drag(uint32_t window_id) {
+  // Best-effort: the mousedown arrives via RPC, so NSApp.currentEvent is usually
+  // nil/stale here. Gate on a mouse-down event — performWindowDragWithEvent:
+  // throws on a non-mouse event. A robust path needs the event reconstructed
+  // from the RPC; deferred until mac is actively exercised.
+  runOnUiThreadSync([=]() {
+    auto* s = bunite_mac::findWindow(window_id);
+    NSEvent* ev = NSApp.currentEvent;
+    if (s && ev &&
+        (ev.type == NSEventTypeLeftMouseDown || ev.type == NSEventTypeLeftMouseDragged)) {
+      [s->window performWindowDragWithEvent:ev];
+    }
   });
 }
 

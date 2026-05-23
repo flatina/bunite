@@ -163,4 +163,43 @@ function installConsoleProxy() {
 
 installConsoleProxy();
 
+// --- custom titlebar drag region (Tauri-style data attribute) -----------
+// `data-bunite-drag-region` → window move on left mousedown; a nearer
+// `data-bunite-no-drag` ancestor opts out. dblclick → toggle maximize.
+// Data attribute (not `-webkit-app-region` CSS) because that CSS property is
+// not exposed to JS via getComputedStyle.
+let _windowCap: Promise<{ beginMoveDrag(): unknown; toggleMaximize(): unknown }> | null = null;
+function windowCap() {
+  if (!_windowCap) {
+    _windowCap = (async () => {
+      const rt = await (w.host as { runtime(): Promise<any> }).runtime();
+      const wc = await rt.window();
+      return await wc.current();
+    })();
+    _windowCap.catch(() => { _windowCap = null; });
+  }
+  return _windowCap;
+}
+function isDragHit(target: EventTarget | null): boolean {
+  let el = target instanceof Element ? target : null;
+  while (el) {
+    if (el.hasAttribute("data-bunite-no-drag")) return false;
+    if (el.hasAttribute("data-bunite-drag-region")) return true;
+    el = el.parentElement;
+  }
+  return false;
+}
+// Pre-warm the window cap so the first drag's beginMoveDrag is a single cached
+// call — lazy resolution (bootstrap + window + current) would otherwise miss
+// the drag's first frames while the cursor has already moved.
+void windowCap();
+document.addEventListener("mousedown", (e) => {
+  if (e.button !== 0 || window.self !== window.top || !isDragHit(e.target)) return;
+  windowCap().then((c) => c.beginMoveDrag()).catch(() => {});
+}, true);
+document.addEventListener("dblclick", (e) => {
+  if (e.button !== 0 || window.self !== window.top || !isDragHit(e.target)) return;
+  windowCap().then((c) => c.toggleMaximize()).catch(() => {});
+}, true);
+
 import "../webview/native";

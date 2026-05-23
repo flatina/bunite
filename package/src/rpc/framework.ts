@@ -1,18 +1,37 @@
 import { call, defineCap, stream, cap } from "./schema";
 import type { CapDef } from "./schema";
 
+/** Window state for custom-titlebar rendering (max/restore glyph + focus ring). */
+export interface WindowState {
+  maximized: boolean;
+  minimized: boolean;
+  focused: boolean;
+}
+
 export const BrowserWindowCap = defineCap("bunite.BrowserWindow", {
   focus: call<void, void>(),
-  close: call<void, void>(),
+  close: call<void, void>(),  // vetoable — routes through close-requested
   setBounds: call<{ x: number; y: number; w: number; h: number }, void>(),
   setTitle: call<{ title: string }, void>(),
   id: call<void, number>({ idempotent: true }),
   label: call<void, string>({ idempotent: true }),
+  minimize: call<void, void>(),
+  unminimize: call<void, void>(),
+  maximize: call<void, void>(),
+  unmaximize: call<void, void>(),
+  toggleMaximize: call<void, void>(),
+  getState: call<void, WindowState>({ idempotent: true }),
+  stateWatch: stream<void, WindowState>(),  // emits current state on subscribe, then on change
+  // Start an OS window move (Tauri startDragging equiv) — call from a custom
+  // titlebar mousedown. Preload auto-calls this for `app-region: drag`; manual
+  // callers use it for custom hit-testing. Start-only; native follows the cursor.
+  beginMoveDrag: call<void, void>(),
 });
 
 export const WindowCap = defineCap("bunite.Window", {
   create: call<WindowCreateOpts, typeof BrowserWindowCap>({ returns: cap(BrowserWindowCap) }),
   list: call<void, typeof BrowserWindowCap>({ returns: cap.array(BrowserWindowCap), idempotent: true }),
+  current: call<void, typeof BrowserWindowCap>({ returns: cap(BrowserWindowCap), idempotent: true }),
   focus: call<{ id?: number; label?: string }, void>(),
   close: call<{ id?: number; label?: string }, void>(),
 });

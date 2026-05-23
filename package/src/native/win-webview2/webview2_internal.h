@@ -123,6 +123,11 @@ struct WindowHost {
   std::atomic<bool> close_pending{false};
   std::atomic<bool> closing{false};
   std::vector<ViewHost*> views;
+  // Capture-based move-drag (no WM_NCLBUTTONDOWN modal loop — see
+  // bunite_window_begin_move_drag + windowProc).
+  bool drag_active = false;
+  POINT drag_anchor_cursor{};   // screen cursor at drag start
+  POINT drag_anchor_origin{};   // window top-left at drag start
 };
 
 struct RuntimeState {

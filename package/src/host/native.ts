@@ -73,6 +73,7 @@ type NativeSymbols = {
     width: number,
     height: number
   ) => void;
+  bunite_window_begin_move_drag: (windowId: number) => void;
   bunite_view_create: (
     viewId: number,
     windowId: number,
@@ -261,6 +262,10 @@ const nativeSymbolDefinitions = {
   },
   bunite_window_set_frame: {
     args: [FFIType.u32, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64],
+    returns: FFIType.void
+  },
+  bunite_window_begin_move_drag: {
+    args: [FFIType.u32],
     returns: FFIType.void
   },
   bunite_view_create: {
@@ -918,7 +923,7 @@ export async function initNativeRuntime(
     throw new Error(`bunite: failed to load native library at ${artifacts.nativeLibPath}.`);
   }
 
-  const EXPECTED_ABI = 11;
+  const EXPECTED_ABI = 12;
   const nativeAbi = nativeLibrary.symbols.bunite_abi_version();
   if (nativeAbi !== EXPECTED_ABI) {
     throw new Error(

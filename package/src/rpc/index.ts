@@ -107,6 +107,7 @@ export {
 
 export type {
   WindowCreateOpts,
+  WindowState,
   DialogOpenFileOpts,
   DialogSaveFileOpts,
   DialogMessageOpts,

@@ -40,6 +40,16 @@
         "bunite-dev": "workspace:*",
       },
     },
+    "examples/custom-titlebar": {
+      "name": "custom-titlebar",
+      "dependencies": {
+        "bunite-core": "workspace:*",
+        "bunite-native-win-x64": "workspace:*",
+      },
+      "devDependencies": {
+        "bunite-dev": "workspace:*",
+      },
+    },
     "examples/dnd-test": {
       "name": "bunite-dnd-test",
       "dependencies": {
@@ -111,14 +121,14 @@
     },
     "package": {
       "name": "bunite-core",
-      "version": "0.12.1",
+      "version": "0.16.0",
       "dependencies": {
         "msgpackr": "^1.11.9",
       },
       "optionalDependencies": {
-        "bunite-native-linux-x64": "0.0.1",
-        "bunite-native-mac-arm64": "0.0.1",
-        "bunite-native-win-x64": "0.0.10",
+        "bunite-native-linux-x64": "0.0.4",
+        "bunite-native-mac-arm64": "0.0.4",
+        "bunite-native-win-x64": "0.0.14",
       },
     },
     "tests/smoke": {
@@ -141,15 +151,15 @@
     },
     "tools/bunite-native-linux-x64": {
       "name": "bunite-native-linux-x64",
-      "version": "0.0.1",
+      "version": "0.0.4",
     },
     "tools/bunite-native-mac-arm64": {
       "name": "bunite-native-mac-arm64",
-      "version": "0.0.1",
+      "version": "0.0.4",
     },
     "tools/bunite-native-win-x64": {
       "name": "bunite-native-win-x64",
-      "version": "0.0.10",
+      "version": "0.0.14",
     },
   },
   "packages": {
@@ -302,6 +312,8 @@
     "bunite-smoke-test": ["bunite-smoke-test@workspace:tests/smoke"],
 
     "code-block-writer": ["code-block-writer@13.0.3", "", {}, "sha512-Oofo0pq3IKnsFtuHqSF7TqBfr71aeyZDVJ0HpmqB7FBM2qEigL0iPONSCZSO9pE9dZTAxANe5XHG9Uy0YMv8cg=="],
+
+    "custom-titlebar": ["custom-titlebar@workspace:examples/custom-titlebar"],
 
     "detect-libc": ["detect-libc@2.1.2", "", {}, "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="],
 
