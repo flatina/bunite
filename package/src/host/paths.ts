@@ -105,10 +105,14 @@ function resolveCefDir(searchDirs: string[]): string | null {
   return null;
 }
 
-/** Entry script dir (dev) or exe dir (compiled binary). */
+/** Entry-script dir (dev) or real exe dir (compiled binary). */
 export function getBaseDir(): string {
   const main = Bun.main;
-  if (main && existsSync(main)) return dirname(main);
+  // Compiled standalone: Bun.main is a virtual embedded-fs path (win `B:/~BUN/…`,
+  // posix `/$bunfs/…`) for which existsSync() returns true — so it can't gate the
+  // dev branch. Detect the virtual root and use the real executable dir instead.
+  const compiled = main.includes("~BUN") || main.includes("$bunfs");
+  if (!compiled && main && existsSync(main)) return dirname(main);
   return dirname(process.execPath);
 }
 
