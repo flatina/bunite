@@ -730,11 +730,13 @@ ViewHost* getViewHostById(uint32_t view_id) {
 }
 
 DWORD makeWindowStyle(const std::wstring& title_bar_style) {
-  DWORD style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
   if (title_bar_style == L"hidden" || title_bar_style == L"hiddenInset") {
-    style &= ~WS_CAPTION;
+    // WS_POPUP, not `WS_OVERLAPPEDWINDOW & ~WS_CAPTION`: the latter keeps
+    // WS_SYSMENU, so Windows re-adds WS_CAPTION at create. WS_THICKFRAME keeps
+    // snap + resize; the frame edge is reclaimed in WM_NCCALCSIZE.
+    return WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CLIPCHILDREN;
   }
-  return style;
+  return WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
 }
 
 // ---------------------------------------------------------------------------

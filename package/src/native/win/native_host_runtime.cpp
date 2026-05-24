@@ -81,7 +81,23 @@ static LRESULT CALLBACK buniteWindowProc(HWND hwnd, UINT message, WPARAM w_param
     return DefWindowProcW(hwnd, message, w_param, l_param);
   }
 
+  const bool frameless = window &&
+    (window->title_bar_style == L"hidden" || window->title_bar_style == L"hiddenInset");
+
   switch (message) {
+    case WM_NCCALCSIZE: {
+      // Reclaim the WS_THICKFRAME edge so the frameless webview fills the window
+      // (else a DWM frame band shows). Maximized (work-area clamped) reclaims all
+      // edges; restored reclaims only the top, keeping L/R/B resize borders.
+      if (w_param != TRUE || !frameless) break;
+      auto* p = reinterpret_cast<NCCALCSIZE_PARAMS*>(l_param);
+      if (IsZoomed(hwnd)) return 0;
+      LONG top = p->rgrc[0].top;
+      LRESULT r = DefWindowProcW(hwnd, message, w_param, l_param);
+      p->rgrc[0].top = top;
+      return r;
+    }
+
     case WM_SETFOCUS:
       if (window) {
         emitWindowEvent(window->id, "focus");
