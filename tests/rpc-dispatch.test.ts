@@ -374,8 +374,8 @@ describe("end-to-end dispatch", () => {
   });
 
   test("bidirectional — both peers serve and bootstrap (renderer-as-server)", async () => {
-    // Mimics downstream pattern: host serves a coordinator cap,
-    // renderer serves a panel cap, both bootstrap each other.
+    // Bidirectional: host serves a coordinator cap, renderer serves a panel
+    // cap, both bootstrap each other.
     const hostCoordCap = defineCap("test.host.coord", {
       requestPanel: call<{ panelId: string }, { ok: true }>(),
     });

@@ -56,7 +56,7 @@ export const FIRST_USER_TYPE_ID = 128;
 
 export const MAX_CAPS_PER_CONNECTION = 1024;
 export const MAX_IN_FLIGHT_CALLS_PER_CONNECTION = 1024;
-/** Client-side LRU cap for revoked cap-ids — prevents unbounded growth on long-lived connections with frequent plugin churn (e.g. downstream). */
+/** Client-side LRU cap for revoked cap-ids — prevents unbounded growth on long-lived connections with frequent plugin churn. */
 const REVOKED_CACHE_SIZE = MAX_CAPS_PER_CONNECTION * 4;
 
 const DEFAULT_DEADLINE_GRACE_MS = 500;
