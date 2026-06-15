@@ -8,7 +8,7 @@ export const windowState = {
 };
 
 function wait(ms: number) {
-  return new Promise<void>(resolve => setTimeout(resolve, ms));
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
 async function waitFor(label: string, check: () => boolean, timeoutMs = 1500) {

@@ -1,8 +1,14 @@
-import {
-  onSurfaceInit, emitSurfaceEvent, emitConsole, emitDownload, emitPopupRequested,
-  registerDialogRequest, disposeSurfaceState, clearConsoleBuffer,
-} from "./SurfaceManager";
 import { log } from "../log";
+import {
+  clearConsoleBuffer,
+  disposeSurfaceState,
+  emitConsole,
+  emitDownload,
+  emitPopupRequested,
+  emitSurfaceEvent,
+  onSurfaceInit,
+  registerDialogRequest,
+} from "./SurfaceManager";
 
 onSurfaceInit((surfaceId, hostViewId, view) => {
   log.debug("surface/init surfaceId=" + surfaceId + " hostViewId=" + hostViewId);
@@ -24,7 +30,9 @@ onSurfaceInit((surfaceId, hostViewId, view) => {
   view.on("load-fail", (event: any) => {
     const d = event.data;
     emitSurfaceEvent(hostViewId, surfaceId, {
-      type: "load-fail", url: d.url ?? "", reason: d.reason,
+      type: "load-fail",
+      url: d.url ?? "",
+      reason: d.reason,
     });
   });
   view.on("dialog", (event: any) => {
@@ -34,7 +42,9 @@ onSurfaceInit((surfaceId, hostViewId, view) => {
       message: string;
       defaultPrompt?: string;
     };
-    log.debug("surface/dialog-ipc surfaceId=" + surfaceId + " hostViewId=" + hostViewId + " kind=" + d.kind);
+    log.debug(
+      "surface/dialog-ipc surfaceId=" + surfaceId + " hostViewId=" + hostViewId + " kind=" + d.kind,
+    );
     registerDialogRequest(hostViewId, surfaceId, d);
   });
   view.on("console-message", (event: any) => {

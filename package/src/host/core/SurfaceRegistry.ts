@@ -62,7 +62,7 @@ export function removeSurfacesForHostView(hostViewId: number) {
   for (const surfaceId of Array.from(ids)) {
     const record = surfaces.get(surfaceId);
     if (!record) continue;
-    untrackSurface(surfaceId);  // fires disposeHooks
+    untrackSurface(surfaceId); // fires disposeHooks
     record.view.remove();
   }
 }

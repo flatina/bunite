@@ -1,50 +1,50 @@
 import {
-  type CapDef,
-  type Schema,
-  type SchemaRoots,
-  type ClientOf,
-  type ImplOf,
-  type ImplsOf,
-  type CallCtx,
-  type Attestation,
-  type ExportedCap,
-  type MethodDef,
-  type AnyCapToken,
-  type Stream as StreamType,
-  type DisposalSpec,
-  isCallDef,
-  isStreamDef,
-  isCapRef,
-  isCapArray,
-  isCapRecord,
-  isCapDef,
-  isSchema,
-} from "./schema";
-import { RuntimeCap, frameworkTypeIdOf } from "./framework";
-import {
-  type Frame,
-  type CallFrame,
-  type ResultFrame,
-  type StreamFrame,
-  type CancelFrame,
-  type DropFrame,
-  type HelloFrame,
-  type CapRevokedFrame,
-  type CallMeta,
-  CapRef,
-  DEFAULT_MAX_BYTES,
-  PROTOCOL_VERSION,
-  FRAMEWORK_NAME_PREFIX,
-  BOOTSTRAP_METHOD,
-} from "./wire";
-import {
+  type AlreadyExistsReason,
+  type FailedPreconditionReason,
+  type IpcCode,
   IpcError,
   type IpcStatus,
-  type IpcCode,
-  type FailedPreconditionReason,
   type ResourceExhaustedReason,
-  type AlreadyExistsReason,
 } from "./error";
+import { frameworkTypeIdOf, RuntimeCap } from "./framework";
+import {
+  type AnyCapDef,
+  type AnyCapToken,
+  type Attestation,
+  type CallCtx,
+  type ClientOf,
+  type DisposalSpec,
+  type ExportedCap,
+  type ImplOf,
+  type ImplsOf,
+  isCallDef,
+  isCapArray,
+  isCapDef,
+  isCapRecord,
+  isCapRef,
+  isSchema,
+  isStreamDef,
+  type MethodDef,
+  type Schema,
+  type SchemaRoots,
+  type Stream as StreamType,
+} from "./schema";
+import {
+  BOOTSTRAP_METHOD,
+  type CallFrame,
+  type CallMeta,
+  type CancelFrame,
+  CapRef,
+  type CapRevokedFrame,
+  DEFAULT_MAX_BYTES,
+  type DropFrame,
+  FRAMEWORK_NAME_PREFIX,
+  type Frame,
+  type HelloFrame,
+  PROTOCOL_VERSION,
+  type ResultFrame,
+  type StreamFrame,
+} from "./wire";
 
 export const USER_ROOTS_CAP_ID = 0;
 export const RUNTIME_CAP_ID = 1;
@@ -90,7 +90,7 @@ export function _setCallContextStorage(als: CallContextStorage | null): void {
 export interface CapTableEntry {
   capId: number;
   typeId: number;
-  cap: CapDef<any, any> | null;
+  cap: AnyCapDef | null;
   impl: unknown;
   refCount: number;
 }
@@ -173,23 +173,57 @@ export interface ServeHandle extends Disposable {
 }
 
 export interface ConnectionEvents {
-  bootstrap: { name: string; version?: string; attestation: Attestation; result: "ok" | "denied" | "not_found" | "version_mismatch" | "invalid_argument" | "resource_exhausted" | "internal"; capId?: number };
-  call: { capId: number; capName?: string; method: string; callId: number; durationMs?: number; result: "ok" | "cancelled" | IpcCode };
-  stream: { capId: number; capName?: string; method: string; callId: number; event: "start" | "end" | "cancel" | "error"; count?: number };
+  bootstrap: {
+    name: string;
+    version?: string;
+    attestation: Attestation;
+    result:
+      | "ok"
+      | "denied"
+      | "not_found"
+      | "version_mismatch"
+      | "invalid_argument"
+      | "resource_exhausted"
+      | "internal";
+    capId?: number;
+  };
+  call: {
+    capId: number;
+    capName?: string;
+    method: string;
+    callId: number;
+    durationMs?: number;
+    result: "ok" | "cancelled" | IpcCode;
+  };
+  stream: {
+    capId: number;
+    capName?: string;
+    method: string;
+    callId: number;
+    event: "start" | "end" | "cancel" | "error";
+    count?: number;
+  };
   revoke: { capIds: number[]; reason: "unserve" | "replace" };
   error: { phase: string; error: Error };
 }
 
 export interface Connection {
-  bootstrap<C extends CapDef<any, any>>(cap: C): Promise<ClientOf<C>>;
+  bootstrap<C extends AnyCapDef>(cap: C): Promise<ClientOf<C>>;
   bootstrap<R extends SchemaRoots>(schema: Schema<R>): Promise<{ [K in keyof R]: ClientOf<R[K]> }>;
-  serve<C extends CapDef<any, any>>(cap: C, impl: ImplOf<C>, opts?: { ifExists?: IfExists }): ServeHandle;
-  serveAll<R extends SchemaRoots>(schema: Schema<R>, impls: ImplsOf<R>, opts?: { ifExists?: IfExists }): ServeHandle;
-  unserve(target: CapDef<any, any> | ServeHandle): void;
-  replace<C extends CapDef<any, any>>(cap: C, impl: ImplOf<C>): void;
+  serve<C extends AnyCapDef>(cap: C, impl: ImplOf<C>, opts?: { ifExists?: IfExists }): ServeHandle;
+  serveAll<R extends SchemaRoots>(
+    schema: Schema<R>,
+    impls: ImplsOf<R>,
+    opts?: { ifExists?: IfExists },
+  ): ServeHandle;
+  unserve(target: AnyCapDef | ServeHandle): void;
+  replace<C extends AnyCapDef>(cap: C, impl: ImplOf<C>): void;
   runtime(): ClientOf<typeof RuntimeCap>;
   releaseRef(proxy: unknown): void;
-  on<K extends keyof ConnectionEvents>(event: K, handler: (e: ConnectionEvents[K]) => void): () => void;
+  on<K extends keyof ConnectionEvents>(
+    event: K,
+    handler: (e: ConnectionEvents[K]) => void,
+  ): () => void;
   onClose(handler: () => void): () => void;
   /** Tear down the connection — rejects pending, fires onClose, closes transport. Reliable signal for application lifecycle. */
   shutdown(reason?: string): void;
@@ -244,14 +278,19 @@ function isExportedCap(v: unknown): v is ExportedCap<any> {
   return typeof v === "object" && v !== null && (v as any)[EXPORTED_CAP_BRAND] === true;
 }
 
-const proxyFinalizers = typeof FinalizationRegistry !== "undefined"
-  ? new FinalizationRegistry<{ connRef: WeakRef<ConnectionImpl>; capId: number; dropped: () => boolean }>((held) => {
-      if (held.dropped()) return;
-      const conn = held.connRef.deref();
-      if (!conn || conn.closed) return;
-      conn._dropFromFinalizer(held.capId);
-    })
-  : ({ register: () => {} } as { register: (target: object, held: unknown) => void });
+const proxyFinalizers =
+  typeof FinalizationRegistry !== "undefined"
+    ? new FinalizationRegistry<{
+        connRef: WeakRef<ConnectionImpl>;
+        capId: number;
+        dropped: () => boolean;
+      }>((held) => {
+        if (held.dropped()) return;
+        const conn = held.connRef.deref();
+        if (!conn || conn.closed) return;
+        conn._dropFromFinalizer(held.capId);
+      })
+    : ({ register: () => {} } as { register: (target: object, held: unknown) => void });
 
 interface ServerStreamCtx {
   iter: AsyncIterator<unknown> | null;
@@ -274,7 +313,7 @@ interface ClientStreamCtx {
 }
 
 interface RegistryEntry {
-  cap: CapDef<any, any>;
+  cap: AnyCapDef;
   impl: unknown;
   version?: string;
 }
@@ -286,7 +325,10 @@ class ConnectionImpl implements Connection {
   private readonly clientStreams = new Map<number, ClientStreamCtx>();
   private readonly serverStreams = new Map<number, ServerStreamCtx>();
   private readonly serverCallChildren = new Map<number, { parentId: number }>();
-  private readonly serverActiveCalls = new Map<number, { ctrl: AbortController; capId: number; capName: string; method: string; startedAt: number }>();
+  private readonly serverActiveCalls = new Map<
+    number,
+    { ctrl: AbortController; capId: number; capName: string; method: string; startedAt: number }
+  >();
   /** Server-side: name → registry entry. */
   private readonly registry = new Map<string, RegistryEntry>();
   /** Server-side: name → instance cap-id (cached bootstrap result). */
@@ -294,7 +336,9 @@ class ConnectionImpl implements Connection {
   /** Client-side: cap-ids that the server revoked via cap_revoked. */
   private readonly revokedCapIds = new Set<number>();
   private readonly closeHandlers = new Set<() => void>();
-  private readonly observers: { [K in keyof ConnectionEvents]?: Set<(e: ConnectionEvents[K]) => void> } = {};
+  private readonly observers: {
+    [K in keyof ConnectionEvents]?: Set<(e: ConnectionEvents[K]) => void>;
+  } = {};
   private nextCallId = 1;
   private remoteHello: HelloFrame | null = null;
   private readonly remoteReady: Promise<HelloFrame>;
@@ -363,21 +407,30 @@ class ConnectionImpl implements Connection {
     return () => this.closeHandlers.delete(handler);
   }
 
-  on<K extends keyof ConnectionEvents>(event: K, handler: (e: ConnectionEvents[K]) => void): () => void {
+  on<K extends keyof ConnectionEvents>(
+    event: K,
+    handler: (e: ConnectionEvents[K]) => void,
+  ): () => void {
     let set = this.observers[event] as Set<(e: ConnectionEvents[K]) => void> | undefined;
     if (!set) {
       set = new Set();
       (this.observers as Record<string, Set<unknown>>)[event] = set as unknown as Set<unknown>;
     }
     set.add(handler);
-    return () => { set!.delete(handler); };
+    return () => {
+      set!.delete(handler);
+    };
   }
 
   private emitObs<K extends keyof ConnectionEvents>(event: K, data: ConnectionEvents[K]): void {
     const set = this.observers[event] as Set<(e: ConnectionEvents[K]) => void> | undefined;
     if (!set || set.size === 0) return;
     for (const h of set) {
-      try { h(data); } catch { /* swallow */ }
+      try {
+        h(data);
+      } catch {
+        /* swallow */
+      }
     }
   }
 
@@ -393,7 +446,7 @@ class ConnectionImpl implements Connection {
 
   // ---- serve / unserve / replace ----
 
-  serve<C extends CapDef<any, any>>(cap: C, impl: ImplOf<C>, opts?: { ifExists?: IfExists }): ServeHandle {
+  serve<C extends AnyCapDef>(cap: C, impl: ImplOf<C>, opts?: { ifExists?: IfExists }): ServeHandle {
     this.assertNotFrameworkName(cap.name);
     const ifExists = opts?.ifExists ?? "throw";
     const existing = this.registry.get(cap.name);
@@ -425,7 +478,11 @@ class ConnectionImpl implements Connection {
     return handle;
   }
 
-  serveAll<R extends SchemaRoots>(schema: Schema<R>, impls: ImplsOf<R>, opts?: { ifExists?: IfExists }): ServeHandle {
+  serveAll<R extends SchemaRoots>(
+    schema: Schema<R>,
+    impls: ImplsOf<R>,
+    opts?: { ifExists?: IfExists },
+  ): ServeHandle {
     const ifExists = opts?.ifExists ?? "throw";
     // Pre-validate everything that can fail across all modes before mutating any state (atomicity).
     for (const k of Object.keys(schema.roots)) {
@@ -461,7 +518,7 @@ class ConnectionImpl implements Connection {
     return this.makeHandle(names);
   }
 
-  unserve(target: CapDef<any, any> | ServeHandle): void {
+  unserve(target: AnyCapDef | ServeHandle): void {
     const names = isCapDef(target) ? [target.name] : Array.from((target as ServeHandle).names);
     const revoked: number[] = [];
     for (const name of names) {
@@ -481,7 +538,7 @@ class ConnectionImpl implements Connection {
     }
   }
 
-  replace<C extends CapDef<any, any>>(cap: C, impl: ImplOf<C>): void {
+  replace<C extends AnyCapDef>(cap: C, impl: ImplOf<C>): void {
     const entry = this.registry.get(cap.name);
     if (!entry) throw new IpcError({ code: "not_found", message: `cap "${cap.name}" not served` });
     if (entry.version !== cap.version) {
@@ -496,7 +553,10 @@ class ConnectionImpl implements Connection {
     const instId = this.rootInstances.get(cap.name);
     if (instId !== undefined) {
       const e = this.capTable.get(instId);
-      if (e) { e.impl = impl; e.cap = cap; }
+      if (e) {
+        e.impl = impl;
+        e.cap = cap;
+      }
     }
     this.emitObs("revoke", { capIds: instId !== undefined ? [instId] : [], reason: "replace" });
   }
@@ -522,27 +582,33 @@ class ConnectionImpl implements Connection {
     return this.runtimeProxy;
   }
 
-  bootstrap<C extends CapDef<any, any>>(cap: C): Promise<ClientOf<C>>;
+  bootstrap<C extends AnyCapDef>(cap: C): Promise<ClientOf<C>>;
   bootstrap<R extends SchemaRoots>(schema: Schema<R>): Promise<{ [K in keyof R]: ClientOf<R[K]> }>;
-  async bootstrap(target: CapDef<any, any> | Schema<any>): Promise<unknown> {
+  async bootstrap(target: AnyCapDef | Schema<any>): Promise<unknown> {
     if (isCapDef(target)) return this._bootstrapCap(target);
     if (isSchema(target)) return this._bootstrapSchema(target);
-    throw new IpcError({ code: "invalid_argument", message: "bootstrap target must be CapDef or Schema" });
+    throw new IpcError({
+      code: "invalid_argument",
+      message: "bootstrap target must be CapDef or Schema",
+    });
   }
 
-  private async _bootstrapCap<C extends CapDef<any, any>>(cap: C): Promise<ClientOf<C>> {
+  private async _bootstrapCap<C extends AnyCapDef>(cap: C): Promise<ClientOf<C>> {
     await this.remoteReady;
     const args: { name: string; version?: string } = { name: cap.name };
     if (cap.version != null) args.version = cap.version;
     const raw = await this.sendCallTyped(USER_ROOTS_CAP_ID, BOOTSTRAP_METHOD, args, undefined);
     if (!(raw instanceof CapRef)) {
-      throw new IpcError({ code: "invalid_argument", message: "bootstrap did not return a CapRef" });
+      throw new IpcError({
+        code: "invalid_argument",
+        message: "bootstrap did not return a CapRef",
+      });
     }
     return this.makeCapProxy(cap, raw.capId) as ClientOf<C>;
   }
 
   private async _bootstrapSchema<R extends SchemaRoots>(
-    schema: Schema<R>
+    schema: Schema<R>,
   ): Promise<{ [K in keyof R]: ClientOf<R[K]> }> {
     const keys = Object.keys(schema.roots) as (keyof R & string)[];
     const settled = await Promise.allSettled(keys.map((k) => this._bootstrapCap(schema.roots[k])));
@@ -551,14 +617,20 @@ class ConnectionImpl implements Connection {
       // Release server refCount on the roots that succeeded — otherwise their cap-table entries linger until connection close.
       for (const r of settled) {
         if (r.status === "fulfilled") {
-          try { this.releaseRef(r.value); } catch { /* swallow */ }
+          try {
+            this.releaseRef(r.value);
+          } catch {
+            /* swallow */
+          }
         }
       }
       throw rejected.reason;
     }
     const out = {} as { [K in keyof R]: ClientOf<R[K]> };
     for (let i = 0; i < keys.length; i++) {
-      (out as Record<string, unknown>)[keys[i]] = (settled[i] as PromiseFulfilledResult<unknown>).value;
+      (out as Record<string, unknown>)[keys[i]] = (
+        settled[i] as PromiseFulfilledResult<unknown>
+      ).value;
     }
     return out;
   }
@@ -601,10 +673,19 @@ class ConnectionImpl implements Connection {
   private handleUnknownFrame(frame: unknown): void {
     const id = (frame as { id?: unknown })?.id;
     if (typeof id === "number") {
-      this.transport.send({ op: "result", id, ok: false, error: { code: "invalid_argument", message: "unknown opcode" } });
+      this.transport.send({
+        op: "result",
+        id,
+        ok: false,
+        error: { code: "invalid_argument", message: "unknown opcode" },
+      });
       return;
     }
-    this.transport.send({ op: "goaway", reason: "invalid_argument", error: { code: "invalid_argument", message: "unknown opcode" } });
+    this.transport.send({
+      op: "goaway",
+      reason: "invalid_argument",
+      error: { code: "invalid_argument", message: "unknown opcode" },
+    });
     this.shutdown("invalid_argument");
   }
 
@@ -615,7 +696,7 @@ class ConnectionImpl implements Connection {
 
   private handleGoaway(frame: Extract<Frame, { op: "goaway" }>): void {
     this.rejectRemoteReady(
-      new IpcError(frame.error ?? { code: "unavailable", message: frame.reason ?? "peer goaway" })
+      new IpcError(frame.error ?? { code: "unavailable", message: frame.reason ?? "peer goaway" }),
     );
     this.shutdown(frame.reason ?? "remote goaway");
   }
@@ -654,30 +735,58 @@ class ConnectionImpl implements Connection {
 
     const entry = this.capTable.get(frame.target.id);
     if (!entry) {
-      this.emitObs("call", { capId: frame.target.id, method: frame.method, callId: frame.id, result: "not_found" });
+      this.emitObs("call", {
+        capId: frame.target.id,
+        method: frame.method,
+        callId: frame.id,
+        result: "not_found",
+      });
       return this.sendError(frame.id, "not_found", `cap-id ${frame.target.id} not found`);
     }
 
     const cap = entry.cap;
     if (!cap || !entry.impl) {
-      this.emitObs("call", { capId: frame.target.id, method: frame.method, callId: frame.id, result: "not_found" });
+      this.emitObs("call", {
+        capId: frame.target.id,
+        method: frame.method,
+        callId: frame.id,
+        result: "not_found",
+      });
       return this.sendError(frame.id, "not_found", "cap has no impl");
     }
 
     const methodDef = cap.methods[frame.method] as MethodDef | undefined;
     if (!methodDef) {
-      this.emitObs("call", { capId: frame.target.id, capName: cap.name, method: frame.method, callId: frame.id, result: "not_found" });
+      this.emitObs("call", {
+        capId: frame.target.id,
+        capName: cap.name,
+        method: frame.method,
+        callId: frame.id,
+        result: "not_found",
+      });
       return this.sendError(frame.id, "not_found", `method "${frame.method}" on cap "${cap.name}"`);
     }
     const impl = (entry.impl as Record<string, unknown>)[frame.method];
     if (typeof impl !== "function") {
-      this.emitObs("call", { capId: frame.target.id, capName: cap.name, method: frame.method, callId: frame.id, result: "not_found" });
+      this.emitObs("call", {
+        capId: frame.target.id,
+        capName: cap.name,
+        method: frame.method,
+        callId: frame.id,
+        result: "not_found",
+      });
       return this.sendError(frame.id, "not_found", `method "${frame.method}" has no handler`);
     }
 
     // Bound inbound work — symmetric with sendCallTyped's outbound check.
     if (this.serverActiveCalls.size + this.serverStreams.size >= this.maxInFlightCalls) {
-      this.emitObs("call", { capId: frame.target.id, capName: cap.name, method: frame.method, callId: frame.id, result: "resource_exhausted" });
+      this.emitObs("call", {
+        capId: frame.target.id,
+        capName: cap.name,
+        method: frame.method,
+        callId: frame.id,
+        result: "resource_exhausted",
+      });
       return this.sendError(
         frame.id,
         "resource_exhausted",
@@ -686,14 +795,23 @@ class ConnectionImpl implements Connection {
       );
     }
 
-    await this.invokeServerMethod(frame, cap, methodDef, impl as (params: unknown, ctx: CallCtx) => unknown);
+    await this.invokeServerMethod(
+      frame,
+      cap,
+      methodDef,
+      impl as (params: unknown, ctx: CallCtx) => unknown,
+    );
   }
 
   private async handleBootstrap(frame: CallFrame): Promise<void> {
     const args = (frame.args ?? {}) as { name?: unknown; version?: unknown };
     const name = args.name;
     if (typeof name !== "string") {
-      this.emitObs("bootstrap", { name: String(name), attestation: this.attestation, result: "invalid_argument" });
+      this.emitObs("bootstrap", {
+        name: String(name),
+        attestation: this.attestation,
+        result: "invalid_argument",
+      });
       return this.sendError(frame.id, "invalid_argument", "bootstrap requires {name: string}");
     }
     const clientVersion = args.version != null ? String(args.version) : undefined;
@@ -702,18 +820,28 @@ class ConnectionImpl implements Connection {
     // not via bootstrap). For user-facing bootstrap, only the registry is consulted.
     const entry = this.registry.get(name);
     if (!entry) {
-      this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result: "not_found" });
+      this.emitObs("bootstrap", {
+        name,
+        version: clientVersion,
+        attestation: this.attestation,
+        result: "not_found",
+      });
       return this.sendError(frame.id, "not_found", `cap "${name}" not served`);
     }
 
     const serverVersion = entry.version;
     if (serverVersion != null && clientVersion != null && serverVersion !== clientVersion) {
-      this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result: "version_mismatch" });
+      this.emitObs("bootstrap", {
+        name,
+        version: clientVersion,
+        attestation: this.attestation,
+        result: "version_mismatch",
+      });
       return this.sendError(
         frame.id,
         "failed_precondition",
         `version mismatch (server "${serverVersion}", client "${clientVersion}")`,
-        { reason: "version_mismatch" as FailedPreconditionReason }
+        { reason: "version_mismatch" as FailedPreconditionReason },
       );
     }
 
@@ -722,24 +850,42 @@ class ConnectionImpl implements Connection {
       try {
         allowed = await this.policy(name, this.attestation);
       } catch (err) {
-        this.emitObs("error", { phase: "policy", error: err instanceof Error ? err : new Error(String(err)) });
-        this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result: "internal" });
+        this.emitObs("error", {
+          phase: "policy",
+          error: err instanceof Error ? err : new Error(String(err)),
+        });
+        this.emitObs("bootstrap", {
+          name,
+          version: clientVersion,
+          attestation: this.attestation,
+          result: "internal",
+        });
         return this.sendError(frame.id, "internal", "policy threw");
       }
       if (typeof allowed !== "boolean") {
         // Non-boolean return = programming bug; surface explicitly (not silent deny).
-        this.emitObs("error", { phase: "policy", error: new Error(`policy must return boolean (got ${typeof allowed})`) });
-        this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result: "internal" });
+        this.emitObs("error", {
+          phase: "policy",
+          error: new Error(`policy must return boolean (got ${typeof allowed})`),
+        });
+        this.emitObs("bootstrap", {
+          name,
+          version: clientVersion,
+          attestation: this.attestation,
+          result: "internal",
+        });
         return this.sendError(frame.id, "internal", "policy returned non-boolean");
       }
       if (!allowed) {
-        this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result: "denied" });
-        return this.sendError(
-          frame.id,
-          "failed_precondition",
-          "policy denied",
-          { reason: "unauthorized" as FailedPreconditionReason }
-        );
+        this.emitObs("bootstrap", {
+          name,
+          version: clientVersion,
+          attestation: this.attestation,
+          result: "denied",
+        });
+        return this.sendError(frame.id, "failed_precondition", "policy denied", {
+          reason: "unauthorized" as FailedPreconditionReason,
+        });
       }
     }
 
@@ -766,21 +912,37 @@ class ConnectionImpl implements Connection {
       } catch (err) {
         if (err instanceof IpcError) {
           const result = err.code === "resource_exhausted" ? "resource_exhausted" : "internal";
-          this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result });
-          return this.sendError(frame.id, err.code, err.message, err.details as Record<string, unknown> | undefined);
+          this.emitObs("bootstrap", {
+            name,
+            version: clientVersion,
+            attestation: this.attestation,
+            result,
+          });
+          return this.sendError(
+            frame.id,
+            err.code,
+            err.message,
+            err.details as Record<string, unknown> | undefined,
+          );
         }
         throw err;
       }
     }
-    this.emitObs("bootstrap", { name, version: clientVersion, attestation: this.attestation, result: "ok", capId });
+    this.emitObs("bootstrap", {
+      name,
+      version: clientVersion,
+      attestation: this.attestation,
+      result: "ok",
+      capId,
+    });
     this.transport.send({ op: "result", id: frame.id, ok: true, value: new CapRef(capId) });
   }
 
   private async invokeServerMethod(
     frame: CallFrame,
-    cap: CapDef<any, any>,
+    cap: AnyCapDef,
     methodDef: MethodDef,
-    impl: (params: unknown, ctx: CallCtx) => unknown
+    impl: (params: unknown, ctx: CallCtx) => unknown,
   ): Promise<void> {
     const ctx = this.makeCallCtx(frame);
 
@@ -789,13 +951,17 @@ class ConnectionImpl implements Connection {
       try {
         const runStream = () => impl(frame.args, ctx) as StreamType<unknown>;
         const als = callContextStorage;
-        const scoped = als
-          ? () => als.run({ callId: frame.id }, runStream)
-          : runStream;
+        const scoped = als ? () => als.run({ callId: frame.id }, runStream) : runStream;
         const stream = scoped();
         this.runServerStream(frame.id, stream, ctx, hintBudget, cap, frame.method, frame.target.id);
       } catch (err) {
-        this.emitObs("stream", { capId: frame.target.id, capName: cap.name, method: frame.method, callId: frame.id, event: "error" });
+        this.emitObs("stream", {
+          capId: frame.target.id,
+          capName: cap.name,
+          method: frame.method,
+          callId: frame.id,
+          event: "error",
+        });
         this.transport.send({ op: "stream", id: frame.id, ev: "error", error: toStatus(err) });
       }
       return;
@@ -814,22 +980,34 @@ class ConnectionImpl implements Connection {
       const encoder = makeReturnEncoder(methodDef.returns);
       const runImpl = () => Promise.resolve(impl(frame.args, ctx));
       const als = callContextStorage;
-      const scoped = als
-        ? () => als.run({ callId: frame.id }, runImpl)
-        : runImpl;
+      const scoped = als ? () => als.run({ callId: frame.id }, runImpl) : runImpl;
       try {
         const result = await scoped();
         if (deadlineTimer) clearTimeout(deadlineTimer);
         if (!this.serverActiveCalls.delete(frame.id)) return;
         const encoded = encoder(result);
         this.transport.send({ op: "result", id: frame.id, ok: true, value: encoded });
-        this.emitObs("call", { capId: frame.target.id, capName: cap.name, method: frame.method, callId: frame.id, durationMs: performance.now() - startedAt, result: "ok" });
+        this.emitObs("call", {
+          capId: frame.target.id,
+          capName: cap.name,
+          method: frame.method,
+          callId: frame.id,
+          durationMs: performance.now() - startedAt,
+          result: "ok",
+        });
       } catch (err) {
         if (deadlineTimer) clearTimeout(deadlineTimer);
         if (!this.serverActiveCalls.delete(frame.id)) return;
         const status = toStatus(err);
         this.sendErrorFromStatus(frame.id, status);
-        this.emitObs("call", { capId: frame.target.id, capName: cap.name, method: frame.method, callId: frame.id, durationMs: performance.now() - startedAt, result: status.code });
+        this.emitObs("call", {
+          capId: frame.target.id,
+          capName: cap.name,
+          method: frame.method,
+          callId: frame.id,
+          durationMs: performance.now() - startedAt,
+          result: status.code,
+        });
       }
       return;
     }
@@ -837,7 +1015,10 @@ class ConnectionImpl implements Connection {
     this.sendError(frame.id, "not_found", "unknown method kind");
   }
 
-  private armServerDeadline(frame: CallFrame, ctx: CallCtx): ReturnType<typeof setTimeout> | undefined {
+  private armServerDeadline(
+    frame: CallFrame,
+    ctx: CallCtx,
+  ): ReturnType<typeof setTimeout> | undefined {
     const ms = frame.meta?.deadlineMs;
     if (!ms) return;
     return setTimeout(() => {
@@ -859,7 +1040,7 @@ class ConnectionImpl implements Connection {
     return ctx;
   }
 
-  private exportCap<C extends CapDef<any, any>>(capDef: C, impl: unknown): ExportedCap<C> {
+  private exportCap<C extends AnyCapDef>(capDef: C, impl: unknown): ExportedCap<C> {
     const typeId = frameworkTypeIdOf(capDef) ?? FIRST_USER_TYPE_ID;
     const entry = this.capTable.allocate({
       typeId,
@@ -880,7 +1061,7 @@ class ConnectionImpl implements Connection {
     stream: StreamType<unknown>,
     ctx: CallCtx,
     initialCredit: number,
-    cap: CapDef<any, any>,
+    cap: AnyCapDef,
     method: string,
     capId: number,
   ): void {
@@ -903,7 +1084,9 @@ class ConnectionImpl implements Connection {
 
     const waitForCredit = (): Promise<void> => {
       if (slot.credit > 0 || slot.cancelled) return Promise.resolve();
-      return new Promise<void>((resolve) => { slot.creditWaker = resolve; });
+      return new Promise<void>((resolve) => {
+        slot.creditWaker = resolve;
+      });
     };
 
     const drain = async () => {
@@ -922,11 +1105,25 @@ class ConnectionImpl implements Connection {
       } catch (err) {
         errored = true;
         this.transport.send({ op: "stream", id: callId, ev: "error", error: toStatus(err) });
-        this.emitObs("stream", { capId, capName: cap.name, method, callId, event: "error", count: slot.count });
+        this.emitObs("stream", {
+          capId,
+          capName: cap.name,
+          method,
+          callId,
+          event: "error",
+          count: slot.count,
+        });
       } finally {
         if (!errored) {
           this.transport.send({ op: "stream", id: callId, ev: "end" });
-          this.emitObs("stream", { capId, capName: cap.name, method, callId, event: slot.cancelled ? "cancel" : "end", count: slot.count });
+          this.emitObs("stream", {
+            capId,
+            capName: cap.name,
+            method,
+            callId,
+            event: slot.cancelled ? "cancel" : "end",
+            count: slot.count,
+          });
         }
         this.serverStreams.delete(callId);
       }
@@ -996,7 +1193,9 @@ class ConnectionImpl implements Connection {
 
   releaseRef(proxy: unknown): void {
     if (typeof proxy !== "object" || proxy === null) return;
-    const meta = (proxy as Record<symbol, unknown>)[CAP_PROXY_META] as { capId: number; dropped: boolean } | undefined;
+    const meta = (proxy as Record<symbol, unknown>)[CAP_PROXY_META] as
+      | { capId: number; dropped: boolean }
+      | undefined;
     if (!meta || meta.dropped) return;
     meta.dropped = true;
     this.sendDrop(meta.capId);
@@ -1040,7 +1239,10 @@ class ConnectionImpl implements Connection {
       const released = this.capTable.release(id, delta);
       if (released) {
         for (const [rootName, capId] of this.rootInstances) {
-          if (capId === id) { this.rootInstances.delete(rootName); break; }
+          if (capId === id) {
+            this.rootInstances.delete(rootName);
+            break;
+          }
         }
       }
     }
@@ -1068,28 +1270,38 @@ class ConnectionImpl implements Connection {
     meta?: CallMeta,
     capName?: string,
   ): Promise<unknown> {
-    if (this.closed_) return Promise.reject(new IpcError({ code: "unavailable", message: "connection closed" }));
+    if (this.closed_)
+      return Promise.reject(new IpcError({ code: "unavailable", message: "connection closed" }));
     if (this.revokedCapIds.has(capId)) {
-      return Promise.reject(new IpcError({
-        code: "failed_precondition",
-        message: "cap revoked",
-        details: { reason: "revoked" as FailedPreconditionReason },
-      }));
+      return Promise.reject(
+        new IpcError({
+          code: "failed_precondition",
+          message: "cap revoked",
+          details: { reason: "revoked" as FailedPreconditionReason },
+        }),
+      );
     }
     if (this.pending.size >= this.maxInFlightCalls) {
-      return Promise.reject(new IpcError({
-        code: "resource_exhausted",
-        message: `in-flight calls limit ${this.maxInFlightCalls}`,
-        details: { reason: "max_concurrent_calls" as ResourceExhaustedReason },
-      }));
+      return Promise.reject(
+        new IpcError({
+          code: "resource_exhausted",
+          message: `in-flight calls limit ${this.maxInFlightCalls}`,
+          details: { reason: "max_concurrent_calls" as ResourceExhaustedReason },
+        }),
+      );
     }
     const id = this.nextId();
     return new Promise((resolve, reject) => {
       const abort = new AbortController();
       const pending: PendingCall = {
-        resolve, reject, abort, decodeReturn,
+        resolve,
+        reject,
+        abort,
+        decodeReturn,
         startedAt: performance.now(),
-        capId, method, capName,
+        capId,
+        method,
+        capName,
         kind: "call",
       };
       if (meta?.deadlineMs) {
@@ -1102,14 +1314,21 @@ class ConnectionImpl implements Connection {
       }
       this.pending.set(id, pending);
       let finalMeta = meta;
-      if ((finalMeta?.parentCallId === undefined) && callContextStorage) {
+      if (finalMeta?.parentCallId === undefined && callContextStorage) {
         const scope = callContextStorage.getStore();
         if (scope) finalMeta = { ...(finalMeta ?? {}), parentCallId: scope.callId };
       }
       if (finalMeta?.parentCallId !== undefined) {
         this.serverCallChildren.set(id, { parentId: finalMeta.parentCallId });
       }
-      this.transport.send({ op: "call", id, target: { kind: "cap", id: capId }, method, args, meta: finalMeta });
+      this.transport.send({
+        op: "call",
+        id,
+        target: { kind: "cap", id: capId },
+        method,
+        args,
+        meta: finalMeta,
+      });
     });
   }
 
@@ -1121,17 +1340,29 @@ class ConnectionImpl implements Connection {
     capName?: string,
   ): StreamType<T> {
     if (this.closed_) {
-      const empty = makeClientStream<T>(capId, 0, () => {}, () => {});
+      const empty = makeClientStream<T>(
+        capId,
+        0,
+        () => {},
+        () => {},
+      );
       empty.fail(new IpcError({ code: "unavailable", message: "connection closed" }));
       return empty.stream;
     }
     if (this.revokedCapIds.has(capId)) {
-      const empty = makeClientStream<T>(capId, 0, () => {}, () => {});
-      empty.fail(new IpcError({
-        code: "failed_precondition",
-        message: "cap revoked",
-        details: { reason: "revoked" as FailedPreconditionReason },
-      }));
+      const empty = makeClientStream<T>(
+        capId,
+        0,
+        () => {},
+        () => {},
+      );
+      empty.fail(
+        new IpcError({
+          code: "failed_precondition",
+          message: "cap revoked",
+          details: { reason: "revoked" as FailedPreconditionReason },
+        }),
+      );
       return empty.stream;
     }
     const id = this.nextId();
@@ -1151,7 +1382,7 @@ class ConnectionImpl implements Connection {
     return ctx.stream;
   }
 
-  makeCapProxy<C extends CapDef<any, any>>(capDef: C, capId: number): ClientOf<C> {
+  makeCapProxy<C extends AnyCapDef>(capDef: C, capId: number): ClientOf<C> {
     const proxy: Record<string | symbol, unknown> = {};
     const meta = { capId, dropped: false };
     proxy[CAP_PROXY_META] = meta;
@@ -1164,26 +1395,33 @@ class ConnectionImpl implements Connection {
     for (const name of Object.keys(capDef.methods)) {
       const def = capDef.methods[name] as MethodDef;
       if (isStreamDef(def)) {
-        proxy[name] = (params?: unknown) => this.openClientStream(capId, name, params, undefined, capDef.name);
+        proxy[name] = (params?: unknown) =>
+          this.openClientStream(capId, name, params, undefined, capDef.name);
       } else if (isCallDef(def)) {
         const decoder = makeReturnDecoder(def.returns, (cd, cid) => this.makeCapProxy(cd, cid));
-        proxy[name] = (params?: unknown) => this.sendCallTyped(capId, name, params, decoder, undefined, capDef.name);
+        proxy[name] = (params?: unknown) =>
+          this.sendCallTyped(capId, name, params, decoder, undefined, capDef.name);
       }
     }
 
     const disposal = capDef.disposal as DisposalSpec | undefined;
     if (disposal) {
-      const conn = this;
       proxy[Symbol.dispose] = () => {
         try {
           const r = (proxy[disposal.method] as (() => unknown) | undefined)?.();
           if (r && typeof (r as Promise<unknown>).then === "function") {
             (r as Promise<unknown>).catch((err) =>
-              conn.emitObs("error", { phase: "dispose", error: err instanceof Error ? err : new Error(String(err)) })
+              this.emitObs("error", {
+                phase: "dispose",
+                error: err instanceof Error ? err : new Error(String(err)),
+              }),
             );
           }
         } catch (err) {
-          conn.emitObs("error", { phase: "dispose", error: err instanceof Error ? err : new Error(String(err)) });
+          this.emitObs("error", {
+            phase: "dispose",
+            error: err instanceof Error ? err : new Error(String(err)),
+          });
         }
         drop();
       };
@@ -1201,7 +1439,11 @@ class ConnectionImpl implements Connection {
   }
 
   _dropFromFinalizer(capId: number): void {
-    try { this.sendDrop(capId); } catch { /* swallow */ }
+    try {
+      this.sendDrop(capId);
+    } catch {
+      /* swallow */
+    }
   }
 
   shutdown(reason: string = "shutdown"): void {
@@ -1234,10 +1476,18 @@ class ConnectionImpl implements Connection {
       this.rejectRemoteReady(new IpcError({ code: "unavailable", message: reason }));
     }
     for (const fn of this.closeHandlers) {
-      try { fn(); } catch { /* swallow */ }
+      try {
+        fn();
+      } catch {
+        /* swallow */
+      }
     }
     this.closeHandlers.clear();
-    try { this.transport.close(); } catch { /* swallow */ }
+    try {
+      this.transport.close();
+    } catch {
+      /* swallow */
+    }
   }
 
   private invokeServerDisposal(entry: CapTableEntry): void {
@@ -1248,13 +1498,17 @@ class ConnectionImpl implements Connection {
     const impl = entry.impl as Record<string, unknown> | null;
     const fn = impl?.[disposal.method] as ((p: unknown, c?: unknown) => unknown) | undefined;
     if (!fn) return;
-    try { void fn.call(impl, undefined, undefined); } catch { /* swallow */ }
+    try {
+      void fn.call(impl, undefined, undefined);
+    } catch {
+      /* swallow */
+    }
   }
 }
 
 function makeReturnEncoder(returns: AnyCapToken | undefined): (v: unknown) => unknown {
   if (!returns) return (v) => v;
-  const expectExportedCap = (v: unknown, expectedCap: CapDef<any, any>): CapRef => {
+  const expectExportedCap = (v: unknown, expectedCap: AnyCapDef): CapRef => {
     if (!isExportedCap(v)) {
       throw new IpcError({
         code: "failed_precondition",
@@ -1275,7 +1529,10 @@ function makeReturnEncoder(returns: AnyCapToken | undefined): (v: unknown) => un
   if (isCapArray(returns)) {
     return (v) => {
       if (!Array.isArray(v)) {
-        throw new IpcError({ code: "invalid_argument", message: "expected ExportedCap[] for cap.array method" });
+        throw new IpcError({
+          code: "invalid_argument",
+          message: "expected ExportedCap[] for cap.array method",
+        });
       }
       return v.map((item) => expectExportedCap(item, returns.cap));
     };
@@ -1283,7 +1540,10 @@ function makeReturnEncoder(returns: AnyCapToken | undefined): (v: unknown) => un
   if (isCapRecord(returns)) {
     return (v) => {
       if (!v || typeof v !== "object") {
-        throw new IpcError({ code: "invalid_argument", message: "expected Record<string, ExportedCap> for cap.record method" });
+        throw new IpcError({
+          code: "invalid_argument",
+          message: "expected Record<string, ExportedCap> for cap.record method",
+        });
       }
       const out: Record<string, CapRef> = {};
       for (const k of Object.keys(v as object)) {
@@ -1296,14 +1556,15 @@ function makeReturnEncoder(returns: AnyCapToken | undefined): (v: unknown) => un
 }
 
 function makeReturnDecoder(
-  returns: { cap?: CapDef<any, any> } | undefined,
-  spawn: (cap: CapDef<any, any>, capId: number) => unknown
+  returns: { cap?: AnyCapDef } | undefined,
+  spawn: (cap: AnyCapDef, capId: number) => unknown,
 ): ReturnDecoder | undefined {
   if (!returns) return undefined;
   if (isCapRef(returns)) {
     const inner = returns.cap;
     return (raw) => {
-      if (!(raw instanceof CapRef)) throw new IpcError({ code: "invalid_argument", message: "expected CapRef" });
+      if (!(raw instanceof CapRef))
+        throw new IpcError({ code: "invalid_argument", message: "expected CapRef" });
       return spawn(inner, raw.capId);
     };
   }
@@ -1311,9 +1572,11 @@ function makeReturnDecoder(
     const inner = returns.cap;
     const disposal = inner.disposal as DisposalSpec | undefined;
     return (raw) => {
-      if (!Array.isArray(raw)) throw new IpcError({ code: "invalid_argument", message: "expected array" });
+      if (!Array.isArray(raw))
+        throw new IpcError({ code: "invalid_argument", message: "expected array" });
       const proxies = raw.map((item) => {
-        if (!(item instanceof CapRef)) throw new IpcError({ code: "invalid_argument", message: "expected CapRef in array" });
+        if (!(item instanceof CapRef))
+          throw new IpcError({ code: "invalid_argument", message: "expected CapRef in array" });
         return spawn(inner, item.capId);
       });
       attachArrayDisposal(proxies, disposal);
@@ -1323,11 +1586,13 @@ function makeReturnDecoder(
   if (isCapRecord(returns)) {
     const inner = returns.cap;
     return (raw) => {
-      if (!raw || typeof raw !== "object") throw new IpcError({ code: "invalid_argument", message: "expected record" });
+      if (!raw || typeof raw !== "object")
+        throw new IpcError({ code: "invalid_argument", message: "expected record" });
       const out: Record<string, unknown> = {};
       for (const k of Object.keys(raw as object)) {
         const item = (raw as Record<string, unknown>)[k];
-        if (!(item instanceof CapRef)) throw new IpcError({ code: "invalid_argument", message: "expected CapRef in record" });
+        if (!(item instanceof CapRef))
+          throw new IpcError({ code: "invalid_argument", message: "expected CapRef in record" });
         out[k] = spawn(inner, item.capId);
       }
       return out;
@@ -1364,7 +1629,7 @@ function makeClientStream<T>(
   capId: number,
   streamId: number,
   cancel: () => void,
-  sendCredit: (messages: number) => void
+  sendCredit: (messages: number) => void,
 ): ClientStreamHandle<T> {
   const buffer: T[] = [];
   const waiters: Array<{ resolve(r: IteratorResult<T>): void; reject(e: Error): void }> = [];
@@ -1403,8 +1668,14 @@ function makeClientStream<T>(
     while (waiters.length > 0) {
       const w = waiters.shift()!;
       const r = pump();
-      if (r) { w.resolve(r); continue; }
-      if (failure) { w.reject(failure); continue; }
+      if (r) {
+        w.resolve(r);
+        continue;
+      }
+      if (failure) {
+        w.reject(failure);
+        continue;
+      }
       waiters.unshift(w);
       break;
     }

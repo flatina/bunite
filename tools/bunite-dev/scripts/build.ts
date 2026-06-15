@@ -10,13 +10,19 @@
 //   { "entry": "src/main.ts", "name": "my-app", "locales": ["en-US"] }
 
 import {
-  mkdirSync, cpSync, existsSync, readdirSync, statSync, rmSync,
-  readFileSync, writeFileSync
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
 } from "node:fs";
-import { join, basename } from "node:path";
-import { $ } from "bun";
+import { basename, join } from "node:path";
 import { parseArgs } from "node:util";
-import { assertPlatform, findBuniteCoreRoot, findNativeBuildRoot, findCefSource } from "./resolve";
+import { $ } from "bun";
+import { assertPlatform, findBuniteCoreRoot, findCefSource, findNativeBuildRoot } from "./resolve";
 
 assertPlatform();
 
@@ -28,7 +34,8 @@ const cefSrc = findCefSource(coreRoot);
 if (!existsSync(join(cefSrc, "libcef.dll")) && !existsSync(join(cefSrc, "Release", "libcef.dll"))) {
   console.log("0. CEF not found — downloading...");
   await $`bun ${join(import.meta.dirname, "setup-cef.ts")}`.cwd(coreRoot).env({
-    ...process.env, BUNITE_CORE_ROOT: coreRoot
+    ...process.env,
+    BUNITE_CORE_ROOT: coreRoot,
   });
 }
 
@@ -51,14 +58,19 @@ const appName = buniteConfig.name ?? appPkg.name ?? basename(appDir);
 const compile = args.compile as boolean;
 const locales: string[] = args.locales
   ? (args.locales as string).split(",")
-  : buniteConfig.locales ?? ["en-US"];
+  : (buniteConfig.locales ?? ["en-US"]);
 
 const dist = join(appDir, "dist");
 
 // Clean
 if (existsSync(dist)) {
-  try { rmSync(dist, { recursive: true }); }
-  catch { try { require("node:fs").renameSync(dist, `${dist}-old-${Date.now()}`); } catch {} }
+  try {
+    rmSync(dist, { recursive: true });
+  } catch {
+    try {
+      require("node:fs").renameSync(dist, `${dist}-old-${Date.now()}`);
+    } catch {}
+  }
 }
 mkdirSync(dist, { recursive: true });
 
@@ -71,11 +83,14 @@ if (compile) {
 
   // PE patch: CUI → GUI (no console window on launch)
   const pe = readFileSync(exePath);
-  if (pe[0] === 0x4D && pe[1] === 0x5A) {
+  if (pe[0] === 0x4d && pe[1] === 0x5a) {
     const peOffset = pe.readUInt32LE(0x3c);
-    if (peOffset + 0x5e <= pe.length
-      && pe[peOffset] === 0x50 && pe[peOffset + 1] === 0x45
-      && pe.readUInt16LE(peOffset + 0x5c) === 3) {
+    if (
+      peOffset + 0x5e <= pe.length &&
+      pe[peOffset] === 0x50 &&
+      pe[peOffset + 1] === 0x45 &&
+      pe.readUInt16LE(peOffset + 0x5c) === 3
+    ) {
       pe.writeUInt16LE(2, peOffset + 0x5c);
       writeFileSync(exePath, pe);
     }
@@ -105,7 +120,11 @@ console.log("3. cef minimal");
 // Resolve file from flat or Release/Resources subdirectory layout
 function findCefFile(name: string): string | null {
   const effectiveSrc = findCefSource(coreRoot);
-  for (const dir of [effectiveSrc, join(effectiveSrc, "Release"), join(effectiveSrc, "Resources")]) {
+  for (const dir of [
+    effectiveSrc,
+    join(effectiveSrc, "Release"),
+    join(effectiveSrc, "Resources"),
+  ]) {
     const p = join(dir, name);
     if (existsSync(p)) return p;
   }
@@ -113,12 +132,20 @@ function findCefFile(name: string): string | null {
 }
 
 const requiredCefFiles = [
-  "libcef.dll", "chrome_elf.dll", "icudtl.dat", "v8_context_snapshot.bin",
-  "resources.pak", "chrome_100_percent.pak", "chrome_200_percent.pak",
+  "libcef.dll",
+  "chrome_elf.dll",
+  "icudtl.dat",
+  "v8_context_snapshot.bin",
+  "resources.pak",
+  "chrome_100_percent.pak",
+  "chrome_200_percent.pak",
 ];
 const optionalCefFiles = [
-  "d3dcompiler_47.dll", "dxcompiler.dll", "dxil.dll",
-  "libEGL.dll", "libGLESv2.dll",
+  "d3dcompiler_47.dll",
+  "dxcompiler.dll",
+  "dxil.dll",
+  "libEGL.dll",
+  "libGLESv2.dll",
 ];
 
 const cefDist = join(dist, "cef");
@@ -138,11 +165,8 @@ for (const f of optionalCefFiles) {
 }
 
 // Locales
-const localesDirs = [
-  join(cefSrc, "Resources", "locales"),
-  join(cefSrc, "locales"),
-];
-const localesSrcDir = localesDirs.find(d => existsSync(d));
+const localesDirs = [join(cefSrc, "Resources", "locales"), join(cefSrc, "locales")];
+const localesSrcDir = localesDirs.find((d) => existsSync(d));
 const localesDist = join(cefDist, "Resources", "locales");
 mkdirSync(localesDist, { recursive: true });
 for (const locale of locales) {

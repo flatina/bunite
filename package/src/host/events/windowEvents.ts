@@ -16,6 +16,5 @@ export default {
     height: number;
     maximized: boolean;
     minimized: boolean;
-  }) =>
-    new BuniteEvent("resize", data)
+  }) => new BuniteEvent("resize", data),
 };

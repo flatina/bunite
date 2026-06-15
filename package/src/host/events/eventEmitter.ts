@@ -1,8 +1,8 @@
 import EventEmitter from "node:events";
-import { BuniteEvent } from "./event";
 import appEvents from "./appEvents";
-import windowEvents from "./windowEvents";
+import type { BuniteEvent } from "./event";
 import webviewEvents from "./webviewEvents";
+import windowEvents from "./windowEvents";
 
 class BuniteEventEmitter extends EventEmitter {
   emitEvent(event: BuniteEvent, specifier?: string | number) {
@@ -14,14 +14,14 @@ class BuniteEventEmitter extends EventEmitter {
 
   events = {
     app: {
-      ...appEvents
+      ...appEvents,
     },
     window: {
-      ...windowEvents
+      ...windowEvents,
     },
     webview: {
-      ...webviewEvents
-    }
+      ...webviewEvents,
+    },
   };
 }
 

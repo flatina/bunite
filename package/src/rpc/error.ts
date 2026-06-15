@@ -22,14 +22,9 @@ export type ResourceExhaustedReason =
   | "stream_credit_window"
   | "rate_limited";
 
-export type UnavailableReason =
-  | "peer_closing"
-  | "goaway"
-  | "plugin_unloading";
+export type UnavailableReason = "peer_closing" | "goaway" | "plugin_unloading";
 
-export type AlreadyExistsReason =
-  | "name_collision"
-  | "reserved_namespace";
+export type AlreadyExistsReason = "name_collision" | "reserved_namespace";
 
 export type RetrySpec =
   | { kind: "never" }

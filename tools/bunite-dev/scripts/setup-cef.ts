@@ -7,7 +7,7 @@
  *   bun run setup:cef -- --version 145.0.23 # specific version (resolves chromium ver from index)
  */
 
-import { existsSync, mkdirSync, rmSync, renameSync, readFileSync, writeFileSync, cpSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CryptoHasher } from "bun";
 
@@ -74,7 +74,10 @@ async function fetchIndex(cefPlatform: string): Promise<CefIndexPlatform> {
 }
 
 function parseCefTuple(cefVersion: string): number[] {
-  return cefVersion.split("+")[0].split(".").map((s) => parseInt(s, 10) || 0);
+  return cefVersion
+    .split("+")[0]
+    .split(".")
+    .map((s) => parseInt(s, 10) || 0);
 }
 
 function compareCefVersions(a: string, b: string): number {
@@ -93,8 +96,11 @@ function resolveVersion(index: CefIndexPlatform, requestedVersion?: string) {
 
   if (requestedVersion) {
     // match exact prefix up to the "+" boundary
-    const match = stableVersions.find((v) => v.cef_version.split("+")[0] === requestedVersion
-      || v.cef_version.split("+")[0].startsWith(requestedVersion + "."));
+    const match = stableVersions.find(
+      (v) =>
+        v.cef_version.split("+")[0] === requestedVersion ||
+        v.cef_version.split("+")[0].startsWith(requestedVersion + "."),
+    );
     if (!match) throw new Error(`Version ${requestedVersion} not found in stable channel`);
     return match;
   }
@@ -132,7 +138,9 @@ async function download(url: string, dest: string) {
   console.log();
 
   if (received < 50 * 1024 * 1024) {
-    throw new Error(`Download too small (${(received / 1024 / 1024).toFixed(1)} MB) — likely an error page`);
+    throw new Error(
+      `Download too small (${(received / 1024 / 1024).toFixed(1)} MB) — likely an error page`,
+    );
   }
 
   const blob = new Blob(chunks);
@@ -206,21 +214,33 @@ async function main() {
 
     // Flatten runtime files from Release/ + Resources/ into a single dir
     const runtimeFiles = [
-      "libcef.dll", "chrome_elf.dll", "icudtl.dat", "v8_context_snapshot.bin",
-      "resources.pak", "chrome_100_percent.pak", "chrome_200_percent.pak",
-      "d3dcompiler_47.dll", "dxcompiler.dll", "dxil.dll",
-      "libEGL.dll", "libGLESv2.dll",
+      "libcef.dll",
+      "chrome_elf.dll",
+      "icudtl.dat",
+      "v8_context_snapshot.bin",
+      "resources.pak",
+      "chrome_100_percent.pak",
+      "chrome_200_percent.pak",
+      "d3dcompiler_47.dll",
+      "dxcompiler.dll",
+      "dxil.dll",
+      "libEGL.dll",
+      "libGLESv2.dll",
       "libcef.so",
     ];
     for (const f of runtimeFiles) {
       for (const sub of [tmpExtract, join(tmpExtract, "Release"), join(tmpExtract, "Resources")]) {
         const src = join(sub, f);
-        if (existsSync(src)) { cpSync(src, join(CEF_DIR, f)); break; }
+        if (existsSync(src)) {
+          cpSync(src, join(CEF_DIR, f));
+          break;
+        }
       }
     }
     // Locales
-    const localesSrc = [join(tmpExtract, "Resources", "locales"), join(tmpExtract, "locales")]
-      .find(d => existsSync(d));
+    const localesSrc = [join(tmpExtract, "Resources", "locales"), join(tmpExtract, "locales")].find(
+      (d) => existsSync(d),
+    );
     if (localesSrc) {
       const localesDest = join(CEF_DIR, "locales");
       mkdirSync(localesDest, { recursive: true });

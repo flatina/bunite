@@ -1,5 +1,5 @@
-import { IpcError, type ImplOf } from "bunite-core/rpc";
-import { BridgeCap, SessionCap } from "./schema";
+import { type ImplOf, IpcError } from "bunite-core/rpc";
+import { type BridgeCap, SessionCap } from "./schema";
 
 /** Per-user counter — shared across tabs / sessions for the same userId. */
 const counts = new Map<string, number>();

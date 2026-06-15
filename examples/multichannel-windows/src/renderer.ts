@@ -1,5 +1,5 @@
 import { bootstrap } from "bunite-core/rpc/renderer";
-import { calcCap, logCap, type LogEntry } from "./schema";
+import { calcCap, type LogEntry, logCap } from "./schema";
 
 const aInput = document.getElementById("a") as HTMLInputElement;
 const bInput = document.getElementById("b") as HTMLInputElement;

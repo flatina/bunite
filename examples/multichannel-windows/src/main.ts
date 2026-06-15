@@ -1,7 +1,7 @@
 import { AppRuntime, BrowserWindow } from "bunite-core";
-import { Stream, type ImplOf } from "bunite-core/rpc";
+import { type ImplOf, Stream } from "bunite-core/rpc";
 import indexHtml from "./index.html" with { type: "text" };
-import { calcCap, logCap, type LogEntry } from "./schema";
+import { calcCap, type LogEntry, logCap } from "./schema";
 
 const app = new AppRuntime();
 await app.ready;
@@ -38,10 +38,11 @@ function createDemoWindow(label: string, x: number) {
   } satisfies ImplOf<typeof calcCap>;
 
   const logImpl = {
-    entries: () => Stream.from<LogEntry>((emit, signal) => {
-      logSubs.add(emit);
-      signal.addEventListener("abort", () => logSubs.delete(emit));
-    }),
+    entries: () =>
+      Stream.from<LogEntry>((emit, signal) => {
+        logSubs.add(emit);
+        signal.addEventListener("abort", () => logSubs.delete(emit));
+      }),
   } satisfies ImplOf<typeof logCap>;
 
   new BrowserWindow({

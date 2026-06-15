@@ -2,10 +2,10 @@ import "bunite-core/polyfill";
 import "dockview-core/dist/styles/dockview.css";
 import {
   createDockview,
-  themeAbyss,
   type DockviewApi,
   type GroupPanelPartInitParameters,
-  type IContentRenderer
+  type IContentRenderer,
+  themeAbyss,
 } from "dockview-core";
 import "./styles.css";
 import { setupDropIndicatorMasks } from "./maskHelper";
@@ -33,13 +33,19 @@ class BrowserPanel implements IContentRenderer {
 
     const urlInput = this.element.querySelector<HTMLInputElement>(".browser-nav__url")!;
     const wv = this.element.querySelector("bunite-webview")! as HTMLElement & {
-      goBack(): void; reload(): void; navigate(url: string): void;
+      goBack(): void;
+      reload(): void;
+      navigate(url: string): void;
     };
     urlInput.value = fullUrl;
     wv.setAttribute("src", fullUrl);
 
-    this.element.querySelector('[data-action="back"]')!.addEventListener("click", () => wv.goBack());
-    this.element.querySelector('[data-action="reload"]')!.addEventListener("click", () => wv.reload());
+    this.element
+      .querySelector('[data-action="back"]')!
+      .addEventListener("click", () => wv.goBack());
+    this.element
+      .querySelector('[data-action="reload"]')!
+      .addEventListener("click", () => wv.reload());
     urlInput.addEventListener("keydown", (e) => {
       if (e.key !== "Enter") return;
       let url = urlInput.value.trim();
@@ -67,7 +73,7 @@ async function bootstrap() {
         component: "browser",
         title: id[0].toUpperCase() + id.slice(1),
         params: { source: `/${id}.html` },
-        position: ref ? { referencePanel: ref, direction: "right" } : undefined
+        position: ref ? { referencePanel: ref, direction: "right" } : undefined,
       });
     });
   });
@@ -82,7 +88,7 @@ async function bootstrap() {
     disableFloatingGroups: true,
     // up/down/within splits re-parent panel content and would tear down native webview surfaces — "always" keeps panels in a shared overlay container and repositions via style.
     defaultRenderer: "always",
-    createComponent: () => new BrowserPanel()
+    createComponent: () => new BrowserPanel(),
   });
 
   createDefaultLayout();
@@ -94,7 +100,7 @@ function createDefaultLayout() {
     id: `p_${crypto.randomUUID()}`,
     component: "browser",
     title: "Counter",
-    params: { source: "/counter.html" }
+    params: { source: "/counter.html" },
   });
 
   api.addPanel({
@@ -102,7 +108,7 @@ function createDefaultLayout() {
     component: "browser",
     title: "Form",
     params: { source: "/form.html" },
-    position: { referencePanel: left, direction: "right" }
+    position: { referencePanel: left, direction: "right" },
   });
 
   api.addPanel({
@@ -110,7 +116,7 @@ function createDefaultLayout() {
     component: "browser",
     title: "List",
     params: { source: "/list.html" },
-    position: { referencePanel: left, direction: "below" }
+    position: { referencePanel: left, direction: "below" },
   });
 
   left.group.api.setSize({ width: 500 });

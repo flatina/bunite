@@ -1,17 +1,31 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
-  call, defineCap,
-  createConnection, createFrameTransport,
-  type ImplOf,
   type BytesPipe,
+  call,
+  createConnection,
+  createFrameTransport,
+  defineCap,
+  type ImplOf,
 } from "../package/src/rpc/index";
 
 function createInMemoryPipePair(): [BytesPipe, BytesPipe] {
   let aRecv: ((b: Uint8Array) => void) | undefined;
   let bRecv: ((b: Uint8Array) => void) | undefined;
   return [
-    { send: (b) => queueMicrotask(() => bRecv?.(b)), setReceive: (h) => { aRecv = h; }, close: () => {} },
-    { send: (b) => queueMicrotask(() => aRecv?.(b)), setReceive: (h) => { bRecv = h; }, close: () => {} },
+    {
+      send: (b) => queueMicrotask(() => bRecv?.(b)),
+      setReceive: (h) => {
+        aRecv = h;
+      },
+      close: () => {},
+    },
+    {
+      send: (b) => queueMicrotask(() => aRecv?.(b)),
+      setReceive: (h) => {
+        bRecv = h;
+      },
+      close: () => {},
+    },
   ];
 }
 
@@ -52,11 +66,19 @@ describe("frame transport over bytes pipe", () => {
     });
 
     const [pa, pb] = createInMemoryPipePair();
-    const server = createConnection({ transport: createFrameTransport(pa), mode: "native", origin: "s" });
+    const server = createConnection({
+      transport: createFrameTransport(pa),
+      mode: "native",
+      origin: "s",
+    });
     server.serve(apiCap, {
       doubleIt: ({ data }) => ({ result: new Float32Array(data.map((x) => x * 2)) }),
     });
-    const client = createConnection({ transport: createFrameTransport(pb), mode: "native", origin: "c" });
+    const client = createConnection({
+      transport: createFrameTransport(pb),
+      mode: "native",
+      origin: "c",
+    });
     const api = await client.bootstrap(apiCap);
 
     const out = await api.doubleIt({ data: new Float32Array([1.5, 2.5, 3]) });
@@ -68,7 +90,9 @@ describe("frame transport over bytes pipe", () => {
     const [pa, _pb] = createInMemoryPipePair();
     const t = createFrameTransport(pa);
     let received = 0;
-    t.setReceive(() => { received++; });
+    t.setReceive(() => {
+      received++;
+    });
     pa.send(new Uint8Array([0xff, 0xff, 0xff]));
     await new Promise((r) => queueMicrotask(r));
     expect(received).toBe(0);

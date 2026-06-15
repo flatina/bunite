@@ -1,7 +1,7 @@
 import type { Server, WebSocketHandler } from "bun";
-import type { BrowserView } from "./BrowserView";
-import { log } from "../log";
 import { DEFAULT_MAX_BYTES } from "../../rpc/wire";
+import { log } from "../log";
+import type { BrowserView } from "./BrowserView";
 
 type ViewRegistry = {
   getById(id: number): BrowserView | undefined;
@@ -24,24 +24,36 @@ function asBytes(message: unknown): Uint8Array | null {
   if (typeof message === "string") return null;
   if (message instanceof Uint8Array) return message;
   if (message instanceof ArrayBuffer) return new Uint8Array(message);
-  if (ArrayBuffer.isView(message)) return new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
+  if (ArrayBuffer.isView(message))
+    return new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
   return null;
 }
 
 const websocket: WebSocketHandler<WebSocketData> = {
   open(ws) {
     const view = registry?.getById(ws.data.webviewId);
-    if (!view) { ws.close(); return; }
+    if (!view) {
+      ws.close();
+      return;
+    }
     let handler: ((bytes: Uint8Array) => void) | undefined;
     const pending: Uint8Array[] = [];
     const pipe = {
-      send: (bytes: Uint8Array) => { ws.send(bytes); },
+      send: (bytes: Uint8Array) => {
+        ws.send(bytes);
+      },
       setReceive: (h: (bytes: Uint8Array) => void) => {
         handler = h;
         for (const b of pending) h(b);
         pending.length = 0;
       },
-      close: () => { try { ws.close(); } catch { /* swallow */ } },
+      close: () => {
+        try {
+          ws.close();
+        } catch {
+          /* swallow */
+        }
+      },
       deliver: (bytes: Uint8Array) => {
         if (handler) handler(bytes);
         else pending.push(bytes);
@@ -74,8 +86,10 @@ export function ensureRpcServer() {
           const url = new URL(req.url);
           if (url.pathname !== "/rpc") return new Response("Not found", { status: 404 });
           const webviewId = Number(url.searchParams.get("webviewId"));
-          if (!Number.isFinite(webviewId)) return new Response("Missing webviewId", { status: 400 });
-          if (!registry?.getById(webviewId)) return new Response("Unknown webviewId", { status: 403 });
+          if (!Number.isFinite(webviewId))
+            return new Response("Missing webviewId", { status: 400 });
+          if (!registry?.getById(webviewId))
+            return new Response("Unknown webviewId", { status: 403 });
           const upgraded = server.upgrade(req, { data: { webviewId } });
           return upgraded ? undefined : new Response("Upgrade failed", { status: 500 });
         },
@@ -84,7 +98,10 @@ export function ensureRpcServer() {
       rpcPort = port;
       break;
     } catch (error: any) {
-      if (error?.code === "EADDRINUSE") { port += 1; continue; }
+      if (error?.code === "EADDRINUSE") {
+        port += 1;
+        continue;
+      }
       throw error;
     }
   }

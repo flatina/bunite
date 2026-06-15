@@ -1,12 +1,12 @@
 import {
+  type AnyCapDef,
+  type ClientOf,
+  type Connection,
   createConnection,
   createFrameTransport,
   createWebSocketPipe,
-  type Connection,
-  type CapDef,
   type Schema,
   type SchemaRoots,
-  type ClientOf,
   type WebSocketLike,
 } from "./index";
 
@@ -22,8 +22,10 @@ export interface BuniteWebGlobal {
 declare global {
   interface Window {
     host?: {
-      bootstrap<C extends CapDef<any, any>>(cap: C): Promise<ClientOf<C>>;
-      bootstrap<R extends SchemaRoots>(schema: Schema<R>): Promise<{ [K in keyof R]: ClientOf<R[K]> }>;
+      bootstrap<C extends AnyCapDef>(cap: C): Promise<ClientOf<C>>;
+      bootstrap<R extends SchemaRoots>(
+        schema: Schema<R>,
+      ): Promise<{ [K in keyof R]: ClientOf<R[K]> }>;
       runtime(): Promise<ClientOf<typeof import("./framework").RuntimeCap>>;
       releaseRef(proxy: unknown): Promise<void>;
       /** Full Connection for renderer-as-server (serve / serveAll / unserve / replace / on). */
@@ -62,7 +64,9 @@ function ensureWebConnection(path = "/rpc"): Promise<Connection> {
     ws.binaryType = "arraybuffer";
     await new Promise<void>((resolve, reject) => {
       ws.addEventListener("open", () => resolve(), { once: true });
-      ws.addEventListener("error", () => reject(new Error("web RPC ws connect failed")), { once: true });
+      ws.addEventListener("error", () => reject(new Error("web RPC ws connect failed")), {
+        once: true,
+      });
     });
     const conn = createConnection({
       transport: createFrameTransport(createWebSocketPipe(ws as unknown as WebSocketLike)),
@@ -79,9 +83,11 @@ function ensureWebConnection(path = "/rpc"): Promise<Connection> {
   return attempt;
 }
 
-export function bootstrap<C extends CapDef<any, any>>(cap: C): Promise<ClientOf<C>>;
-export function bootstrap<R extends SchemaRoots>(schema: Schema<R>): Promise<{ [K in keyof R]: ClientOf<R[K]> }>;
-export async function bootstrap(target: CapDef<any, any> | Schema<any>): Promise<unknown> {
+export function bootstrap<C extends AnyCapDef>(cap: C): Promise<ClientOf<C>>;
+export function bootstrap<R extends SchemaRoots>(
+  schema: Schema<R>,
+): Promise<{ [K in keyof R]: ClientOf<R[K]> }>;
+export async function bootstrap(target: AnyCapDef | Schema<any>): Promise<unknown> {
   if (isNative()) {
     if (!window.host?.bootstrap) throw new Error("host preload not ready");
     return (window.host.bootstrap as (t: unknown) => Promise<unknown>)(target);

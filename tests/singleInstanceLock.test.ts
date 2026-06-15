@@ -1,6 +1,9 @@
-import { describe, test, expect, afterEach } from "bun:test";
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
-import { acquireSingleInstanceLock, lockPathFor } from "../package/src/host/core/singleInstanceLock";
+import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  acquireSingleInstanceLock,
+  lockPathFor,
+} from "../package/src/host/core/singleInstanceLock";
 
 const pathFor = lockPathFor;
 
@@ -10,7 +13,11 @@ const lockFiles: string[] = [];
 afterEach(() => {
   for (const l of acquired.splice(0)) l.release();
   for (const p of lockFiles.splice(0)) {
-    try { unlinkSync(p); } catch { /* gone */ }
+    try {
+      unlinkSync(p);
+    } catch {
+      /* gone */
+    }
   }
 });
 

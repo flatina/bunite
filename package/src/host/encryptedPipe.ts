@@ -10,7 +10,12 @@ const HEADER_LENGTH = 1 + IV_LENGTH;
 export async function createEncryptedPipe(base: BytesPipe, rawKey: Uint8Array): Promise<BytesPipe> {
   let downstream: ((bytes: Uint8Array) => void) | undefined;
   let closed = false;
-  const closeOnce = () => { if (!closed) { closed = true; base.close(); } };
+  const closeOnce = () => {
+    if (!closed) {
+      closed = true;
+      base.close();
+    }
+  };
 
   base.setReceive((frame) => {
     if (closed) return;
@@ -56,7 +61,11 @@ export async function createEncryptedPipe(base: BytesPipe, rawKey: Uint8Array): 
         closeOnce();
       }
     },
-    setReceive(handler) { downstream = handler; },
-    close() { closeOnce(); },
+    setReceive(handler) {
+      downstream = handler;
+    },
+    close() {
+      closeOnce();
+    },
   };
 }

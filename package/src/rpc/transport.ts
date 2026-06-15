@@ -1,5 +1,5 @@
-import { type Frame, createCodec, isFrame } from "./wire";
 import type { Transport } from "./peer";
+import { createCodec, type Frame, isFrame } from "./wire";
 
 export interface BytesPipe {
   send(bytes: Uint8Array): void;
@@ -48,21 +48,37 @@ export function createFrameTransport(pipe: BytesPipe, opts: FrameTransportOption
 
 export interface WebSocketLike {
   send(data: Uint8Array | ArrayBuffer): unknown;
-  addEventListener(type: "message", listener: (event: { data: ArrayBuffer | Uint8Array | Blob | string }) => void): void;
-  removeEventListener?(type: "message", listener: (event: { data: ArrayBuffer | Uint8Array | Blob | string }) => void): void;
+  addEventListener(
+    type: "message",
+    listener: (event: { data: ArrayBuffer | Uint8Array | Blob | string }) => void,
+  ): void;
+  removeEventListener?(
+    type: "message",
+    listener: (event: { data: ArrayBuffer | Uint8Array | Blob | string }) => void,
+  ): void;
   close?(): void;
 }
 
 export function createWebSocketPipe(ws: WebSocketLike): BytesPipe {
   if ("binaryType" in ws) {
-    try { (ws as { binaryType?: string }).binaryType = "arraybuffer"; } catch { /* readonly in some envs */ }
+    try {
+      (ws as { binaryType?: string }).binaryType = "arraybuffer";
+    } catch {
+      /* readonly in some envs */
+    }
   }
   let handler: ((bytes: Uint8Array) => void) | undefined;
   const onMessage = (event: { data: ArrayBuffer | Uint8Array | Blob | string }) => {
     if (!handler) return;
     const d = event.data;
-    if (d instanceof Uint8Array) { handler(d); return; }
-    if (d instanceof ArrayBuffer) { handler(new Uint8Array(d)); return; }
+    if (d instanceof Uint8Array) {
+      handler(d);
+      return;
+    }
+    if (d instanceof ArrayBuffer) {
+      handler(new Uint8Array(d));
+      return;
+    }
     if (typeof Blob !== "undefined" && d instanceof Blob) {
       void d.arrayBuffer().then((buf) => handler?.(new Uint8Array(buf)));
       return;
@@ -70,12 +86,15 @@ export function createWebSocketPipe(ws: WebSocketLike): BytesPipe {
   };
   ws.addEventListener("message", onMessage);
   return {
-    send(bytes) { ws.send(bytes); },
-    setReceive(h) { handler = h; },
+    send(bytes) {
+      ws.send(bytes);
+    },
+    setReceive(h) {
+      handler = h;
+    },
     close() {
       ws.removeEventListener?.("message", onMessage);
       ws.close?.();
     },
   };
 }
-

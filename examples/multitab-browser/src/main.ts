@@ -32,14 +32,18 @@ const apiImpl = {
     tabs.set(id, tab);
     return tab;
   },
-  closeTab: ({ id }) => { tabs.delete(id); },
+  closeTab: ({ id }) => {
+    tabs.delete(id);
+  },
   navigateTo: ({ id, url }) => {
     const tab = tabs.get(id);
     if (tab) tab.url = url;
   },
 } satisfies ImplOf<typeof apiCap>;
 
-const webRpc = serveWeb((conn) => { conn.serve(apiCap, apiImpl); });
+const webRpc = serveWeb((conn) => {
+  conn.serve(apiCap, apiImpl);
+});
 
 const server = Bun.serve({
   port: webPort || 0,
@@ -50,10 +54,18 @@ const server = Bun.serve({
 
     const url = new URL(req.url);
     if (url.pathname === "/fast")
-      return html("Local Fast", `<p>served instantly</p><p><a href="/slow?delay=2000">Slow 2s</a></p>`);
+      return html(
+        "Local Fast",
+        `<p>served instantly</p><p><a href="/slow?delay=2000">Slow 2s</a></p>`,
+      );
     if (url.pathname === "/slow") {
       const delay = Math.min(Number(url.searchParams.get("delay") ?? "1000"), 5000);
-      return new Promise<Response>((r) => setTimeout(() => r(html("Local Slow", `<p>waited ${delay}ms</p><p><a href="/fast">Fast</a></p>`)), delay));
+      return new Promise<Response>((r) =>
+        setTimeout(
+          () => r(html("Local Slow", `<p>waited ${delay}ms</p><p><a href="/fast">Fast</a></p>`)),
+          delay,
+        ),
+      );
     }
 
     const pathname = decodeURIComponent(url.pathname);
@@ -72,7 +84,9 @@ const win = new BrowserWindow({
   frame: { x: 80, y: 80, width: 1280, height: 900 },
   url: `${origin}/`,
   preloadOrigins: [origin],
-  serve: (conn) => { conn.serve(apiCap, apiImpl); },
+  serve: (conn) => {
+    conn.serve(apiCap, apiImpl);
+  },
 });
 
 win.on("close", () => server.stop(true));
@@ -84,6 +98,6 @@ function html(title: string, body: string) {
     `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
     <style>body{margin:0;padding:32px;background:#111827;color:#e5e7eb;font:14px/1.6 system-ui}h1{margin:0 0 8px}a{color:#fbbf24}</style>
     </head><body><h1>${title}</h1>${body}</body></html>`,
-    { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } }
+    { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
   );
 }

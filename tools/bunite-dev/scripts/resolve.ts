@@ -1,12 +1,17 @@
 // Shared resolution utilities for bunite-dev scripts.
 
 import { existsSync } from "node:fs";
-import { join, dirname } from "node:path";
 import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 
 const require = createRequire(import.meta.url);
 
-const PLATFORM_TAG = process.platform === "win32" ? "win" : process.platform === "darwin" ? "darwin" : process.platform;
+const PLATFORM_TAG =
+  process.platform === "win32"
+    ? "win"
+    : process.platform === "darwin"
+      ? "darwin"
+      : process.platform;
 const ARCH = process.arch;
 
 export function findBuniteCoreRoot(): string {
@@ -29,7 +34,9 @@ export function findNativeBuildRoot(coreRoot: string): string {
   const nativePkg = `bunite-native-${PLATFORM_TAG}-${ARCH}`;
   try {
     const pkgRoot = dirname(require.resolve(`${nativePkg}/package.json`));
-    if (existsSync(join(pkgRoot, `libBuniteNative${process.platform === "win32" ? ".dll" : ".so"}`))) {
+    if (
+      existsSync(join(pkgRoot, `libBuniteNative${process.platform === "win32" ? ".dll" : ".so"}`))
+    ) {
       return pkgRoot;
     }
   } catch {}
@@ -39,10 +46,7 @@ export function findNativeBuildRoot(coreRoot: string): string {
 
 export function findCefSource(coreRoot: string): string {
   const nativeBuild = findNativeBuildRoot(coreRoot);
-  const candidates = [
-    join(nativeBuild, "cef"),
-    join(coreRoot, "vendors", "cef"),
-  ];
+  const candidates = [join(nativeBuild, "cef"), join(coreRoot, "vendors", "cef")];
   for (const dir of candidates) {
     if (existsSync(join(dir, "libcef.dll")) || existsSync(join(dir, "Release", "libcef.dll"))) {
       return dir;

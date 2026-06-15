@@ -4,19 +4,29 @@ const app = new AppRuntime();
 await app.ready;
 
 // Dynamic appres routes — generate HTML on demand
-app.getAppRes("/dynamic/now", () => page("Current time", `
+app.getAppRes("/dynamic/now", () =>
+  page(
+    "Current time",
+    `
   <p>Generated at <strong>${new Date().toLocaleString()}</strong></p>
   <p>Each request re-runs the handler.</p>
-`));
+`,
+  ),
+);
 
-app.getAppRes("/dynamic/random", () => page("Random number", `
+app.getAppRes("/dynamic/random", () =>
+  page(
+    "Random number",
+    `
   <p style="font-size: 48px; font-weight: 700;">${Math.random().toFixed(6)}</p>
-`));
+`,
+  ),
+);
 
 new BrowserWindow({
   title: `appres:// demo v${app.version} — ${app.engineName ?? "?"} ${app.engineVersion ?? "unknown"}`,
   url: "./index.html",
-  frame: { x: 80, y: 80, width: 900, height: 700 }
+  frame: { x: 80, y: 80, width: 900, height: 700 },
 });
 
 app.run();

@@ -11,7 +11,10 @@ function toBufferSource(view: Uint8Array): ArrayBuffer {
 }
 
 async function importAesGcmKey(rawKey: Uint8Array): Promise<CryptoKey> {
-  return crypto.subtle.importKey("raw", toBufferSource(rawKey), "AES-GCM", false, ["encrypt", "decrypt"]);
+  return crypto.subtle.importKey("raw", toBufferSource(rawKey), "AES-GCM", false, [
+    "encrypt",
+    "decrypt",
+  ]);
 }
 
 // WebCrypto AES-256-GCM (browser / preload). For Bun-side use `host/encryptedPipe.ts` (node:crypto).
@@ -21,7 +24,12 @@ export async function createEncryptedPipe(base: BytesPipe, rawKey: Uint8Array): 
   let sendChain: Promise<void> = Promise.resolve();
   let recvChain: Promise<void> = Promise.resolve();
   let closed = false;
-  const closeOnce = () => { if (!closed) { closed = true; base.close(); } };
+  const closeOnce = () => {
+    if (!closed) {
+      closed = true;
+      base.close();
+    }
+  };
 
   base.setReceive((frame) => {
     if (closed) return;
@@ -51,7 +59,11 @@ export async function createEncryptedPipe(base: BytesPipe, rawKey: Uint8Array): 
         try {
           const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
           const ivBuf = toBufferSource(iv);
-          const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv: ivBuf }, key, payload);
+          const encrypted = await crypto.subtle.encrypt(
+            { name: "AES-GCM", iv: ivBuf },
+            key,
+            payload,
+          );
           const encArr = new Uint8Array(encrypted);
           const out = new Uint8Array(HEADER_LENGTH + encArr.byteLength);
           out[0] = VERSION;
@@ -71,4 +83,3 @@ export async function createEncryptedPipe(base: BytesPipe, rawKey: Uint8Array): 
     },
   };
 }
-

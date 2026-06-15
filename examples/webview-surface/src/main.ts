@@ -5,7 +5,8 @@ const SURFACE_B_PORT = 18901;
 Bun.serve({
   port: SURFACE_B_PORT,
   fetch(_req, srv) {
-    return new Response(`<!doctype html>
+    return new Response(
+      `<!doctype html>
 <html><head><meta charset="utf-8"><style>
   body { margin:0; display:flex; align-items:center; justify-content:center;
          height:100vh; background:#7c3aed; color:#fff; font-family:system-ui;
@@ -21,8 +22,10 @@ Bun.serve({
   <button onclick="document.getElementById('count').textContent=++n">Click me</button>
   <p>Served from localhost:${srv.port}</p>
   <script>var n=0;</script>
-</body></html>`, { headers: { "Content-Type": "text/html" } });
-  }
+</body></html>`,
+      { headers: { "Content-Type": "text/html" } },
+    );
+  },
 });
 
 const app = new AppRuntime();
@@ -31,7 +34,7 @@ await app.ready;
 new BrowserWindow({
   title: `Webview Surface Test v${app.version} — ${app.engineName ?? "?"} ${app.engineVersion ?? "unknown"}`,
   url: "./index.html",
-  frame: { x: 80, y: 80, width: 900, height: 650 }
+  frame: { x: 80, y: 80, width: 900, height: 650 },
 });
 
 app.run();

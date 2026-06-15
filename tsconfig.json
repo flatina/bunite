@@ -1,7 +1,4 @@
 {
   "files": [],
-  "references": [
-    { "path": "package" },
-    { "path": "package/src/preload" }
-  ]
+  "references": [{ "path": "package" }, { "path": "package/src/preload" }]
 }

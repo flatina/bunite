@@ -2,8 +2,12 @@
   "name": "bunite-native-mac-arm64",
   "description": "Bunite native binaries for macOS arm64 (WKWebView adapter)",
   "version": "0.0.5",
-  "os": ["darwin"],
-  "cpu": ["arm64"],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
   "files": [
     "libBuniteNative.dylib"
   ]

@@ -3,7 +3,7 @@
  * so the DOM-rendered indicators remain visible during tab drag.
  */
 
-import { type ClientOf, SurfaceCap } from "bunite-core/rpc/renderer";
+import type { ClientOf, SurfaceCap } from "bunite-core/rpc/renderer";
 
 type SurfaceClient = ClientOf<typeof SurfaceCap>;
 
@@ -15,7 +15,9 @@ function getSurfaceCap(): Promise<SurfaceClient> {
   if (!window.host?.runtime) return Promise.reject(new Error("host preload not ready"));
   const attempt = window.host.runtime().then((r) => r.surface());
   _surfaceCap = attempt;
-  attempt.catch(() => { if (_surfaceCap === attempt) _surfaceCap = null; });
+  attempt.catch(() => {
+    if (_surfaceCap === attempt) _surfaceCap = null;
+  });
   return attempt;
 }
 
@@ -28,7 +30,7 @@ export function setupDropIndicatorMasks() {
   function syncMasks() {
     const dpr = devicePixelRatio || 1;
     const indicators = document.querySelectorAll<HTMLElement>(
-      ".dv-drop-target-anchor, .dv-drop-target-selection"
+      ".dv-drop-target-anchor, .dv-drop-target-selection",
     );
     for (const wv of document.querySelectorAll<HTMLElement>("bunite-webview")) {
       const wr = wv.getBoundingClientRect();
@@ -46,12 +48,16 @@ export function setupDropIndicatorMasks() {
         const oy2 = Math.min(wr.bottom, ir.bottom);
         if (ox < ox2 && oy < oy2) {
           masks.push({
-            x: Math.round(ox * dpr), y: Math.round(oy * dpr),
-            w: Math.round((ox2 - ox) * dpr), h: Math.round((oy2 - oy) * dpr)
+            x: Math.round(ox * dpr),
+            y: Math.round(oy * dpr),
+            w: Math.round((ox2 - ox) * dpr),
+            h: Math.round((oy2 - oy) * dpr),
           });
         }
       }
-      void getSurfaceCap().then((s) => s.setMasks({ surfaceId: sid, masks })).catch(() => {});
+      void getSurfaceCap()
+        .then((s) => s.setMasks({ surfaceId: sid, masks }))
+        .catch(() => {});
     }
   }
 
@@ -59,18 +65,37 @@ export function setupDropIndicatorMasks() {
     for (const wv of document.querySelectorAll<HTMLElement>("bunite-webview")) {
       const sid = (wv as WebviewElement)._surfaceId;
       if (sid == null) continue;
-      void getSurfaceCap().then((s) => s.setMasks({ surfaceId: sid, masks: [] })).catch(() => {});
+      void getSurfaceCap()
+        .then((s) => s.setMasks({ surfaceId: sid, masks: [] }))
+        .catch(() => {});
     }
   }
 
-  function endDrag() { dragging = false; clearAll(); }
+  function endDrag() {
+    dragging = false;
+    clearAll();
+  }
 
-  document.addEventListener("dragstart", () => { dragging = true; syncMasks(); }, true);
-  document.addEventListener("dragover", () => {
-    if (scheduled) return;
-    scheduled = true;
-    requestAnimationFrame(() => { scheduled = false; if (dragging) syncMasks(); });
-  }, true);
+  document.addEventListener(
+    "dragstart",
+    () => {
+      dragging = true;
+      syncMasks();
+    },
+    true,
+  );
+  document.addEventListener(
+    "dragover",
+    () => {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        if (dragging) syncMasks();
+      });
+    },
+    true,
+  );
   document.addEventListener("dragend", endDrag, true);
   document.addEventListener("drop", endDrag, true);
 }

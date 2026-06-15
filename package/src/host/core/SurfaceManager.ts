@@ -1,16 +1,27 @@
-import { BrowserView } from "./BrowserView";
 import {
-  trackSurface, untrackSurface, getOwnedSurface,
-  getHostSurfaceIds, getSurfaceRecord, onSurfaceDispose,
-  MAX_SURFACES_PER_HOST
-} from "./SurfaceRegistry";
-import {
-  SurfaceCap, type ImplOf, IpcError,
-  type SurfaceEvent, type SurfaceEventBase, type DialogEvent, type ConsoleEntry,
-  type NavigationState, type DownloadEvent, type WaitForDownloadResult,
+  type ConsoleEntry,
+  type DialogEvent,
+  type DownloadEvent,
+  type ImplOf,
+  IpcError,
+  type NavigationState,
+  type SurfaceCap,
+  type SurfaceEvent,
+  type SurfaceEventBase,
+  type WaitForDownloadResult,
 } from "../../rpc/index";
 import { Stream } from "../../rpc/stream";
 import { log } from "../log";
+import { BrowserView } from "./BrowserView";
+import {
+  getHostSurfaceIds,
+  getOwnedSurface,
+  getSurfaceRecord,
+  MAX_SURFACES_PER_HOST,
+  onSurfaceDispose,
+  trackSurface,
+  untrackSurface,
+} from "./SurfaceRegistry";
 
 function applyHostOffset(hostView: BrowserView, x: number, y: number) {
   return { x: x + hostView.frame.x, y: y + hostView.frame.y };
@@ -26,11 +37,7 @@ export function onSurfaceInit(cb: SurfaceInitCallback) {
 type SurfaceEventEmit = (event: { surfaceId: number; event: SurfaceEvent }) => void;
 const surfaceEventSubs = new Map<number, Set<SurfaceEventEmit>>();
 
-export function emitSurfaceEvent(
-  hostViewId: number,
-  surfaceId: number,
-  event: SurfaceEventBase,
-) {
+export function emitSurfaceEvent(hostViewId: number, surfaceId: number, event: SurfaceEventBase) {
   // Drop late events after dispose so dead surfaceIds don't resurrect state.
   if (!getSurfaceRecord(surfaceId)) return;
   // Mutate before the subscriber guard so `getNavigationState` stays correct.
@@ -70,7 +77,7 @@ type PendingPopup = {
   url: string;
   disposition: "tab" | "window" | "popup";
   timer: ReturnType<typeof setTimeout> | null;
-  armTs: number;  // arm emit timestamp for the 60s extend cap
+  armTs: number; // arm emit timestamp for the 60s extend cap
 };
 const pendingPopups = new Map<number, PendingPopup>();
 const POPUP_ADOPT_TIMEOUT_MS = 5000;
@@ -90,7 +97,9 @@ function recordResolution(id: number, kind: "adopted" | "dismissed") {
 
 // Process-lifetime popup lifecycle counters; surfaced via RuntimeCap.popupMetrics.
 const popupCounters = { armed: 0, adopted: 0, dismissed: 0, timeoutFired: 0, extended: 0 };
-export function getPopupMetricsSnapshot() { return { ...popupCounters }; }
+export function getPopupMetricsSnapshot() {
+  return { ...popupCounters };
+}
 
 /** Called when a backend mints a popup view. Stashes the pending adoption +
  *  arms a timer that auto-dismisses if the host doesn't respond. */
@@ -132,7 +141,10 @@ type DownloadWaiter = {
   pendingId: string | null;
 };
 const downloadWaiters = new Map<number, DownloadWaiter[]>();
-const downloadStartedMeta = new Map<number, Map<string, { url: string; suggestedFilename: string; mimeType?: string; sizeBytes?: number }>>();
+const downloadStartedMeta = new Map<
+  number,
+  Map<string, { url: string; suggestedFilename: string; mimeType?: string; sizeBytes?: number }>
+>();
 // Recent started events that no waiter has claimed yet — lets a `waitForDownload`
 // registered *after* the started event still bind. Per-surface, trimmed to 30s.
 const recentUnownedStarts = new Map<number, { id: string; ts: number }[]>();
@@ -140,23 +152,36 @@ const recentUnownedStarts = new Map<number, { id: string; ts: number }[]>();
 export function emitDownload(hostViewId: number, surfaceId: number, event: DownloadEvent) {
   if (event.kind === "started") {
     let bySurface = downloadStartedMeta.get(surfaceId);
-    if (!bySurface) { bySurface = new Map(); downloadStartedMeta.set(surfaceId, bySurface); }
-    bySurface.set(event.id, { url: event.url, suggestedFilename: event.suggestedFilename, mimeType: event.mimeType, sizeBytes: event.sizeBytes });
+    if (!bySurface) {
+      bySurface = new Map();
+      downloadStartedMeta.set(surfaceId, bySurface);
+    }
+    bySurface.set(event.id, {
+      url: event.url,
+      suggestedFilename: event.suggestedFilename,
+      mimeType: event.mimeType,
+      sizeBytes: event.sizeBytes,
+    });
     // Track unowned started events so a waitForDownload registering AFTER the
     // started event can still bind. Trimmed to recent 30s on each insert.
     let recents = recentUnownedStarts.get(surfaceId);
-    if (!recents) { recents = []; recentUnownedStarts.set(surfaceId, recents); }
+    if (!recents) {
+      recents = [];
+      recentUnownedStarts.set(surfaceId, recents);
+    }
     const now = Date.now();
     recents.push({ id: event.id, ts: now });
     while (recents.length && now - recents[0].ts > 30_000) recents.shift();
     const queue = downloadWaiters.get(surfaceId);
-    if (queue) for (const w of queue) if (w.pendingId === null) {
-      w.pendingId = event.id;
-      // Take the unowned entry out — it's now bound.
-      const idx = recents.findIndex((r) => r.id === event.id);
-      if (idx >= 0) recents.splice(idx, 1);
-      break;
-    }
+    if (queue)
+      for (const w of queue)
+        if (w.pendingId === null) {
+          w.pendingId = event.id;
+          // Take the unowned entry out — it's now bound.
+          const idx = recents.findIndex((r) => r.id === event.id);
+          if (idx >= 0) recents.splice(idx, 1);
+          break;
+        }
   }
   const subs = downloadSubs.get(hostViewId);
   if (subs) for (const emit of subs) emit({ surfaceId, event });
@@ -172,9 +197,13 @@ export function emitDownload(hostViewId: number, surfaceId: number, event: Downl
         if (event.kind === "completed") {
           const meta = downloadStartedMeta.get(surfaceId)?.get(event.id);
           waiter.resolve({
-            ok: true, id: event.id, localPath: event.localPath,
-            url: meta?.url ?? "", suggestedFilename: meta?.suggestedFilename ?? "",
-            mimeType: meta?.mimeType, sizeBytes: meta?.sizeBytes,
+            ok: true,
+            id: event.id,
+            localPath: event.localPath,
+            url: meta?.url ?? "",
+            suggestedFilename: meta?.suggestedFilename ?? "",
+            mimeType: meta?.mimeType,
+            sizeBytes: meta?.sizeBytes,
           });
         } else if (event.kind === "failed") {
           waiter.resolve({ ok: false, code: "failed", message: event.reason });
@@ -199,7 +228,7 @@ type PendingDialog = {
 
 type SurfaceState = {
   consoleBuffer: ConsoleEntry[];
-  dialogTimeoutMs: number | null;  // null = no auto-dismiss
+  dialogTimeoutMs: number | null; // null = no auto-dismiss
   pendingDialogs: Map<number, PendingDialog>;
   lastLoadEpoch: number;
   isLoading: boolean;
@@ -232,7 +261,8 @@ export function disposeSurfaceState(surfaceId: number) {
   }
   const waiters = downloadWaiters.get(surfaceId);
   if (waiters) {
-    for (const w of waiters) w.resolve({ ok: false, code: "not_supported", message: "surface destroyed" });
+    for (const w of waiters)
+      w.resolve({ ok: false, code: "not_supported", message: "surface destroyed" });
     downloadWaiters.delete(surfaceId);
   }
   downloadStartedMeta.delete(surfaceId);
@@ -249,8 +279,16 @@ export function clearConsoleBuffer(surfaceId: number) {
 
 export function emitDialog(hostViewId: number, surfaceId: number, event: DialogEvent) {
   const subs = dialogSubs.get(hostViewId);
-  log.debug("dialog/emit hostViewId=" + hostViewId + " surfaceId=" + surfaceId +
-            " kind=" + (event as { kind?: string }).kind + " subscribers=" + (subs?.size ?? 0));
+  log.debug(
+    "dialog/emit hostViewId=" +
+      hostViewId +
+      " surfaceId=" +
+      surfaceId +
+      " kind=" +
+      (event as { kind?: string }).kind +
+      " subscribers=" +
+      (subs?.size ?? 0),
+  );
   if (!subs) return;
   for (const emit of subs) emit({ surfaceId, event });
 }
@@ -271,10 +309,23 @@ export function emitConsole(hostViewId: number, surfaceId: number, entry: Consol
 export function registerDialogRequest(
   hostViewId: number,
   surfaceId: number,
-  request: { requestId: number; kind: "alert" | "confirm" | "prompt" | "beforeunload"; message: string; defaultPrompt?: string }
+  request: {
+    requestId: number;
+    kind: "alert" | "confirm" | "prompt" | "beforeunload";
+    message: string;
+    defaultPrompt?: string;
+  },
 ) {
-  log.debug("dialog/register hostViewId=" + hostViewId + " surfaceId=" + surfaceId +
-            " kind=" + request.kind + " rid=" + request.requestId);
+  log.debug(
+    "dialog/register hostViewId=" +
+      hostViewId +
+      " surfaceId=" +
+      surfaceId +
+      " kind=" +
+      request.kind +
+      " rid=" +
+      request.requestId,
+  );
   const state = getOrCreateState(surfaceId);
   const view = getSurfaceRecord(surfaceId)?.view;
 
@@ -324,12 +375,17 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
   return {
     init: async ({ src, x, y, width, height, hidden = false }) => {
       const hostView = BrowserView.getById(hostViewId);
-      if (!hostView) throw new IpcError({ code: "not_found", message: `Host view not found: ${hostViewId}` });
-      if (!hostView.windowId) throw new IpcError({ code: "failed_precondition", message: `Host window not found` });
+      if (!hostView)
+        throw new IpcError({ code: "not_found", message: `Host view not found: ${hostViewId}` });
+      if (!hostView.windowId)
+        throw new IpcError({ code: "failed_precondition", message: `Host window not found` });
 
       const hostIds = getHostSurfaceIds(hostViewId);
       if (hostIds && hostIds.size >= MAX_SURFACES_PER_HOST) {
-        throw new IpcError({ code: "resource_exhausted", message: `Surface limit reached (${MAX_SURFACES_PER_HOST})` });
+        throw new IpcError({
+          code: "resource_exhausted",
+          message: `Surface limit reached (${MAX_SURFACES_PER_HOST})`,
+        });
       }
 
       const offset = applyHostOffset(hostView, x, y);
@@ -347,10 +403,14 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       } catch {
         untrackSurface(view.id);
         view.remove();
-        throw new IpcError({ code: "unavailable", message: "Surface browser creation failed or timed out" });
+        throw new IpcError({
+          code: "unavailable",
+          message: "Surface browser creation failed or timed out",
+        });
       }
       for (const cb of initCallbacks) cb(view.id, hostViewId, view);
-      if (hidden) view.setVisible(false); else view.bringToFront();
+      if (hidden) view.setVisible(false);
+      else view.bringToFront();
       return { surfaceId: view.id };
     },
 
@@ -385,12 +445,14 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       const hostView = BrowserView.getById(hostViewId);
       if (!hostView) return;
       const offset = applyHostOffset(hostView, 0, 0);
-      record.view.setMaskRegion(masks.map((m) => ({
-        x: m.x + offset.x,
-        y: m.y + offset.y,
-        w: m.w,
-        h: m.h,
-      })));
+      record.view.setMaskRegion(
+        masks.map((m) => ({
+          x: m.x + offset.x,
+          y: m.y + offset.y,
+          w: m.w,
+          h: m.h,
+        })),
+      );
     },
 
     setAllPassthrough: ({ passthrough }) => {
@@ -464,47 +526,66 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
 
     screenshot: async ({ surfaceId, format = "png", quality = 90 }) => {
       const record = ownedSurface(surfaceId);
-      if (!record) return { ok: false as const, code: "not_supported" as const, message: "surface not found" };
+      if (!record)
+        return { ok: false as const, code: "not_supported" as const, message: "surface not found" };
       return record.view.screenshot(format, quality);
     },
 
     waitForSelector: async ({ surfaceId, selector, timeoutMs = 5000, frameId }) => {
       const record = ownedSurface(surfaceId);
-      if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
+      if (!record)
+        return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
       const deadline = Date.now() + timeoutMs;
       const expr = `!!document.querySelector(${JSON.stringify(selector)})`;
       while (Date.now() < deadline) {
         const res = await record.view.evaluate(expr, frameId);
         if (res.ok && res.value === true) return { ok: true as const };
         if (!res.ok && res.code !== "timeout") {
-          const code = res.code === "cross_origin" ? "cross_origin" as const : "runtime_error" as const;
+          const code =
+            res.code === "cross_origin" ? ("cross_origin" as const) : ("runtime_error" as const);
           return { ok: false as const, code, message: res.message };
         }
         await new Promise((r) => setTimeout(r, 50));
       }
-      return { ok: false as const, code: "timeout" as const, message: `selector ${JSON.stringify(selector)} not found within ${timeoutMs}ms` };
+      return {
+        ok: false as const,
+        code: "timeout" as const,
+        message: `selector ${JSON.stringify(selector)} not found within ${timeoutMs}ms`,
+      };
     },
 
-    waitForFunction: async ({ surfaceId, expression, timeoutMs = 5000, pollIntervalMs = 50, frameId }) => {
+    waitForFunction: async ({
+      surfaceId,
+      expression,
+      timeoutMs = 5000,
+      pollIntervalMs = 50,
+      frameId,
+    }) => {
       const record = ownedSurface(surfaceId);
-      if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
+      if (!record)
+        return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
         const res = await record.view.evaluate(expression, frameId);
         if (res.ok && res.value) return { ok: true as const };
         if (!res.ok && res.code !== "timeout") {
-          const code = res.code === "cross_origin" ? "cross_origin" as const : "runtime_error" as const;
+          const code =
+            res.code === "cross_origin" ? ("cross_origin" as const) : ("runtime_error" as const);
           return { ok: false as const, code, message: res.message };
         }
         await new Promise((r) => setTimeout(r, pollIntervalMs));
       }
-      return { ok: false as const, code: "timeout" as const, message: `function did not satisfy within ${timeoutMs}ms` };
+      return {
+        ok: false as const,
+        code: "timeout" as const,
+        message: `function did not satisfy within ${timeoutMs}ms`,
+      };
     },
 
     respondToDialog: ({ surfaceId, requestId, accept, text }) => {
       const record = ownedSurface(surfaceId);
       if (!record) return;
-      if (!consumePendingDialog(surfaceId, requestId)) return;  // stale or already auto-dismissed
+      if (!consumePendingDialog(surfaceId, requestId)) return; // stale or already auto-dismissed
       record.view.respondToDialog(requestId, accept, text);
     },
 
@@ -528,53 +609,82 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       const record = ownedSurface(surfaceId);
       if (!record) {
         return {
-          evaluate: false, crossOriginEval: false, surfaceEvents: false,
-          nativeInputTrusted: false, click: false, type: false, press: false,
-          scroll: false, mouse: false, dialogs: false, console: false,
-          screenshot: false, accessibilitySnapshot: false, getBoundingRect: false,
-          frames: false, downloads: false, popups: false, resolveAndClick: false,
+          evaluate: false,
+          crossOriginEval: false,
+          surfaceEvents: false,
+          nativeInputTrusted: false,
+          click: false,
+          type: false,
+          press: false,
+          scroll: false,
+          mouse: false,
+          dialogs: false,
+          console: false,
+          screenshot: false,
+          accessibilitySnapshot: false,
+          getBoundingRect: false,
+          frames: false,
+          downloads: false,
+          popups: false,
+          resolveAndClick: false,
         };
       }
       return record.view.capabilities();
     },
 
-    surfaceEvents: ({ surfaceId: filterId }) => Stream.from<SurfaceEvent>((emit, signal) => {
-      let subs = surfaceEventSubs.get(hostViewId);
-      if (!subs) {
-        subs = new Set();
-        surfaceEventSubs.set(hostViewId, subs);
-      }
-      const wrapped: SurfaceEventEmit = ({ surfaceId, event }) => {
-        if (surfaceId === filterId) emit(event);
-      };
-      subs.add(wrapped);
-      signal.addEventListener("abort", () => {
-        const set = surfaceEventSubs.get(hostViewId);
-        if (!set) return;
-        set.delete(wrapped);
-        if (set.size === 0) surfaceEventSubs.delete(hostViewId);
-      });
-    }),
+    surfaceEvents: ({ surfaceId: filterId }) =>
+      Stream.from<SurfaceEvent>((emit, signal) => {
+        let subs = surfaceEventSubs.get(hostViewId);
+        if (!subs) {
+          subs = new Set();
+          surfaceEventSubs.set(hostViewId, subs);
+        }
+        const wrapped: SurfaceEventEmit = ({ surfaceId, event }) => {
+          if (surfaceId === filterId) emit(event);
+        };
+        subs.add(wrapped);
+        signal.addEventListener("abort", () => {
+          const set = surfaceEventSubs.get(hostViewId);
+          if (!set) return;
+          set.delete(wrapped);
+          if (set.size === 0) surfaceEventSubs.delete(hostViewId);
+        });
+      }),
 
-    dialogs: ({ surfaceId: filterId }) => Stream.from<DialogEvent>((emit, signal) => {
-      let subs = dialogSubs.get(hostViewId);
-      if (!subs) {
-        subs = new Set();
-        dialogSubs.set(hostViewId, subs);
-      }
-      const wrapped: DialogEmit = ({ surfaceId, event }) => {
-        if (surfaceId === filterId) emit(event);
-      };
-      subs.add(wrapped);
-      log.debug("dialog/subscribe hostViewId=" + hostViewId + " filterId=" + filterId + " total=" + subs.size);
-      signal.addEventListener("abort", () => {
-        const set = dialogSubs.get(hostViewId);
-        if (!set) return;
-        set.delete(wrapped);
-        log.debug("dialog/unsubscribe hostViewId=" + hostViewId + " filterId=" + filterId + " remaining=" + set.size);
-        if (set.size === 0) dialogSubs.delete(hostViewId);
-      });
-    }),
+    dialogs: ({ surfaceId: filterId }) =>
+      Stream.from<DialogEvent>((emit, signal) => {
+        let subs = dialogSubs.get(hostViewId);
+        if (!subs) {
+          subs = new Set();
+          dialogSubs.set(hostViewId, subs);
+        }
+        const wrapped: DialogEmit = ({ surfaceId, event }) => {
+          if (surfaceId === filterId) emit(event);
+        };
+        subs.add(wrapped);
+        log.debug(
+          "dialog/subscribe hostViewId=" +
+            hostViewId +
+            " filterId=" +
+            filterId +
+            " total=" +
+            subs.size,
+        );
+        signal.addEventListener("abort", () => {
+          const set = dialogSubs.get(hostViewId);
+          if (!set) return;
+          set.delete(wrapped);
+          log.debug(
+            "dialog/unsubscribe hostViewId=" +
+              hostViewId +
+              " filterId=" +
+              filterId +
+              " remaining=" +
+              set.size,
+          );
+          if (set.size === 0) dialogSubs.delete(hostViewId);
+        });
+      }),
 
     getNavigationState: ({ surfaceId }): NavigationState => {
       const record = ownedSurface(surfaceId);
@@ -589,79 +699,124 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
 
     accessibilitySnapshot: async ({ surfaceId, interestingOnly = true }) => {
       const record = ownedSurface(surfaceId);
-      if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
+      if (!record)
+        return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
       return record.view.accessibilitySnapshot(interestingOnly);
     },
 
     getBoundingRect: async ({ surfaceId, selector, frameId }) => {
       const record = ownedSurface(surfaceId);
-      if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
+      if (!record)
+        return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
       const expr = `(function(){var el=document.querySelector(${JSON.stringify(selector)});if(!el)return null;var r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,visible:r.width>0&&r.height>0&&r.bottom>0&&r.right>0&&r.top<innerHeight&&r.left<innerWidth};})()`;
       const res = await record.view.evaluate(expr, frameId);
       if (!res.ok) {
-        const code = res.code === "cross_origin" ? "cross_origin" as const
-          : res.code === "not_supported" ? "not_supported" as const
-          : "runtime_error" as const;
+        const code =
+          res.code === "cross_origin"
+            ? ("cross_origin" as const)
+            : res.code === "not_supported"
+              ? ("not_supported" as const)
+              : ("runtime_error" as const);
         return { ok: false as const, code, message: res.message };
       }
-      const v = res.value as null | { x: number; y: number; width: number; height: number; visible: boolean };
-      if (!v) return { ok: false as const, code: "not_found" as const, message: `selector ${JSON.stringify(selector)} not found` };
-      return { ok: true as const, rect: { x: v.x, y: v.y, width: v.width, height: v.height }, visible: v.visible };
+      const v = res.value as null | {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        visible: boolean;
+      };
+      if (!v)
+        return {
+          ok: false as const,
+          code: "not_found" as const,
+          message: `selector ${JSON.stringify(selector)} not found`,
+        };
+      return {
+        ok: true as const,
+        rect: { x: v.x, y: v.y, width: v.width, height: v.height },
+        visible: v.visible,
+      };
     },
 
     listFrames: async ({ surfaceId }) => {
       const record = ownedSurface(surfaceId);
-      if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
+      if (!record)
+        return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
       return record.view.listFrames();
     },
 
     resolveAndClick: async (args) => {
       const record = ownedSurface(args.surfaceId);
-      if (!record) return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
+      if (!record)
+        return { ok: false as const, code: "runtime_error" as const, message: "surface not found" };
       if (!record.view.capabilities().resolveAndClick) {
-        return { ok: false as const, code: "not_supported" as const, message: "resolveAndClick not supported on this backend" };
+        return {
+          ok: false as const,
+          code: "not_supported" as const,
+          message: "resolveAndClick not supported on this backend",
+        };
       }
       return record.view.resolveAndClick(args);
     },
 
-    downloadEvents: ({ surfaceId: filterId }) => Stream.from<DownloadEvent>((emit, signal) => {
-      let subs = downloadSubs.get(hostViewId);
-      if (!subs) { subs = new Set(); downloadSubs.set(hostViewId, subs); }
-      const wrapped: DownloadEmit = ({ surfaceId, event }) => {
-        if (surfaceId === filterId) emit(event);
-      };
-      subs.add(wrapped);
-      signal.addEventListener("abort", () => {
-        const set = downloadSubs.get(hostViewId);
-        if (!set) return;
-        set.delete(wrapped);
-        if (set.size === 0) downloadSubs.delete(hostViewId);
-      });
-    }),
+    downloadEvents: ({ surfaceId: filterId }) =>
+      Stream.from<DownloadEvent>((emit, signal) => {
+        let subs = downloadSubs.get(hostViewId);
+        if (!subs) {
+          subs = new Set();
+          downloadSubs.set(hostViewId, subs);
+        }
+        const wrapped: DownloadEmit = ({ surfaceId, event }) => {
+          if (surfaceId === filterId) emit(event);
+        };
+        subs.add(wrapped);
+        signal.addEventListener("abort", () => {
+          const set = downloadSubs.get(hostViewId);
+          if (!set) return;
+          set.delete(wrapped);
+          if (set.size === 0) downloadSubs.delete(hostViewId);
+        });
+      }),
 
     waitForDownload: async ({ surfaceId, timeoutMs = 30000 }) => {
       const record = ownedSurface(surfaceId);
-      if (!record) return { ok: false as const, code: "not_supported" as const, message: "surface not found" };
+      if (!record)
+        return { ok: false as const, code: "not_supported" as const, message: "surface not found" };
       if (!record.view.capabilities().downloads) {
-        return { ok: false as const, code: "not_supported" as const, message: "downloads not supported on this backend" };
+        return {
+          ok: false as const,
+          code: "not_supported" as const,
+          message: "downloads not supported on this backend",
+        };
       }
       return new Promise<WaitForDownloadResult>((resolve) => {
         // If a `started` already arrived without a waiter, consume it.
         const recents = recentUnownedStarts.get(surfaceId);
         const claimed = recents?.shift();
         const waiter: DownloadWaiter = {
-          resolve: (r) => { clearTimeout(timer); resolve(r); },
+          resolve: (r) => {
+            clearTimeout(timer);
+            resolve(r);
+          },
           pendingId: claimed?.id ?? null,
         };
         let queue = downloadWaiters.get(surfaceId);
-        if (!queue) { queue = []; downloadWaiters.set(surfaceId, queue); }
+        if (!queue) {
+          queue = [];
+          downloadWaiters.set(surfaceId, queue);
+        }
         queue.push(waiter);
         const timer = setTimeout(() => {
           const q = downloadWaiters.get(surfaceId);
           if (!q) return;
           const idx = q.indexOf(waiter);
           if (idx >= 0) q.splice(idx, 1);
-          resolve({ ok: false, code: "timeout", message: `no download started within ${timeoutMs}ms` });
+          resolve({
+            ok: false,
+            code: "timeout",
+            message: `no download started within ${timeoutMs}ms`,
+          });
         }, timeoutMs);
       });
     },
@@ -669,27 +824,40 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
     setDownloadPolicy: ({ surfaceId, policy, downloadDir }) => {
       const record = ownedSurface(surfaceId);
       if (!record) return;
-      if (!record.view.capabilities().downloads) return;  // mac/linux silent no-op signal — caller should gate on cap.
+      if (!record.view.capabilities().downloads) return; // mac/linux silent no-op signal — caller should gate on cap.
       record.view.setDownloadPolicy(policy, downloadDir);
     },
 
     acceptPopup: async ({ newSurfaceId, hostViewId: targetHostId, bounds }) => {
       const pending = pendingPopups.get(newSurfaceId);
-      if (!pending) return { ok: false as const, code: "not_found" as const, message: "popup not pending" };
+      if (!pending)
+        return { ok: false as const, code: "not_found" as const, message: "popup not pending" };
       // Only the opener's host page can adopt the popup. The target host
       // (where the new pane lands) is a separate decision.
       if (pending.openerHostViewId !== hostViewId) {
-        return { ok: false as const, code: "not_found" as const, message: "popup not owned by this host" };
+        return {
+          ok: false as const,
+          code: "not_found" as const,
+          message: "popup not owned by this host",
+        };
       }
       const targetHost = BrowserView.getById(targetHostId);
-      if (!targetHost || !targetHost.windowId) {
+      if (!targetHost?.windowId) {
         // Don't consume pending state on validation failure — host can retry
         // with a different target until the auto-dismiss timer fires.
-        return { ok: false as const, code: "host_view_invalid" as const, message: "host view not found" };
+        return {
+          ok: false as const,
+          code: "host_view_invalid" as const,
+          message: "host view not found",
+        };
       }
       const existing = getHostSurfaceIds(targetHostId);
       if (existing && existing.size >= MAX_SURFACES_PER_HOST) {
-        return { ok: false as const, code: "host_view_invalid" as const, message: `host surface limit reached (${MAX_SURFACES_PER_HOST})` };
+        return {
+          ok: false as const,
+          code: "host_view_invalid" as const,
+          message: `host surface limit reached (${MAX_SURFACES_PER_HOST})`,
+        };
       }
       if (pending.timer) clearTimeout(pending.timer);
       pendingPopups.delete(newSurfaceId);
@@ -710,7 +878,7 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
     dismissPopup: ({ newSurfaceId }) => {
       const pending = pendingPopups.get(newSurfaceId);
       if (!pending) return;
-      if (pending.openerHostViewId !== hostViewId) return;  // not this host's popup
+      if (pending.openerHostViewId !== hostViewId) return; // not this host's popup
       if (pending.timer) clearTimeout(pending.timer);
       pendingPopups.delete(newSurfaceId);
       recordResolution(newSurfaceId, "dismissed");
@@ -719,23 +887,41 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
 
     extendPopupTimeout: ({ newSurfaceId, gracePeriodMs }) => {
       if (!Number.isFinite(gracePeriodMs) || gracePeriodMs <= 0) {
-        return { ok: false as const, code: "not_found" as const, message: "gracePeriodMs must be a positive finite number" };
+        return {
+          ok: false as const,
+          code: "not_found" as const,
+          message: "gracePeriodMs must be a positive finite number",
+        };
       }
       const pending = pendingPopups.get(newSurfaceId);
       if (!pending) {
         const prior = popupResolutionLog.get(newSurfaceId);
-        if (prior === "adopted") return { ok: false as const, code: "already_adopted" as const, message: "popup adopted" };
-        if (prior === "dismissed") return { ok: false as const, code: "already_dismissed" as const, message: "popup dismissed" };
+        if (prior === "adopted")
+          return { ok: false as const, code: "already_adopted" as const, message: "popup adopted" };
+        if (prior === "dismissed")
+          return {
+            ok: false as const,
+            code: "already_dismissed" as const,
+            message: "popup dismissed",
+          };
         return { ok: false as const, code: "not_found" as const, message: "popup not pending" };
       }
       if (pending.openerHostViewId !== hostViewId) {
-        return { ok: false as const, code: "not_found" as const, message: "popup not owned by this host" };
+        return {
+          ok: false as const,
+          code: "not_found" as const,
+          message: "popup not owned by this host",
+        };
       }
       const now = Date.now();
       const requested = now + gracePeriodMs;
       const cap = pending.armTs + POPUP_EXTEND_CAP_MS;
       if (requested > cap) {
-        return { ok: false as const, code: "cap_exceeded" as const, message: `extend exceeds ${POPUP_EXTEND_CAP_MS}ms cap since arm` };
+        return {
+          ok: false as const,
+          code: "cap_exceeded" as const,
+          message: `extend exceeds ${POPUP_EXTEND_CAP_MS}ms cap since arm`,
+        };
       }
       if (pending.timer) clearTimeout(pending.timer);
       pending.timer = setTimeout(() => {
@@ -748,22 +934,23 @@ export function createSurfaceCapImpl(hostViewId: number): ImplOf<typeof SurfaceC
       return { ok: true as const, deadlineMs: requested };
     },
 
-    consoleEvents: ({ surfaceId: filterId }) => Stream.from<ConsoleEntry>((emit, signal) => {
-      let subs = consoleSubs.get(hostViewId);
-      if (!subs) {
-        subs = new Set();
-        consoleSubs.set(hostViewId, subs);
-      }
-      const wrapped: ConsoleEmit = ({ surfaceId, entry }) => {
-        if (surfaceId === filterId) emit(entry);
-      };
-      subs.add(wrapped);
-      signal.addEventListener("abort", () => {
-        const set = consoleSubs.get(hostViewId);
-        if (!set) return;
-        set.delete(wrapped);
-        if (set.size === 0) consoleSubs.delete(hostViewId);
-      });
-    }),
+    consoleEvents: ({ surfaceId: filterId }) =>
+      Stream.from<ConsoleEntry>((emit, signal) => {
+        let subs = consoleSubs.get(hostViewId);
+        if (!subs) {
+          subs = new Set();
+          consoleSubs.set(hostViewId, subs);
+        }
+        const wrapped: ConsoleEmit = ({ surfaceId, entry }) => {
+          if (surfaceId === filterId) emit(entry);
+        };
+        subs.add(wrapped);
+        signal.addEventListener("abort", () => {
+          const set = consoleSubs.get(hostViewId);
+          if (!set) return;
+          set.delete(wrapped);
+          if (set.size === 0) consoleSubs.delete(hostViewId);
+        });
+      }),
   };
 }

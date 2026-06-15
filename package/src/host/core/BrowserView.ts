@@ -1,32 +1,47 @@
 import { ptr } from "bun:ffi";
-import { buildViewPreloadScript } from "../preloadBundle";
-import { log } from "../log";
-import { buniteEventEmitter } from "../events/eventEmitter";
+import { randomBytes } from "node:crypto";
+import type {
+  AccessibilitySnapshotResult,
+  AxNode,
+  EvaluateResult,
+  ListFramesResult,
+  Modifier,
+  ResolveAndClickArgs,
+  ResolveAndClickResult,
+  ScreenshotResult,
+  SurfaceCapabilities,
+} from "../../rpc/framework";
 import {
+  type BytesPipe,
+  type Connection,
   createConnection,
   createFrameTransport,
-  type Connection,
-  type BytesPipe,
 } from "../../rpc/index";
-import type {
-  EvaluateResult, SurfaceCapabilities, ScreenshotResult, Modifier,
-  AccessibilitySnapshotResult, AxNode, ListFramesResult,
-  ResolveAndClickArgs, ResolveAndClickResult,
-} from "../../rpc/framework";
-import { encodeModifiers, resolveKey } from "./inputDispatch";
 import { createEncryptedPipe } from "../encryptedPipe";
+import { buniteEventEmitter } from "../events/eventEmitter";
+import { log } from "../log";
 import {
-  ensureNativeRuntime, getNativeLibrary, toCString, waitForViewReady, cancelWaitForViewReady,
-  setEvaluateResultHandler, type NativeEvaluateResult,
-  setScreenshotResultHandler, type NativeScreenshotResult,
-  setAccessibilityResultHandler, type NativeAccessibilityResult,
-  setListFramesResultHandler, type NativeListFramesResult,
-  setResolveAndClickResultHandler, type NativeResolveAndClickResult,
+  cancelWaitForViewReady,
+  ensureNativeRuntime,
+  getNativeLibrary,
+  type NativeAccessibilityResult,
+  type NativeEvaluateResult,
+  type NativeListFramesResult,
+  type NativeResolveAndClickResult,
+  type NativeScreenshotResult,
+  setAccessibilityResultHandler,
+  setEvaluateResultHandler,
+  setListFramesResultHandler,
+  setResolveAndClickResultHandler,
+  setScreenshotResultHandler,
+  toCString,
+  waitForViewReady,
 } from "../native";
-import { attachBrowserViewRegistry, getRpcPort } from "./Socket";
-import { getAppRuntimeOrThrow } from "./App";
-import { randomBytes } from "node:crypto";
 import { resolveDefaultAppResRoot } from "../paths";
+import { buildViewPreloadScript } from "../preloadBundle";
+import { getAppRuntimeOrThrow } from "./App";
+import { encodeModifiers, resolveKey } from "./inputDispatch";
+import { attachBrowserViewRegistry, getRpcPort } from "./Socket";
 import { removeSurfacesForHostView } from "./SurfaceRegistry";
 
 const BrowserViewMap: Record<number, BrowserView> = {};
@@ -40,7 +55,10 @@ type EvaluatePending = { viewId: number; resolve: (result: EvaluateResult) => vo
 let nextEvaluateRequestId = 1;
 const evaluateResolvers = new Map<number, EvaluatePending>();
 
-function registerEvaluateRequest(viewId: number, resolve: (result: EvaluateResult) => void): number {
+function registerEvaluateRequest(
+  viewId: number,
+  resolve: (result: EvaluateResult) => void,
+): number {
   const id = nextEvaluateRequestId++;
   evaluateResolvers.set(id, { viewId, resolve });
   return id;
@@ -61,7 +79,10 @@ type ScreenshotPending = { viewId: number; resolve: (result: ScreenshotResult) =
 let nextScreenshotRequestId = 1;
 const screenshotResolvers = new Map<number, ScreenshotPending>();
 
-function registerScreenshotRequest(viewId: number, resolve: (result: ScreenshotResult) => void): number {
+function registerScreenshotRequest(
+  viewId: number,
+  resolve: (result: ScreenshotResult) => void,
+): number {
   const id = nextScreenshotRequestId++;
   screenshotResolvers.set(id, { viewId, resolve });
   return id;
@@ -76,11 +97,19 @@ function rejectScreenshotsForView(viewId: number) {
   }
 }
 
-type AxPending = { viewId: number; resolve: (result: AccessibilitySnapshotResult) => void; interestingOnly: boolean };
+type AxPending = {
+  viewId: number;
+  resolve: (result: AccessibilitySnapshotResult) => void;
+  interestingOnly: boolean;
+};
 let nextAxRequestId = 1;
 const axResolvers = new Map<number, AxPending>();
 
-function registerAxRequest(viewId: number, resolve: (result: AccessibilitySnapshotResult) => void, interestingOnly: boolean): number {
+function registerAxRequest(
+  viewId: number,
+  resolve: (result: AccessibilitySnapshotResult) => void,
+  interestingOnly: boolean,
+): number {
   const id = nextAxRequestId++;
   axResolvers.set(id, { viewId, resolve, interestingOnly });
   return id;
@@ -124,7 +153,7 @@ function convertAxTree(cdpResult: { nodes?: any[] } | undefined, interestingOnly
   };
   const build = (n: any): AxNode => {
     const id = String(n?.nodeId ?? "");
-    if (id && seen.has(id)) return { nodeId: id, role: "", name: "" };  // cycle guard
+    if (id && seen.has(id)) return { nodeId: id, role: "", name: "" }; // cycle guard
     if (id) seen.add(id);
     const props = new Map<string, unknown>();
     if (Array.isArray(n?.properties)) {
@@ -139,15 +168,24 @@ function convertAxTree(cdpResult: { nodes?: any[] } | undefined, interestingOnly
     };
     if (n?.value?.value !== undefined) out.value = String(n.value.value);
     if (n?.description?.value !== undefined) out.description = String(n.description.value);
-    const level = props.get("level"); if (typeof level === "number") out.level = level;
-    const checked = props.get("checked"); if (checked === true || checked === false || checked === "mixed") out.checked = checked;
-    const pressed = props.get("pressed"); if (pressed === true || pressed === false || pressed === "mixed") out.pressed = pressed;
-    const expanded = props.get("expanded"); if (typeof expanded === "boolean") out.expanded = expanded;
-    const disabled = props.get("disabled"); if (typeof disabled === "boolean") out.disabled = disabled;
-    const focused = props.get("focused"); if (typeof focused === "boolean") out.focused = focused;
-    const invalid = props.get("invalid"); if (typeof invalid === "boolean") out.invalid = invalid;
-    const required = props.get("required"); if (typeof required === "boolean") out.required = required;
-    const selected = props.get("selected"); if (typeof selected === "boolean") out.selected = selected;
+    const level = props.get("level");
+    if (typeof level === "number") out.level = level;
+    const checked = props.get("checked");
+    if (checked === true || checked === false || checked === "mixed") out.checked = checked;
+    const pressed = props.get("pressed");
+    if (pressed === true || pressed === false || pressed === "mixed") out.pressed = pressed;
+    const expanded = props.get("expanded");
+    if (typeof expanded === "boolean") out.expanded = expanded;
+    const disabled = props.get("disabled");
+    if (typeof disabled === "boolean") out.disabled = disabled;
+    const focused = props.get("focused");
+    if (typeof focused === "boolean") out.focused = focused;
+    const invalid = props.get("invalid");
+    if (typeof invalid === "boolean") out.invalid = invalid;
+    const required = props.get("required");
+    if (typeof required === "boolean") out.required = required;
+    const selected = props.get("selected");
+    if (typeof selected === "boolean") out.selected = selected;
     const kids = interestingDescendants(n).map(build);
     if (kids.length > 0) out.children = kids;
     return out;
@@ -158,7 +196,10 @@ function convertAxTree(cdpResult: { nodes?: any[] } | undefined, interestingOnly
 type FramesPending = { viewId: number; resolve: (result: ListFramesResult) => void };
 let nextFramesRequestId = 1;
 const framesResolvers = new Map<number, FramesPending>();
-function registerFramesRequest(viewId: number, resolve: (result: ListFramesResult) => void): number {
+function registerFramesRequest(
+  viewId: number,
+  resolve: (result: ListFramesResult) => void,
+): number {
   const id = nextFramesRequestId++;
   framesResolvers.set(id, { viewId, resolve });
   return id;
@@ -175,7 +216,10 @@ function rejectFramesForView(viewId: number) {
 type ResolveAndClickPending = { viewId: number; resolve: (result: ResolveAndClickResult) => void };
 let nextResolveAndClickRequestId = 1;
 const resolveAndClickResolvers = new Map<number, ResolveAndClickPending>();
-function registerResolveAndClickRequest(viewId: number, resolve: (result: ResolveAndClickResult) => void): number {
+function registerResolveAndClickRequest(
+  viewId: number,
+  resolve: (result: ResolveAndClickResult) => void,
+): number {
   const id = nextResolveAndClickRequestId++;
   resolveAndClickResolvers.set(id, { viewId, resolve });
   return id;
@@ -189,12 +233,26 @@ function rejectResolveAndClickForView(viewId: number) {
   }
 }
 
-function flattenFrameTree(raw: any): { frameId: string; parentFrameId: string | null; origin: string; url: string; name?: string }[] {
-  const out: { frameId: string; parentFrameId: string | null; origin: string; url: string; name?: string }[] = [];
+function flattenFrameTree(
+  raw: any,
+): { frameId: string; parentFrameId: string | null; origin: string; url: string; name?: string }[] {
+  const out: {
+    frameId: string;
+    parentFrameId: string | null;
+    origin: string;
+    url: string;
+    name?: string;
+  }[] = [];
   const walk = (node: any, parent: string | null) => {
     const f = node?.frame;
     if (!f) return;
-    const entry: { frameId: string; parentFrameId: string | null; origin: string; url: string; name?: string } = {
+    const entry: {
+      frameId: string;
+      parentFrameId: string | null;
+      origin: string;
+      url: string;
+      name?: string;
+    } = {
       frameId: String(f.id ?? ""),
       parentFrameId: parent,
       origin: String(f.securityOrigin ?? ""),
@@ -218,7 +276,11 @@ setListFramesResultHandler((viewId, raw: NativeListFramesResult) => {
       const frames = flattenFrameTree(raw.raw);
       entry.resolve({ ok: true, frames });
     } catch (e) {
-      entry.resolve({ ok: false, code: "runtime_error", message: `frame tree flatten failed: ${(e as Error).message}` });
+      entry.resolve({
+        ok: false,
+        code: "runtime_error",
+        message: `frame tree flatten failed: ${(e as Error).message}`,
+      });
     }
   } else {
     entry.resolve({
@@ -234,8 +296,15 @@ setAccessibilityResultHandler((viewId, raw: NativeAccessibilityResult) => {
   if (!entry || entry.viewId !== viewId) return;
   axResolvers.delete(raw.requestId);
   if (raw.ok && raw.tree) {
-    try { entry.resolve({ ok: true, tree: convertAxTree(raw.tree as any, entry.interestingOnly) }); }
-    catch (e) { entry.resolve({ ok: false, code: "runtime_error", message: `ax tree convert failed: ${(e as Error).message}` }); }
+    try {
+      entry.resolve({ ok: true, tree: convertAxTree(raw.tree as any, entry.interestingOnly) });
+    } catch (e) {
+      entry.resolve({
+        ok: false,
+        code: "runtime_error",
+        message: `ax tree convert failed: ${(e as Error).message}`,
+      });
+    }
   } else {
     entry.resolve({
       ok: false,
@@ -259,9 +328,18 @@ setScreenshotResultHandler((viewId, raw: NativeScreenshotResult) => {
   screenshotResolvers.delete(raw.requestId);
   if (raw.ok && raw.dataBase64 && raw.format && raw.mime) {
     try {
-      entry.resolve({ ok: true, data: decodeBase64(raw.dataBase64), mime: raw.mime, format: raw.format });
+      entry.resolve({
+        ok: true,
+        data: decodeBase64(raw.dataBase64),
+        mime: raw.mime,
+        format: raw.format,
+      });
     } catch (e) {
-      entry.resolve({ ok: false, code: "runtime_error", message: `base64 decode failed: ${(e as Error).message}` });
+      entry.resolve({
+        ok: false,
+        code: "runtime_error",
+        message: `base64 decode failed: ${(e as Error).message}`,
+      });
     }
   } else {
     entry.resolve({
@@ -279,7 +357,12 @@ setResolveAndClickResultHandler((viewId, raw: NativeResolveAndClickResult) => {
   if (raw.ok && raw.rect) {
     entry.resolve({ ok: true, rect: raw.rect, isTrustedEvent: !!raw.isTrustedEvent });
   } else {
-    type FailCode = "not_found" | "not_visible" | "runtime_error" | "cross_origin" | "not_supported";
+    type FailCode =
+      | "not_found"
+      | "not_visible"
+      | "runtime_error"
+      | "cross_origin"
+      | "not_supported";
     const code = (raw.code as FailCode | undefined) ?? "runtime_error";
     entry.resolve({ ok: false, code, message: raw.message ?? "resolveAndClick failed" });
   }
@@ -288,13 +371,17 @@ setResolveAndClickResultHandler((viewId, raw: NativeResolveAndClickResult) => {
 setEvaluateResultHandler((viewId, raw: NativeEvaluateResult) => {
   const entry = evaluateResolvers.get(raw.requestId);
   if (!entry) return;
-  if (entry.viewId !== viewId) return;  // foreign event — ignore
+  if (entry.viewId !== viewId) return; // foreign event — ignore
   evaluateResolvers.delete(raw.requestId);
   if (raw.ok && raw.value !== undefined) {
     try {
       entry.resolve({ ok: true, value: JSON.parse(raw.value) });
     } catch (e) {
-      entry.resolve({ ok: false, code: "runtime_error", message: `result JSON parse failed: ${(e as Error).message}` });
+      entry.resolve({
+        ok: false,
+        code: "runtime_error",
+        message: `result JSON parse failed: ${(e as Error).message}`,
+      });
     }
   } else {
     entry.resolve({
@@ -306,26 +393,26 @@ setEvaluateResultHandler((viewId, raw: NativeEvaluateResult) => {
 });
 
 // Bit positions match the native enum in `ffi_exports.h` (BuniteCapBit).
-const CAP_EVALUATE             = 1 << 0;
-const CAP_CROSS_ORIGIN_EVAL    = 1 << 1;
-const CAP_SURFACE_EVENTS       = 1 << 2;
+const CAP_EVALUATE = 1 << 0;
+const CAP_CROSS_ORIGIN_EVAL = 1 << 1;
+const CAP_SURFACE_EVENTS = 1 << 2;
 const CAP_NATIVE_INPUT_TRUSTED = 1 << 3;
-const CAP_CLICK                = 1 << 4;
-const CAP_TYPE                 = 1 << 5;
-const CAP_PRESS                = 1 << 6;
-const CAP_SCROLL               = 1 << 7;
-const CAP_SCREENSHOT           = 1 << 8;
-const CAP_FORMAT_PNG           = 1 << 9;
-const CAP_FORMAT_JPEG          = 1 << 10;
-const CAP_MOUSE                = 1 << 11;
-const CAP_DIALOGS              = 1 << 12;
-const CAP_CONSOLE              = 1 << 13;
-const CAP_AX                   = 1 << 15;
-const CAP_BOUNDING_RECT        = 1 << 16;
-const CAP_FRAMES               = 1 << 17;
-const CAP_DOWNLOADS            = 1 << 18;
-const CAP_POPUPS               = 1 << 19;
-const CAP_RESOLVE_AND_CLICK    = 1 << 20;
+const CAP_CLICK = 1 << 4;
+const CAP_TYPE = 1 << 5;
+const CAP_PRESS = 1 << 6;
+const CAP_SCROLL = 1 << 7;
+const CAP_SCREENSHOT = 1 << 8;
+const CAP_FORMAT_PNG = 1 << 9;
+const CAP_FORMAT_JPEG = 1 << 10;
+const CAP_MOUSE = 1 << 11;
+const CAP_DIALOGS = 1 << 12;
+const CAP_CONSOLE = 1 << 13;
+const CAP_AX = 1 << 15;
+const CAP_BOUNDING_RECT = 1 << 16;
+const CAP_FRAMES = 1 << 17;
+const CAP_DOWNLOADS = 1 << 18;
+const CAP_POPUPS = 1 << 19;
+const CAP_RESOLVE_AND_CLICK = 1 << 20;
 
 function decodeCapabilityBits(bits: number): SurfaceCapabilities {
   const formats: ("png" | "jpeg")[] = [];
@@ -386,7 +473,7 @@ const defaultOptions: BrowserViewOptions = {
   windowId: 0,
   autoResize: true,
   navigationRules: null,
-  sandbox: false
+  sandbox: false,
 };
 
 export class BrowserView {
@@ -465,7 +552,7 @@ export class BrowserView {
       appresRoot: this.appresRoot,
       webviewId: this.id,
       rpcSocketPort: getRpcPort(),
-      secretKey: this.secretKey
+      secretKey: this.secretKey,
     });
 
     BrowserViewMap[this.id] = this;
@@ -474,8 +561,12 @@ export class BrowserView {
       // Native popup mint already created the view; bind to host window + bounds.
       const lib = getNativeLibrary();
       lib?.symbols.bunite_view_popup_accept(
-        this.id, this.windowId,
-        this.frame.x, this.frame.y, this.frame.width, this.frame.height,
+        this.id,
+        this.windowId,
+        this.frame.x,
+        this.frame.y,
+        this.frame.width,
+        this.frame.height,
       );
       this.nativeAttached = true;
     } else {
@@ -494,7 +585,7 @@ export class BrowserView {
           this.frame.height,
           this.autoResize,
           this.sandbox,
-          toCString(this.preloadOrigins ? JSON.stringify(this.preloadOrigins) : "")
+          toCString(this.preloadOrigins ? JSON.stringify(this.preloadOrigins) : ""),
         ) ?? false;
     }
 
@@ -514,8 +605,11 @@ export class BrowserView {
     return Promise.race([
       this._readyPromise,
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Browser creation timed out for view ${this.id}`)), timeoutMs)
-      )
+        setTimeout(
+          () => reject(new Error(`Browser creation timed out for view ${this.id}`)),
+          timeoutMs,
+        ),
+      ),
     ]);
   }
 
@@ -531,12 +625,20 @@ export class BrowserView {
     this.connectionGeneration += 1;
     const myGen = this.connectionGeneration;
     if (this.connection) {
-      try { (this.connection as { transport?: { close?(): void } }).transport?.close?.(); } catch { /* swallow */ }
+      try {
+        (this.connection as { transport?: { close?(): void } }).transport?.close?.();
+      } catch {
+        /* swallow */
+      }
       this.connection = null;
     }
     const encPipe = await createEncryptedPipe(pipe, this.secretKey);
     if (myGen !== this.connectionGeneration) {
-      try { encPipe.close(); } catch { /* swallow */ }
+      try {
+        encPipe.close();
+      } catch {
+        /* swallow */
+      }
       return;
     }
     const runtime = getAppRuntimeOrThrow().createViewRuntime(this.id);
@@ -561,7 +663,11 @@ export class BrowserView {
   detachNewConnection(): void {
     this.connectionGeneration += 1;
     if (this.connection) {
-      try { (this.connection as { transport?: { close?(): void } }).transport?.close?.(); } catch { /* swallow */ }
+      try {
+        (this.connection as { transport?: { close?(): void } }).transport?.close?.();
+      } catch {
+        /* swallow */
+      }
       this.connection = null;
     }
   }
@@ -582,11 +688,18 @@ export class BrowserView {
 
   evaluate(script: string, frameId?: string): Promise<EvaluateResult> {
     if (!this.nativeAttached) {
-      return Promise.resolve({ ok: false, code: "not_supported", message: "native runtime unavailable" });
+      return Promise.resolve({
+        ok: false,
+        code: "not_supported",
+        message: "native runtime unavailable",
+      });
     }
     return new Promise<EvaluateResult>((resolve) => {
       let timer: ReturnType<typeof setTimeout> | null = null;
-      const wrappedResolve = (r: EvaluateResult) => { if (timer) clearTimeout(timer); resolve(r); };
+      const wrappedResolve = (r: EvaluateResult) => {
+        if (timer) clearTimeout(timer);
+        resolve(r);
+      };
       const requestId = registerEvaluateRequest(this.id, wrappedResolve);
       // 30s timeout — two-hop CDP path (createIsolatedWorld → Runtime.evaluate)
       // can silently hang if the frame is destroyed mid-flight.
@@ -597,7 +710,12 @@ export class BrowserView {
       }, 30_000);
       const lib = getNativeLibrary();
       if (frameId) {
-        lib?.symbols.bunite_view_evaluate_in_frame(this.id, requestId, toCString(script), toCString(frameId));
+        lib?.symbols.bunite_view_evaluate_in_frame(
+          this.id,
+          requestId,
+          toCString(script),
+          toCString(frameId),
+        );
       } else {
         lib?.symbols.bunite_view_evaluate(this.id, requestId, toCString(script));
       }
@@ -608,13 +726,19 @@ export class BrowserView {
     if (!this.nativeAttached) return;
     const policyCode = policy === "auto" ? 0 : policy === "ask" ? 1 : 2;
     getNativeLibrary()?.symbols.bunite_view_set_download_policy(
-      this.id, policyCode, toCString(downloadDir ?? "")
+      this.id,
+      policyCode,
+      toCString(downloadDir ?? ""),
     );
   }
 
   listFrames(): Promise<ListFramesResult> {
     if (!this.nativeAttached) {
-      return Promise.resolve({ ok: false, code: "not_supported", message: "native runtime unavailable" });
+      return Promise.resolve({
+        ok: false,
+        code: "not_supported",
+        message: "native runtime unavailable",
+      });
     }
     return new Promise<ListFramesResult>((resolve) => {
       const requestId = registerFramesRequest(this.id, resolve);
@@ -623,7 +747,10 @@ export class BrowserView {
           resolve({ ok: false, code: "runtime_error", message: "list frames timed out after 10s" });
         }
       }, 10_000);
-      const wrappedResolve = (r: ListFramesResult) => { clearTimeout(timer); resolve(r); };
+      const wrappedResolve = (r: ListFramesResult) => {
+        clearTimeout(timer);
+        resolve(r);
+      };
       framesResolvers.set(requestId, { viewId: this.id, resolve: wrappedResolve });
       getNativeLibrary()?.symbols.bunite_view_list_frames(this.id, requestId);
     });
@@ -631,22 +758,37 @@ export class BrowserView {
 
   resolveAndClick(args: ResolveAndClickArgs): Promise<ResolveAndClickResult> {
     if (!this.nativeAttached) {
-      return Promise.resolve({ ok: false, code: "not_supported", message: "native runtime unavailable" });
+      return Promise.resolve({
+        ok: false,
+        code: "not_supported",
+        message: "native runtime unavailable",
+      });
     }
     return new Promise<ResolveAndClickResult>((resolve) => {
       const requestId = registerResolveAndClickRequest(this.id, resolve);
       const timer = setTimeout(() => {
         if (resolveAndClickResolvers.delete(requestId)) {
-          resolve({ ok: false, code: "runtime_error", message: "resolveAndClick timed out after 5s" });
+          resolve({
+            ok: false,
+            code: "runtime_error",
+            message: "resolveAndClick timed out after 5s",
+          });
         }
       }, 5_000);
-      const wrappedResolve = (r: ResolveAndClickResult) => { clearTimeout(timer); resolve(r); };
+      const wrappedResolve = (r: ResolveAndClickResult) => {
+        clearTimeout(timer);
+        resolve(r);
+      };
       resolveAndClickResolvers.set(requestId, { viewId: this.id, resolve: wrappedResolve });
       const button = args.button === "right" ? 2 : args.button === "middle" ? 1 : 0;
       getNativeLibrary()?.symbols.bunite_view_resolve_and_click(
-        this.id, requestId,
-        toCString(args.selector), toCString(args.frameId ?? ""),
-        button, args.clickCount ?? 1, encodeModifiers(args.modifiers),
+        this.id,
+        requestId,
+        toCString(args.selector),
+        toCString(args.frameId ?? ""),
+        button,
+        args.clickCount ?? 1,
+        encodeModifiers(args.modifiers),
       );
     });
   }
@@ -661,7 +803,8 @@ export class BrowserView {
   // `send*` methods. Modifier translation + key resolution happen inside;
   // callers never touch the FFI int contract.
   click(args: {
-    x: number; y: number;
+    x: number;
+    y: number;
     button?: "left" | "middle" | "right";
     clickCount?: number;
     modifiers?: Modifier[];
@@ -669,7 +812,12 @@ export class BrowserView {
     if (!this.nativeAttached) return;
     const button = args.button === "right" ? 2 : args.button === "middle" ? 1 : 0;
     getNativeLibrary()?.symbols.bunite_view_click(
-      this.id, args.x, args.y, button, args.clickCount ?? 1, encodeModifiers(args.modifiers)
+      this.id,
+      args.x,
+      args.y,
+      button,
+      args.clickCount ?? 1,
+      encodeModifiers(args.modifiers),
     );
   }
 
@@ -683,25 +831,35 @@ export class BrowserView {
     const r = resolveKey(key);
     const a = action === "down" ? 0 : action === "up" ? 1 : 2;
     getNativeLibrary()?.symbols.bunite_view_press(
-      this.id, r.windowsVkCode, r.macKeyCode,
-      toCString(r.key), toCString(r.code), toCString(r.character),
-      encodeModifiers(modifiers), a, r.extended, r.location
+      this.id,
+      r.windowsVkCode,
+      r.macKeyCode,
+      toCString(r.key),
+      toCString(r.code),
+      toCString(r.character),
+      encodeModifiers(modifiers),
+      a,
+      r.extended,
+      r.location,
     );
   }
 
-  scroll(args: {
-    dx: number; dy: number; x?: number; y?: number;
-    modifiers?: Modifier[];
-  }) {
+  scroll(args: { dx: number; dy: number; x?: number; y?: number; modifiers?: Modifier[] }) {
     if (!this.nativeAttached) return;
     getNativeLibrary()?.symbols.bunite_view_scroll(
-      this.id, args.dx, args.dy, args.x ?? 0, args.y ?? 0, encodeModifiers(args.modifiers)
+      this.id,
+      args.dx,
+      args.dy,
+      args.x ?? 0,
+      args.y ?? 0,
+      encodeModifiers(args.modifiers),
     );
   }
 
   mouse(args: {
     action: "move" | "down" | "up";
-    x: number; y: number;
+    x: number;
+    y: number;
     button?: "left" | "middle" | "right";
     modifiers?: Modifier[];
   }) {
@@ -709,20 +867,32 @@ export class BrowserView {
     const action = args.action === "move" ? 0 : args.action === "down" ? 1 : 2;
     const button = args.button === "right" ? 2 : args.button === "middle" ? 1 : 0;
     getNativeLibrary()?.symbols.bunite_view_mouse(
-      this.id, action, args.x, args.y, button, encodeModifiers(args.modifiers)
+      this.id,
+      action,
+      args.x,
+      args.y,
+      button,
+      encodeModifiers(args.modifiers),
     );
   }
 
   respondToDialog(requestId: number, accept: boolean, text?: string) {
     if (!this.nativeAttached) return;
     getNativeLibrary()?.symbols.bunite_view_respond_dialog(
-      this.id, requestId, accept, toCString(text ?? "")
+      this.id,
+      requestId,
+      accept,
+      toCString(text ?? ""),
     );
   }
 
   screenshot(format: "png" | "jpeg", quality: number): Promise<ScreenshotResult> {
     if (!this.nativeAttached) {
-      return Promise.resolve({ ok: false, code: "not_supported", message: "native runtime unavailable" });
+      return Promise.resolve({
+        ok: false,
+        code: "not_supported",
+        message: "native runtime unavailable",
+      });
     }
     return new Promise<ScreenshotResult>((resolve) => {
       const requestId = registerScreenshotRequest(this.id, resolve);
@@ -732,28 +902,51 @@ export class BrowserView {
           resolve({ ok: false, code: "timeout", message: "screenshot timed out after 30s" });
         }
       }, 30_000);
-      const wrappedResolve = (r: ScreenshotResult) => { clearTimeout(timer); resolve(r); };
+      const wrappedResolve = (r: ScreenshotResult) => {
+        clearTimeout(timer);
+        resolve(r);
+      };
       // Replace the registered resolver so the timeout-clearing wrapper runs on success.
       screenshotResolvers.set(requestId, { viewId: this.id, resolve: wrappedResolve });
-      getNativeLibrary()?.symbols.bunite_view_screenshot(this.id, requestId, toCString(format), quality);
+      getNativeLibrary()?.symbols.bunite_view_screenshot(
+        this.id,
+        requestId,
+        toCString(format),
+        quality,
+      );
     });
   }
 
   accessibilitySnapshot(interestingOnly: boolean): Promise<AccessibilitySnapshotResult> {
     if (!this.nativeAttached) {
-      return Promise.resolve({ ok: false, code: "not_supported", message: "native runtime unavailable" });
+      return Promise.resolve({
+        ok: false,
+        code: "not_supported",
+        message: "native runtime unavailable",
+      });
     }
     return new Promise<AccessibilitySnapshotResult>((resolve) => {
       const requestId = registerAxRequest(this.id, resolve, interestingOnly);
       const timer = setTimeout(() => {
         if (axResolvers.delete(requestId)) {
-          resolve({ ok: false, code: "timeout", message: "accessibility snapshot timed out after 30s" });
+          resolve({
+            ok: false,
+            code: "timeout",
+            message: "accessibility snapshot timed out after 30s",
+          });
         }
       }, 30_000);
-      const wrappedResolve = (r: AccessibilitySnapshotResult) => { clearTimeout(timer); resolve(r); };
+      const wrappedResolve = (r: AccessibilitySnapshotResult) => {
+        clearTimeout(timer);
+        resolve(r);
+      };
       axResolvers.set(requestId, { viewId: this.id, resolve: wrappedResolve, interestingOnly });
       // Native flag is currently unused (filter is TS-side); kept for ABI shape stability.
-      getNativeLibrary()?.symbols.bunite_view_accessibility_snapshot(this.id, requestId, interestingOnly ? 1 : 0);
+      getNativeLibrary()?.symbols.bunite_view_accessibility_snapshot(
+        this.id,
+        requestId,
+        interestingOnly ? 1 : 0,
+      );
     });
   }
 
@@ -794,9 +987,7 @@ export class BrowserView {
       buf[i * 4 + 2] = rects[i].w;
       buf[i * 4 + 3] = rects[i].h;
     }
-    getNativeLibrary()?.symbols.bunite_view_set_mask_region(
-      this.id, ptr(buf.buffer), rects.length
-    );
+    getNativeLibrary()?.symbols.bunite_view_set_mask_region(this.id, ptr(buf.buffer), rects.length);
   }
 
   bringToFront() {
@@ -868,8 +1059,19 @@ export class BrowserView {
     rejectResolveAndClickForView(this.id);
     this.nativeAttached = false;
     for (const eventName of [
-      "will-navigate", "did-navigate", "dom-ready", "new-window-open", "permission-requested", "title-changed",
-      "load-start", "load-finish", "load-fail", "dialog", "console-message", "download-event", "popup-requested",
+      "will-navigate",
+      "did-navigate",
+      "dom-ready",
+      "new-window-open",
+      "permission-requested",
+      "title-changed",
+      "load-start",
+      "load-finish",
+      "load-fail",
+      "dialog",
+      "console-message",
+      "download-event",
+      "popup-requested",
     ]) {
       buniteEventEmitter.removeAllListeners(`${eventName}-${this.id}`);
     }
@@ -877,8 +1079,21 @@ export class BrowserView {
   }
 
   on(
-    name: "will-navigate" | "did-navigate" | "dom-ready" | "new-window-open" | "permission-requested" | "title-changed" | "load-start" | "load-finish" | "load-fail" | "dialog" | "console-message" | "download-event" | "popup-requested",
-    handler: (event: unknown) => void
+    name:
+      | "will-navigate"
+      | "did-navigate"
+      | "dom-ready"
+      | "new-window-open"
+      | "permission-requested"
+      | "title-changed"
+      | "load-start"
+      | "load-finish"
+      | "load-fail"
+      | "dialog"
+      | "console-message"
+      | "download-event"
+      | "popup-requested",
+    handler: (event: unknown) => void,
   ) {
     const specificName = `${name}-${this.id}`;
     buniteEventEmitter.on(specificName, handler);
@@ -887,5 +1102,7 @@ export class BrowserView {
 }
 
 attachBrowserViewRegistry({
-  getById(id) { return BrowserView.getById(id); }
+  getById(id) {
+    return BrowserView.getById(id);
+  },
 });

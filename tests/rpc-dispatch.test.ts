@@ -1,10 +1,17 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
-  call, stream, cap, defineCap, defineSchema,
+  type Attestation,
+  type Connection,
+  call,
+  cap,
   createConnection,
+  defineCap,
+  defineSchema,
+  type Frame,
   type ImplOf,
-  type Connection, type Transport, type Frame, type Attestation,
   IpcError,
+  stream,
+  type Transport,
 } from "../package/src/rpc/index";
 import { Stream } from "../package/src/rpc/stream";
 
@@ -13,16 +20,23 @@ function loopback(): [Transport, Transport] {
   let b: ((f: Frame) => void) | undefined;
   // Resolve `h` at microtask time (not call time) so pre-setReceive sends are not lost.
   const enqueue = (getH: () => ((f: Frame) => void) | undefined, f: Frame) => {
-    queueMicrotask(() => { const h = getH(); if (h) h(f); });
+    queueMicrotask(() => {
+      const h = getH();
+      if (h) h(f);
+    });
   };
   const left: Transport = {
     send: (f) => enqueue(() => b, f),
-    setReceive: (h) => { a = h; },
+    setReceive: (h) => {
+      a = h;
+    },
     close: () => {},
   };
   const right: Transport = {
     send: (f) => enqueue(() => a, f),
-    setReceive: (h) => { b = h; },
+    setReceive: (h) => {
+      b = h;
+    },
     close: () => {},
   };
   return [left, right];
@@ -113,7 +127,11 @@ describe("end-to-end dispatch", () => {
   });
 
   test("unversioned bucket: server-only version → OK", async () => {
-    const serverCap = defineCap("test.bucket", { ping: call<void, { v: string }>() }, { version: "2" });
+    const serverCap = defineCap(
+      "test.bucket",
+      { ping: call<void, { v: string }>() },
+      { version: "2" },
+    );
     const clientCap = defineCap("test.bucket", { ping: call<void, { v: string }>() });
     const { client, server } = pair();
     server.serve(serverCap, { ping: () => ({ v: "ok" }) });
@@ -144,10 +162,14 @@ describe("end-to-end dispatch", () => {
   });
 
   test("cap-returning method yields disposable proxy", async () => {
-    const PlotCap = defineCap("test.Plot2", {
-      render: call<void, { svg: string }>(),
-      dispose: call<void, void>(),
-    }, { disposal: { method: "dispose" } });
+    const PlotCap = defineCap(
+      "test.Plot2",
+      {
+        render: call<void, { svg: string }>(),
+        dispose: call<void, void>(),
+      },
+      { disposal: { method: "dispose" } },
+    );
 
     const plotsRoot = defineCap("test.plotRoot", {
       createPlot: call<{ name: string }, typeof PlotCap>({ returns: cap(PlotCap) }),
@@ -160,7 +182,9 @@ describe("end-to-end dispatch", () => {
       createPlot: async ({ name }, ctx) => {
         return ctx.exportCap(PlotCap, {
           render: () => ({ svg: `<svg id="${name}"/>` }),
-          dispose: () => { disposed.push(name); },
+          dispose: () => {
+            disposed.push(name);
+          },
         });
       },
     };
@@ -182,11 +206,18 @@ describe("end-to-end dispatch", () => {
     const { client, server } = pair();
     server.serve(errCap, {
       fail: () => {
-        throw new IpcError({ code: "failed_precondition", message: "nope", details: { reason: "unauthorized" } });
+        throw new IpcError({
+          code: "failed_precondition",
+          message: "nope",
+          details: { reason: "unauthorized" },
+        });
       },
     });
     const api = await client.bootstrap(errCap);
-    await expect(api.fail()).rejects.toMatchObject({ code: "failed_precondition", message: "nope" });
+    await expect(api.fail()).rejects.toMatchObject({
+      code: "failed_precondition",
+      message: "nope",
+    });
   });
 
   test("framework name prefix is reserved", () => {
@@ -220,7 +251,7 @@ describe("end-to-end dispatch", () => {
     server.serve(c, { ping: () => ({ ok: true as const }) });
     // second caller tries to serve but skips (cap already present)
     const skipped = server.serve(c, { ping: () => ({ ok: true as const }) }, { ifExists: "skip" });
-    server.unserve(skipped);  // must NOT revoke the first owner
+    server.unserve(skipped); // must NOT revoke the first owner
     const proxy = await client.bootstrap(c);
     expect(await proxy.ping()).toEqual({ ok: true });
   });
@@ -238,12 +269,13 @@ describe("end-to-end dispatch", () => {
     });
     const { client, server } = pair();
     const handle = server.serve(c, {
-      tick: () => Stream.from<{ n: number }>((emit, signal) => {
-        let i = 0;
-        const id = setInterval(() => emit({ n: ++i }), 5);
-        signal.addEventListener("abort", () => clearInterval(id));
-        return () => clearInterval(id);
-      }),
+      tick: () =>
+        Stream.from<{ n: number }>((emit, signal) => {
+          let i = 0;
+          const id = setInterval(() => emit({ n: ++i }), 5);
+          signal.addEventListener("abort", () => clearInterval(id));
+          return () => clearInterval(id);
+        }),
     });
     const proxy = await client.bootstrap(c);
     const iter = proxy.tick();
@@ -255,11 +287,17 @@ describe("end-to-end dispatch", () => {
           seen.push(t.n);
           if (seen.length === 1) server.unserve(handle);
         }
-      } catch (e) { caught = e; }
+      } catch (e) {
+        caught = e;
+      }
     })();
     await reader;
-    expect((caught as { code?: string; details?: { reason?: string } } | null)?.code).toBe("failed_precondition");
-    expect((caught as { code?: string; details?: { reason?: string } } | null)?.details?.reason).toBe("revoked");
+    expect((caught as { code?: string; details?: { reason?: string } } | null)?.code).toBe(
+      "failed_precondition",
+    );
+    expect(
+      (caught as { code?: string; details?: { reason?: string } } | null)?.details?.reason,
+    ).toBe("revoked");
   });
 
   test("revokedCapIds is bounded — at-cap retains victim, over-cap evicts oldest", async () => {
@@ -267,14 +305,18 @@ describe("end-to-end dispatch", () => {
     const client = createConnection({ transport: t1, mode: "native", origin: "test://lru-c" });
     createConnection({ transport: t2, mode: "native", origin: "test://lru-s" });
     const internalSend = (capId: number) =>
-      (client as unknown as { sendCallTyped: (capId: number, m: string, a: unknown, d: unknown) => Promise<unknown> })
-        .sendCallTyped(capId, "ping", undefined, undefined);
-    const send = (capIds: number[]) => (t2.send as (f: Frame) => void)({ op: "cap_revoked", capIds });
+      (
+        client as unknown as {
+          sendCallTyped: (capId: number, m: string, a: unknown, d: unknown) => Promise<unknown>;
+        }
+      ).sendCallTyped(capId, "ping", undefined, undefined);
+    const send = (capIds: number[]) =>
+      (t2.send as (f: Frame) => void)({ op: "cap_revoked", capIds });
 
     const victim = 999_999;
     // Boundary case: size = REVOKED_CACHE_SIZE (= 4096) → no eviction; victim still revoked.
     send([victim]);
-    send(Array.from({ length: 4095 }, (_, i) => 100_000 + i));   // total 4096
+    send(Array.from({ length: 4095 }, (_, i) => 100_000 + i)); // total 4096
     await new Promise((r) => setTimeout(r, 30));
     await expect(internalSend(victim)).rejects.toMatchObject({
       code: "failed_precondition",
@@ -337,7 +379,9 @@ describe("end-to-end dispatch", () => {
     ["new Boolean(false) (truthy object)", () => new Boolean(false)],
     ["Promise<truthy> resolves to non-boolean", () => Promise.resolve(1)],
   ])("policy returning %s is surfaced as internal (not silently denied/allowed)", async (_label, ret) => {
-    const c = defineCap(`test.policyNonBool.${_label.replace(/\W/g, "_")}`, { ping: call<void, void>() });
+    const c = defineCap(`test.policyNonBool.${_label.replace(/\W/g, "_")}`, {
+      ping: call<void, void>(),
+    });
     const [t1, t2] = loopback();
     const client = createConnection({ transport: t1, mode: "native", origin: "test://c" });
     const server = createConnection({
@@ -388,7 +432,10 @@ describe("end-to-end dispatch", () => {
 
     const requested: string[] = [];
     host.serve(hostCoordCap, {
-      requestPanel: ({ panelId }) => { requested.push(panelId); return { ok: true as const }; },
+      requestPanel: ({ panelId }) => {
+        requested.push(panelId);
+        return { ok: true as const };
+      },
     });
     renderer.serve(renderPanelCap, {
       render: ({ frame }) => ({ svg: `<svg frame="${frame}"/>` }),

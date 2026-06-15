@@ -62,7 +62,11 @@ export function acquireSingleInstanceLock(key: string): SingleInstanceLock {
         // Verify ownership before unlinking — guards against deleting a lockfile
         // that has been reclaimed by another process if our exit was delayed.
         if (readHolderPid(path) === process.pid) {
-          try { unlinkSync(path); } catch { /* already gone */ }
+          try {
+            unlinkSync(path);
+          } catch {
+            /* already gone */
+          }
         }
         process.off("exit", release);
       };
@@ -82,7 +86,11 @@ export function acquireSingleInstanceLock(key: string): SingleInstanceLock {
         return { acquired: false, holderPid };
       }
       // Stale: holder is dead. Drop and retry once.
-      try { unlinkSync(path); } catch { /* lost the race; loop retries */ }
+      try {
+        unlinkSync(path);
+      } catch {
+        /* lost the race; loop retries */
+      }
     }
   }
 

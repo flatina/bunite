@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { BrowserWindow, AppRuntime } from "bunite-core";
-import { setupServer, attachNavigationChecks, checkIPC } from "./ipc";
-import { runWindowTests, checkWindow } from "./window";
+import { AppRuntime, BrowserWindow } from "bunite-core";
+import { attachNavigationChecks, checkIPC, setupServer } from "./ipc";
+import { checkWindow, runWindowTests } from "./window";
 
 function resolveRendererRoot() {
   const candidate = fileURLToPath(new URL("../dist/renderer", import.meta.url));
@@ -20,7 +20,11 @@ const win = new BrowserWindow({
   url: "appres://app.internal/smoke/index.html",
   appresRoot: resolveRendererRoot(),
   serve: setupServer,
-  navigationRules: ["^*", "appres://app.internal/smoke/*", "^appres://app.internal/smoke/nav-blocked.html*"],
+  navigationRules: [
+    "^*",
+    "appres://app.internal/smoke/*",
+    "^appres://app.internal/smoke/nav-blocked.html*",
+  ],
 });
 
 const view = win.webview;

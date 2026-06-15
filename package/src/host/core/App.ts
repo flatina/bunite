@@ -1,27 +1,33 @@
-import { isAbsolute, join, resolve } from "node:path";
 import { existsSync } from "node:fs";
-import { getBaseDir } from "../paths";
+import { isAbsolute, join, resolve } from "node:path";
 import { buniteEventEmitter } from "../events/eventEmitter";
 import {
   getNativeEngineName,
   getNativeEngineVersion,
   getNativeLibrary,
-  initNativeRuntime,
   getNativeRuntimeState,
-  setRouteRequestHandler,
+  initNativeRuntime,
+  type NativeBootstrapOptions,
   setNativeLogLevel,
+  setRouteRequestHandler,
   toCString,
-  type NativeBootstrapOptions
 } from "../native";
-import { ensureRpcServer } from "./Socket";
+import { getBaseDir } from "../paths";
 import { BrowserWindow } from "./BrowserWindow";
+import { ensureRpcServer } from "./Socket";
 import { createSurfaceCapImpl, getPopupMetricsSnapshot } from "./SurfaceManager";
 import { createWindowCapImpl } from "./windowCap";
 import "./SurfaceBrowserIPC";
-import { log, logLevelToInt } from "../log";
-import { RuntimeCap, WindowCap, SurfaceCap, PageReportingCap, IpcError, type ImplOf } from "../../rpc/index";
-
+import {
+  type ImplOf,
+  IpcError,
+  PageReportingCap,
+  type RuntimeCap,
+  SurfaceCap,
+  WindowCap,
+} from "../../rpc/index";
 import type { LogLevel } from "../log";
+import { log, logLevelToInt } from "../log";
 
 type AppOptions = NativeBootstrapOptions & {
   userDataDir?: string;
@@ -51,7 +57,9 @@ export class AppRuntime {
     _instance = this;
     ensureRpcServer();
     this.ready = this.bootstrap(options);
-    this.ready.catch(() => { if (_instance === this) _instance = null; });
+    this.ready.catch(() => {
+      if (_instance === this) _instance = null;
+    });
   }
 
   private async bootstrap(options: AppOptions) {
@@ -66,8 +74,9 @@ export class AppRuntime {
     if (options.userDataDir) {
       process.env.BUNITE_USER_DATA_DIR = options.userDataDir;
     } else if (!process.env.BUNITE_USER_DATA_DIR) {
-      const appDataDir = process.env.XDG_DATA_HOME
-        ?? (process.platform === "win32"
+      const appDataDir =
+        process.env.XDG_DATA_HOME ??
+        (process.platform === "win32"
           ? (process.env.APPDATA ?? join(process.env.USERPROFILE ?? "", "AppData", "Roaming"))
           : process.platform === "darwin"
             ? join(process.env.HOME ?? "", "Library", "Application Support")
@@ -90,15 +99,13 @@ export class AppRuntime {
     }
 
     const envEngine = process.env.BUNITE_ENGINE;
-    const engineFromEnv = envEngine === "cef" || envEngine === "webview2"
-      ? envEngine
-      : undefined;
+    const engineFromEnv = envEngine === "cef" || envEngine === "webview2" ? envEngine : undefined;
 
     await initNativeRuntime({
       hideConsole: options.hideConsole,
       popupBlocking: options.popupBlocking,
       engine: options.engine ?? engineFromEnv,
-      engineFlags: options.engineFlags
+      engineFlags: options.engineFlags,
     });
 
     if (options.logLevel) {
@@ -201,7 +208,7 @@ export class AppRuntime {
               for (const entry of entries) {
                 buniteEventEmitter.emitEvent(
                   buniteEventEmitter.events.webview.consoleMessage(entry),
-                  viewId
+                  viewId,
                 );
               }
             });
@@ -233,7 +240,10 @@ export class AppRuntime {
       const handler = this.appresHandlers.get(path);
       html = handler ? handler() : "<html><body>No handler for: " + path + "</body></html>";
     } catch (error) {
-      html = "<html><body>Route handler error: " + (error instanceof Error ? error.message : String(error)) + "</body></html>";
+      html =
+        "<html><body>Route handler error: " +
+        (error instanceof Error ? error.message : String(error)) +
+        "</body></html>";
     }
     getNativeLibrary()?.symbols.bunite_complete_route_request(requestId, toCString(html));
   }

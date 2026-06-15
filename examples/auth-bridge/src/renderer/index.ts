@@ -1,5 +1,5 @@
+import { type ClientOf, IpcError } from "bunite-core/rpc";
 import { bootstrap, getConnection } from "bunite-core/rpc/renderer";
-import { IpcError, type ClientOf } from "bunite-core/rpc";
 import { BridgeCap, type SessionCap } from "../schema";
 
 const $ = <T extends Element = HTMLElement>(s: string): T => document.querySelector<T>(s)!;
@@ -30,18 +30,24 @@ try {
 // Auto-resume if we have a stored token.
 const stored = localStorage.getItem(RESUME_KEY);
 if (stored) {
-  await tryMint(() => bridge.resumeSession({ resumeToken: stored }))
-    .catch(() => { localStorage.removeItem(RESUME_KEY); });
+  await tryMint(() => bridge.resumeSession({ resumeToken: stored })).catch(() => {
+    localStorage.removeItem(RESUME_KEY);
+  });
 }
 
 webForm.addEventListener("submit", (e) => {
   e.preventDefault();
   void tryMint(() => bridge.createWebSession({ token: webToken.value.trim() }));
 });
-nativeBtn.addEventListener("click", () => { void tryMint(() => bridge.createDesktopSession()); });
+nativeBtn.addEventListener("click", () => {
+  void tryMint(() => bridge.createDesktopSession());
+});
 resumeBtn.addEventListener("click", () => {
   const t = localStorage.getItem(RESUME_KEY);
-  if (!t) { showErr("no stored resume token — sign in once first"); return; }
+  if (!t) {
+    showErr("no stored resume token — sign in once first");
+    return;
+  }
   void tryMint(() => bridge.resumeSession({ resumeToken: t }));
 });
 signoutBtn.addEventListener("click", async () => {
@@ -52,8 +58,11 @@ signoutBtn.addEventListener("click", async () => {
 });
 bumpBtn.addEventListener("click", async () => {
   if (!session) return;
-  try { countEl.textContent = String(await session.bump()); }
-  catch (e) { showErr(formatError(e)); }
+  try {
+    countEl.textContent = String(await session.bump());
+  } catch (e) {
+    showErr(formatError(e));
+  }
 });
 
 async function tryMint(create: () => Promise<ClientOf<typeof SessionCap>>): Promise<void> {

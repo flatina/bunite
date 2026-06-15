@@ -1,13 +1,23 @@
 // <bunite-webview> custom element — registered in every appres:// page via preload.
 
-import type { ClientOf } from "../rpc/index";
 import type {
-  SurfaceCap, EvaluateResult, SurfaceCapabilities, ScreenshotResult,
-  SurfaceEvent, ConsoleEntry, WaitResult, NavigationState,
-  AccessibilitySnapshotResult, BoundingRectResult, ListFramesResult,
-  DownloadEvent, DownloadPolicy, WaitForDownloadResult,
+  AccessibilitySnapshotResult,
+  BoundingRectResult,
+  ConsoleEntry,
+  DownloadEvent,
+  DownloadPolicy,
+  EvaluateResult,
+  ListFramesResult,
+  NavigationState,
   ResolveAndClickResult,
+  ScreenshotResult,
+  SurfaceCap,
+  SurfaceCapabilities,
+  SurfaceEvent,
+  WaitForDownloadResult,
+  WaitResult,
 } from "../rpc/framework";
+import type { ClientOf } from "../rpc/index";
 
 declare const __buniteWebviewId: number;
 
@@ -25,12 +35,14 @@ function getSurfaceCap(): Promise<SurfaceClient> {
 }
 
 function callSurface<R>(fn: (s: SurfaceClient) => Promise<R> | R): Promise<R | void> {
-  return getSurfaceCap().then(fn).catch((err) => {
-    if ((globalThis as { __BUNITE_DEBUG__?: boolean }).__BUNITE_DEBUG__) {
-      console.warn("[bunite] surface call failed", err);
-    }
-    return undefined;
-  });
+  return getSurfaceCap()
+    .then(fn)
+    .catch((err) => {
+      if ((globalThis as { __BUNITE_DEBUG__?: boolean }).__BUNITE_DEBUG__) {
+        console.warn("[bunite] surface call failed", err);
+      }
+      return undefined;
+    });
 }
 
 /** Like `callSurface` but never swallows — automation surface API needs to
@@ -92,7 +104,7 @@ class OverlaySyncController {
       x: Math.round(r.x * dpr),
       y: Math.round(r.y * dpr),
       width: Math.round(r.width * dpr),
-      height: Math.round(r.height * dpr)
+      height: Math.round(r.height * dpr),
     };
 
     // Always check for position changes (not caught by ResizeObserver)
@@ -130,11 +142,6 @@ class BuniteWebviewElement extends HTMLElement {
   private _unsubNavigate: (() => void) | null = null;
   private _activeStreams: Array<{ cancel?: () => void }> = [];
 
-  constructor() {
-    super();
-    // NOTE: Custom element spec forbids setting attributes in constructor.
-  }
-
   connectedCallback() {
     this._aborted = false;
     this._syncHidden = false;
@@ -156,9 +163,13 @@ class BuniteWebviewElement extends HTMLElement {
           try {
             for await (const event of dlStream) {
               if (ctrl.signal.aborted) break;
-              this.dispatchEvent(new CustomEvent<DownloadEvent>("download-event", { detail: event }));
+              this.dispatchEvent(
+                new CustomEvent<DownloadEvent>("download-event", { detail: event }),
+              );
             }
-          } catch { /* stream torn down */ }
+          } catch {
+            /* stream torn down */
+          }
         })();
         for await (const event of surfStream) {
           if (ctrl.signal.aborted) break;
@@ -179,7 +190,11 @@ class BuniteWebviewElement extends HTMLElement {
       if (pending) {
         // Await this exact init attempt; if it rejects, bail (init failed —
         // we'd otherwise spin forever waiting for a surfaceId that never lands).
-        try { await pending; } catch { return; }
+        try {
+          await pending;
+        } catch {
+          return;
+        }
         // After resolve, _surfaceId may still be null if disconnect raced —
         // the next loop iteration checks signal.aborted to exit cleanly.
       } else {
@@ -223,7 +238,9 @@ class BuniteWebviewElement extends HTMLElement {
     // Cancel pending stream iterators so the `for await` actually unblocks —
     // AbortController alone only takes effect at the next received chunk.
     for (const stream of this._activeStreams) {
-      try { stream.cancel?.(); } catch {}
+      try {
+        stream.cancel?.();
+      } catch {}
     }
     this._activeStreams = [];
     this._layoutObserver?.disconnect();
@@ -237,7 +254,9 @@ class BuniteWebviewElement extends HTMLElement {
       void callSurface((s) => s.remove({ surfaceId: id }));
     } else if (this._initPromise) {
       this._initPromise
-        .then((r) => { void callSurface((s) => s.remove({ surfaceId: r.surfaceId })); })
+        .then((r) => {
+          void callSurface((s) => s.remove({ surfaceId: r.surfaceId }));
+        })
         .catch(() => {});
     }
     this._initPromise = null;
@@ -286,11 +305,24 @@ class BuniteWebviewElement extends HTMLElement {
     const sid = this._surfaceId;
     if (sid == null) {
       return {
-        evaluate: false, crossOriginEval: false, surfaceEvents: false,
-        nativeInputTrusted: false, click: false, type: false, press: false,
-        scroll: false, mouse: false, dialogs: false, console: false,
-        screenshot: false, accessibilitySnapshot: false, getBoundingRect: false,
-        frames: false, downloads: false, popups: false, resolveAndClick: false,
+        evaluate: false,
+        crossOriginEval: false,
+        surfaceEvents: false,
+        nativeInputTrusted: false,
+        click: false,
+        type: false,
+        press: false,
+        scroll: false,
+        mouse: false,
+        dialogs: false,
+        console: false,
+        screenshot: false,
+        accessibilitySnapshot: false,
+        getBoundingRect: false,
+        frames: false,
+        downloads: false,
+        popups: false,
+        resolveAndClick: false,
       };
     }
     return callSurfaceTyped((s) => s.capabilities({ surfaceId: sid }));
@@ -298,7 +330,8 @@ class BuniteWebviewElement extends HTMLElement {
 
   // Automation input — `send*` prefix avoids clashing with HTMLElement.click() / .scroll().
   async sendClick(args: {
-    x: number; y: number;
+    x: number;
+    y: number;
     button?: "left" | "middle" | "right";
     clickCount?: number;
     modifiers?: Array<"alt" | "ctrl" | "meta" | "shift">;
@@ -317,7 +350,7 @@ class BuniteWebviewElement extends HTMLElement {
   async sendPress(
     key: string,
     modifiers?: Array<"alt" | "ctrl" | "meta" | "shift">,
-    action?: "down" | "up" | "both"
+    action?: "down" | "up" | "both",
   ): Promise<void> {
     const sid = this._surfaceId;
     if (sid == null) return;
@@ -325,7 +358,10 @@ class BuniteWebviewElement extends HTMLElement {
   }
 
   async sendScroll(args: {
-    dx: number; dy: number; x?: number; y?: number;
+    dx: number;
+    dy: number;
+    x?: number;
+    y?: number;
     modifiers?: Array<"alt" | "ctrl" | "meta" | "shift">;
   }): Promise<void> {
     const sid = this._surfaceId;
@@ -335,7 +371,8 @@ class BuniteWebviewElement extends HTMLElement {
 
   async sendMouse(args: {
     action: "move" | "down" | "up";
-    x: number; y: number;
+    x: number;
+    y: number;
     button?: "left" | "middle" | "right";
     modifiers?: Array<"alt" | "ctrl" | "meta" | "shift">;
   }): Promise<void> {
@@ -362,7 +399,10 @@ class BuniteWebviewElement extends HTMLElement {
     return callSurfaceTyped((s) => s.waitForSelector({ surfaceId: sid, selector, timeoutMs }));
   }
 
-  async waitForFunction(expression: string, opts?: { timeoutMs?: number; pollIntervalMs?: number }): Promise<WaitResult> {
+  async waitForFunction(
+    expression: string,
+    opts?: { timeoutMs?: number; pollIntervalMs?: number },
+  ): Promise<WaitResult> {
     const sid = this._surfaceId;
     if (sid == null) return { ok: false, code: "runtime_error", message: "surface not ready" };
     return callSurfaceTyped((s) => s.waitForFunction({ surfaceId: sid, expression, ...opts }));
@@ -371,7 +411,10 @@ class BuniteWebviewElement extends HTMLElement {
   async getConsoleBuffer(opts?: { clear?: boolean }): Promise<ConsoleEntry[]> {
     const sid = this._surfaceId;
     if (sid == null) return [];
-    return (await callSurfaceTyped((s) => s.getConsoleBuffer({ surfaceId: sid, clear: opts?.clear }))) ?? [];
+    return (
+      (await callSurfaceTyped((s) => s.getConsoleBuffer({ surfaceId: sid, clear: opts?.clear }))) ??
+      []
+    );
   }
 
   async getNavigationState(): Promise<NavigationState> {
@@ -380,16 +423,25 @@ class BuniteWebviewElement extends HTMLElement {
     return callSurfaceTyped((s) => s.getNavigationState({ surfaceId: sid }));
   }
 
-  async accessibilitySnapshot(opts?: { interestingOnly?: boolean }): Promise<AccessibilitySnapshotResult> {
+  async accessibilitySnapshot(opts?: {
+    interestingOnly?: boolean;
+  }): Promise<AccessibilitySnapshotResult> {
     const sid = this._surfaceId;
     if (sid == null) return { ok: false, code: "not_supported", message: "surface not ready" };
-    return callSurfaceTyped((s) => s.accessibilitySnapshot({ surfaceId: sid, interestingOnly: opts?.interestingOnly }));
+    return callSurfaceTyped((s) =>
+      s.accessibilitySnapshot({ surfaceId: sid, interestingOnly: opts?.interestingOnly }),
+    );
   }
 
-  async getBoundingRect(selector: string, opts?: { frameId?: string }): Promise<BoundingRectResult> {
+  async getBoundingRect(
+    selector: string,
+    opts?: { frameId?: string },
+  ): Promise<BoundingRectResult> {
     const sid = this._surfaceId;
     if (sid == null) return { ok: false, code: "runtime_error", message: "surface not ready" };
-    return callSurfaceTyped((s) => s.getBoundingRect({ surfaceId: sid, selector, frameId: opts?.frameId }));
+    return callSurfaceTyped((s) =>
+      s.getBoundingRect({ surfaceId: sid, selector, frameId: opts?.frameId }),
+    );
   }
 
   async listFrames(): Promise<ListFramesResult> {
@@ -405,7 +457,7 @@ class BuniteWebviewElement extends HTMLElement {
       button?: "left" | "middle" | "right";
       clickCount?: number;
       modifiers?: Array<"alt" | "ctrl" | "meta" | "shift">;
-    }
+    },
   ): Promise<ResolveAndClickResult> {
     const sid = this._surfaceId;
     if (sid == null) return { ok: false, code: "runtime_error", message: "surface not ready" };
@@ -421,7 +473,9 @@ class BuniteWebviewElement extends HTMLElement {
   async waitForDownload(opts?: { timeoutMs?: number }): Promise<WaitForDownloadResult> {
     const sid = this._surfaceId;
     if (sid == null) return { ok: false, code: "not_supported", message: "surface not ready" };
-    return callSurfaceTyped((s) => s.waitForDownload({ surfaceId: sid, timeoutMs: opts?.timeoutMs }));
+    return callSurfaceTyped((s) =>
+      s.waitForDownload({ surfaceId: sid, timeoutMs: opts?.timeoutMs }),
+    );
   }
 
   async dismissPopup(newSurfaceId: number): Promise<void> {
@@ -432,7 +486,10 @@ class BuniteWebviewElement extends HTMLElement {
     return callSurfaceTyped((s) => s.extendPopupTimeout({ newSurfaceId, gracePeriodMs }));
   }
 
-  async screenshot(args?: { format?: "png" | "jpeg"; quality?: number }): Promise<ScreenshotResult> {
+  async screenshot(args?: {
+    format?: "png" | "jpeg";
+    quality?: number;
+  }): Promise<ScreenshotResult> {
     const sid = this._surfaceId;
     if (sid == null) return { ok: false, code: "not_supported", message: "surface not ready" };
     return callSurfaceTyped((s) => s.screenshot({ surfaceId: sid, ...args }));
@@ -461,9 +518,15 @@ class BuniteWebviewElement extends HTMLElement {
         this._syncHidden = false;
         this._applySurfaceHidden();
       }
-      void callSurface((s) => s.resize({
-        surfaceId: sid, x: rect.x, y: rect.y, w: rect.width, h: rect.height,
-      }));
+      void callSurface((s) =>
+        s.resize({
+          surfaceId: sid,
+          x: rect.x,
+          y: rect.y,
+          w: rect.width,
+          h: rect.height,
+        }),
+      );
     });
     this._syncCtrl.start();
   }
@@ -493,34 +556,38 @@ class BuniteWebviewElement extends HTMLElement {
         return { surfaceId: adoptId };
       }) as Promise<SurfaceInitResponse>;
       this._initPromise = initPromise;
-      initPromise.then((response) => {
-        if (this._initPromise !== initPromise) return;
-        if (this._aborted) {
-          void callSurface((s) => s.remove({ surfaceId: response.surfaceId }));
-          return;
-        }
-        this._surfaceId = response.surfaceId;
-        this._setupSyncCtrl();
-      }).catch((err) => {
-        if ((globalThis as { __BUNITE_DEBUG__?: boolean }).__BUNITE_DEBUG__) {
-          console.warn("[bunite] adopt-popup-id init failed", err);
-        }
-        this._initPromise = null;
-      });
+      initPromise
+        .then((response) => {
+          if (this._initPromise !== initPromise) return;
+          if (this._aborted) {
+            void callSurface((s) => s.remove({ surfaceId: response.surfaceId }));
+            return;
+          }
+          this._surfaceId = response.surfaceId;
+          this._setupSyncCtrl();
+        })
+        .catch((err) => {
+          if ((globalThis as { __BUNITE_DEBUG__?: boolean }).__BUNITE_DEBUG__) {
+            console.warn("[bunite] adopt-popup-id init failed", err);
+          }
+          this._initPromise = null;
+        });
       return;
     }
 
     const src = this._pendingSrc || this.getAttribute("src") || "";
     this._pendingSrc = null;
 
-    const initPromise = getSurfaceCap().then((s) => s.init({
-      src,
-      x: Math.round(r.x * dpr),
-      y: Math.round(r.y * dpr),
-      width: Math.round(r.width * dpr),
-      height: Math.round(r.height * dpr),
-      hidden: this._userHidden,
-    })) as Promise<SurfaceInitResponse>;
+    const initPromise = getSurfaceCap().then((s) =>
+      s.init({
+        src,
+        x: Math.round(r.x * dpr),
+        y: Math.round(r.y * dpr),
+        width: Math.round(r.width * dpr),
+        height: Math.round(r.height * dpr),
+        hidden: this._userHidden,
+      }),
+    ) as Promise<SurfaceInitResponse>;
     this._initPromise = initPromise;
 
     initPromise
@@ -560,14 +627,24 @@ class BuniteWebviewElement extends HTMLElement {
 if (typeof customElements !== "undefined") {
   customElements.define("bunite-webview", BuniteWebviewElement);
 
-  const raiseAll = () => { void callSurface((s) => s.bringAllVisiblesToFront()); };
+  const raiseAll = () => {
+    void callSurface((s) => s.bringAllVisiblesToFront());
+  };
   document.addEventListener("pointerdown", raiseAll, true);
 
-  document.addEventListener("dragstart", () => {
-    void callSurface((s) => s.setAllPassthrough({ passthrough: true }));
-  }, true);
-  document.addEventListener("dragend", () => {
-    void callSurface((s) => s.setAllPassthrough({ passthrough: false }));
-    raiseAll();
-  }, true);
+  document.addEventListener(
+    "dragstart",
+    () => {
+      void callSurface((s) => s.setAllPassthrough({ passthrough: true }));
+    },
+    true,
+  );
+  document.addEventListener(
+    "dragend",
+    () => {
+      void callSurface((s) => s.setAllPassthrough({ passthrough: false }));
+      raiseAll();
+    },
+    true,
+  );
 }

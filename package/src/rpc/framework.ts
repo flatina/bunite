@@ -1,5 +1,5 @@
-import { call, defineCap, stream, cap } from "./schema";
-import type { CapDef } from "./schema";
+import type { AnyCapDef } from "./schema";
+import { call, cap, defineCap, stream } from "./schema";
 
 /** Window state for custom-titlebar rendering (max/restore glyph + focus ring). */
 export interface WindowState {
@@ -10,7 +10,7 @@ export interface WindowState {
 
 export const BrowserWindowCap = defineCap("bunite.BrowserWindow", {
   focus: call<void, void>(),
-  close: call<void, void>(),  // vetoable — routes through close-requested
+  close: call<void, void>(), // vetoable — routes through close-requested
   setBounds: call<{ x: number; y: number; w: number; h: number }, void>(),
   setTitle: call<{ title: string }, void>(),
   id: call<void, number>({ idempotent: true }),
@@ -21,7 +21,7 @@ export const BrowserWindowCap = defineCap("bunite.BrowserWindow", {
   unmaximize: call<void, void>(),
   toggleMaximize: call<void, void>(),
   getState: call<void, WindowState>({ idempotent: true }),
-  stateWatch: stream<void, WindowState>(),  // emits current state on subscribe, then on change
+  stateWatch: stream<void, WindowState>(), // emits current state on subscribe, then on change
   // Start an OS window move (Tauri startDragging equiv) — call from a custom
   // titlebar mousedown. Preload auto-calls this for `app-region: drag`; manual
   // callers use it for custom hit-testing. Start-only; native follows the cursor.
@@ -30,8 +30,14 @@ export const BrowserWindowCap = defineCap("bunite.BrowserWindow", {
 
 export const WindowCap = defineCap("bunite.Window", {
   create: call<WindowCreateOpts, typeof BrowserWindowCap>({ returns: cap(BrowserWindowCap) }),
-  list: call<void, typeof BrowserWindowCap>({ returns: cap.array(BrowserWindowCap), idempotent: true }),
-  current: call<void, typeof BrowserWindowCap>({ returns: cap(BrowserWindowCap), idempotent: true }),
+  list: call<void, typeof BrowserWindowCap>({
+    returns: cap.array(BrowserWindowCap),
+    idempotent: true,
+  }),
+  current: call<void, typeof BrowserWindowCap>({
+    returns: cap(BrowserWindowCap),
+    idempotent: true,
+  }),
   focus: call<{ id?: number; label?: string }, void>(),
   close: call<{ id?: number; label?: string }, void>(),
 });
@@ -43,12 +49,16 @@ export interface WindowCreateOpts {
   label?: string;
 }
 
-export const FileRefCap = defineCap("bunite.FileRef", {
-  text: call<void, string>({ idempotent: true }),
-  bytes: call<void, Uint8Array>({ idempotent: true }),
-  path: call<void, string>({ idempotent: true }),
-  revoke: call<void, void>(),
-}, { disposal: { method: "revoke" } });
+export const FileRefCap = defineCap(
+  "bunite.FileRef",
+  {
+    text: call<void, string>({ idempotent: true }),
+    bytes: call<void, Uint8Array>({ idempotent: true }),
+    path: call<void, string>({ idempotent: true }),
+    revoke: call<void, void>(),
+  },
+  { disposal: { method: "revoke" } },
+);
 
 export const DialogsCap = defineCap("bunite.Dialogs", {
   openFile: call<DialogOpenFileOpts, typeof FileRefCap>({ returns: cap.array(FileRefCap) }),
@@ -184,7 +194,11 @@ export type BoundingRectResult =
   /** `visible` = rect has size AND intersects the frame's viewport. opacity /
    *  visibility:hidden / occlusion are NOT checked — agent must `evaluate` for those. */
   | { ok: true; rect: { x: number; y: number; width: number; height: number }; visible: boolean }
-  | { ok: false; code: "not_found" | "runtime_error" | "cross_origin" | "not_supported"; message: string };
+  | {
+      ok: false;
+      code: "not_found" | "runtime_error" | "cross_origin" | "not_supported";
+      message: string;
+    };
 
 export interface Frame {
   frameId: string;
@@ -201,14 +215,39 @@ export type ListFramesResult =
 export type DownloadPolicy = "auto" | "ask" | "block";
 
 export type DownloadEvent =
-  | { kind: "started"; id: string; url: string; suggestedFilename: string; mimeType?: string; sizeBytes?: number }
+  | {
+      kind: "started";
+      id: string;
+      url: string;
+      suggestedFilename: string;
+      mimeType?: string;
+      sizeBytes?: number;
+    }
   | { kind: "progress"; id: string; receivedBytes: number; totalBytes?: number }
   | { kind: "completed"; id: string; localPath: string }
   | { kind: "failed"; id: string; reason: string }
-  | { kind: "blocked"; id: string; url: string; reason: "host-policy" | "backend-block" | "mime-blocked" | "not_supported" | "ask-not-implemented" };
+  | {
+      kind: "blocked";
+      id: string;
+      url: string;
+      reason:
+        | "host-policy"
+        | "backend-block"
+        | "mime-blocked"
+        | "not_supported"
+        | "ask-not-implemented";
+    };
 
 export type WaitForDownloadResult =
-  | { ok: true; id: string; suggestedFilename: string; url: string; mimeType?: string; sizeBytes?: number; localPath: string }
+  | {
+      ok: true;
+      id: string;
+      suggestedFilename: string;
+      url: string;
+      mimeType?: string;
+      sizeBytes?: number;
+      localPath: string;
+    }
   | { ok: false; code: "timeout" | "blocked" | "failed" | "not_supported"; message: string };
 
 export interface SetDownloadPolicyArgs {
@@ -235,8 +274,12 @@ export interface ExtendPopupTimeoutArgs {
   gracePeriodMs: number;
 }
 export type ExtendPopupTimeoutResult =
-  | { ok: true; deadlineMs: number }   // epoch ms of the new deadline
-  | { ok: false; code: "not_found" | "already_adopted" | "already_dismissed" | "cap_exceeded"; message: string };
+  | { ok: true; deadlineMs: number } // epoch ms of the new deadline
+  | {
+      ok: false;
+      code: "not_found" | "already_adopted" | "already_dismissed" | "cap_exceeded";
+      message: string;
+    };
 
 /** Surface lifecycle event arm before the surface pipeline stamps `epoch`. */
 export type SurfaceEventBase =
@@ -268,7 +311,11 @@ export interface NavigationState {
 
 export type EvaluateResult =
   | { ok: true; value: unknown }
-  | { ok: false; code: "cross_origin" | "runtime_error" | "not_supported" | "timeout"; message: string };
+  | {
+      ok: false;
+      code: "cross_origin" | "runtime_error" | "not_supported" | "timeout";
+      message: string;
+    };
 
 /** Modifier bitmask for input dispatch. Backends translate to native form. */
 export type Modifier = "alt" | "ctrl" | "meta" | "shift";
@@ -281,7 +328,10 @@ export interface ClickArgs {
   clickCount?: number;
   modifiers?: Modifier[];
 }
-export interface TypeArgs { surfaceId: number; text: string }
+export interface TypeArgs {
+  surfaceId: number;
+  text: string;
+}
 export interface PressArgs {
   surfaceId: number;
   key: string;
@@ -390,7 +440,11 @@ export interface ScreenshotArgs {
 }
 export type ScreenshotResult =
   | { ok: true; data: Uint8Array; mime: string; format: "png" | "jpeg" }
-  | { ok: false; code: "not_supported" | "runtime_error" | "timeout" | "black_frame"; message: string };
+  | {
+      ok: false;
+      code: "not_supported" | "runtime_error" | "timeout" | "black_frame";
+      message: string;
+    };
 
 export interface ResolveAndClickArgs {
   surfaceId: number;
@@ -405,18 +459,29 @@ export interface ResolveAndClickArgs {
  *  CEF/WV2 CDP `Input.dispatchMouseEvent` produces trusted events; mac NSEvent
  *  direct dispatch is also trusted. All shipped backends report `true`. */
 export type ResolveAndClickResult =
-  | { ok: true; rect: { x: number; y: number; width: number; height: number }; isTrustedEvent: boolean }
-  | { ok: false; code: "not_found" | "not_visible" | "runtime_error" | "cross_origin" | "not_supported"; message: string };
+  | {
+      ok: true;
+      rect: { x: number; y: number; width: number; height: number };
+      isTrustedEvent: boolean;
+    }
+  | {
+      ok: false;
+      code: "not_found" | "not_visible" | "runtime_error" | "cross_origin" | "not_supported";
+      message: string;
+    };
 
 export const SurfaceCap = defineCap("bunite.Surface", {
-  init: call<{
-    src: string;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    hidden?: boolean;
-  }, { surfaceId: number }>(),
+  init: call<
+    {
+      src: string;
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      hidden?: boolean;
+    },
+    { surfaceId: number }
+  >(),
   resize: call<{ surfaceId: number; x: number; y: number; w: number; h: number }, void>(),
   remove: call<{ surfaceId: number }, void>(),
   setHidden: call<{ surfaceId: number; hidden: boolean }, void>(),
@@ -438,7 +503,9 @@ export const SurfaceCap = defineCap("bunite.Surface", {
   waitForFunction: call<WaitForFunctionArgs, WaitResult>(),
   respondToDialog: call<RespondToDialogArgs, void>(),
   setDialogTimeout: call<SetDialogTimeoutArgs, void>(),
-  getConsoleBuffer: call<{ surfaceId: number; clear?: boolean }, ConsoleEntry[]>({ idempotent: true }),
+  getConsoleBuffer: call<{ surfaceId: number; clear?: boolean }, ConsoleEntry[]>({
+    idempotent: true,
+  }),
   surfaceEvents: stream<{ surfaceId: number }, SurfaceEvent>(),
   dialogs: stream<{ surfaceId: number }, DialogEvent>(),
   consoleEvents: stream<{ surfaceId: number }, ConsoleEntry>(),
@@ -475,7 +542,10 @@ export const RuntimeCap = defineCap("bunite.Runtime", {
   theme: call<void, "light" | "dark">({ idempotent: true }),
   themeWatch: stream<void, "light" | "dark">(),
   surface: call<void, typeof SurfaceCap>({ returns: cap(SurfaceCap), idempotent: true }),
-  reporting: call<void, typeof PageReportingCap>({ returns: cap(PageReportingCap), idempotent: true }),
+  reporting: call<void, typeof PageReportingCap>({
+    returns: cap(PageReportingCap),
+    idempotent: true,
+  }),
   popupMetrics: call<void, PopupMetrics>({ idempotent: true }),
 });
 
@@ -491,7 +561,7 @@ export const FRAMEWORK_TYPE_IDS = {
   PageReporting: 9,
 } as const;
 
-const FRAMEWORK_CAP_TYPE_IDS = new Map<CapDef<any, any>, number>([
+const FRAMEWORK_CAP_TYPE_IDS = new Map<AnyCapDef, number>([
   [RuntimeCap, FRAMEWORK_TYPE_IDS.Runtime],
   [WindowCap, FRAMEWORK_TYPE_IDS.Window],
   [DialogsCap, FRAMEWORK_TYPE_IDS.Dialogs],
@@ -503,6 +573,6 @@ const FRAMEWORK_CAP_TYPE_IDS = new Map<CapDef<any, any>, number>([
   [PageReportingCap, FRAMEWORK_TYPE_IDS.PageReporting],
 ]);
 
-export function frameworkTypeIdOf(cap: CapDef<any, any>): number | undefined {
+export function frameworkTypeIdOf(cap: AnyCapDef): number | undefined {
   return FRAMEWORK_CAP_TYPE_IDS.get(cap);
 }

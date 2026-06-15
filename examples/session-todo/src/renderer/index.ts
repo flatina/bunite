@@ -1,5 +1,5 @@
+import { type ClientOf, IpcError } from "bunite-core/rpc";
 import { bootstrap } from "bunite-core/rpc/renderer";
-import { IpcError, type ClientOf } from "bunite-core/rpc";
 import { BridgeCap, type SessionCap, type Task, type TaskEvent } from "../schema";
 
 const $ = <T extends Element = HTMLElement>(s: string): T => document.querySelector<T>(s)!;
@@ -45,7 +45,6 @@ void (async () => {
   }
 })();
 
-
 const submit = () => {
   const title = titleInput.value.trim();
   if (!title) return;
@@ -53,7 +52,9 @@ const submit = () => {
   session.add({ title }).catch((e) => console.error("add failed:", e));
 };
 addBtn.addEventListener("click", submit);
-titleInput.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+titleInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") submit();
+});
 
 function render(): void {
   list.replaceChildren(...Array.from(tasks.values(), renderRow));
@@ -75,7 +76,7 @@ function renderRow(t: Task): HTMLDivElement {
   title.textContent = t.title;
   title.addEventListener("dblclick", () => {
     const next = prompt("edit", t.title);
-    if (next != null && next.trim() && next !== t.title) {
+    if (next?.trim() && next !== t.title) {
       session.edit({ id: t.id, title: next }).catch((e) => console.error("edit failed:", e));
     }
   });
@@ -93,9 +94,21 @@ function renderRow(t: Task): HTMLDivElement {
 
 function applyEvent(tasks: Map<string, Task>, ev: TaskEvent): void {
   switch (ev.type) {
-    case "added": tasks.set(ev.task.id, ev.task); break;
-    case "toggled": { const t = tasks.get(ev.id); if (t) t.done = ev.done; break; }
-    case "edited":  { const t = tasks.get(ev.id); if (t) t.title = ev.title; break; }
-    case "removed": tasks.delete(ev.id); break;
+    case "added":
+      tasks.set(ev.task.id, ev.task);
+      break;
+    case "toggled": {
+      const t = tasks.get(ev.id);
+      if (t) t.done = ev.done;
+      break;
+    }
+    case "edited": {
+      const t = tasks.get(ev.id);
+      if (t) t.title = ev.title;
+      break;
+    }
+    case "removed":
+      tasks.delete(ev.id);
+      break;
   }
 }

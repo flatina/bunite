@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { encodeModifiers, resolveKey } from "../package/src/host/core/inputDispatch";
 
 describe("encodeModifiers", () => {
@@ -28,7 +28,7 @@ describe("resolveKey", () => {
 
   test("named keys carry VK + DOM code, no character (except space/tab/enter)", () => {
     const enter = resolveKey("Enter");
-    expect(enter.windowsVkCode).toBe(0x0D);
+    expect(enter.windowsVkCode).toBe(0x0d);
     expect(enter.macKeyCode).toBe(0x24);
     expect(enter.code).toBe("Enter");
     expect(enter.character).toBe("\r");
@@ -39,7 +39,7 @@ describe("resolveKey", () => {
 
     const left = resolveKey("ArrowLeft");
     expect(left.windowsVkCode).toBe(0x25);
-    expect(left.macKeyCode).toBe(0x7B);
+    expect(left.macKeyCode).toBe(0x7b);
     expect(left.code).toBe("ArrowLeft");
     expect(left.character).toBe("");
   });
@@ -62,7 +62,7 @@ describe("resolveKey", () => {
     expect(a.character).toBe("a");
 
     const Z = resolveKey("Z");
-    expect(Z.windowsVkCode).toBe(0x5A);
+    expect(Z.windowsVkCode).toBe(0x5a);
     expect(Z.macKeyCode).toBe(0x06);
     expect(Z.code).toBe("KeyZ");
     expect(Z.character).toBe("Z");
@@ -78,7 +78,7 @@ describe("resolveKey", () => {
 
   test("F-keys", () => {
     expect(resolveKey("F1").windowsVkCode).toBe(0x70);
-    expect(resolveKey("F12").windowsVkCode).toBe(0x7B);
+    expect(resolveKey("F12").windowsVkCode).toBe(0x7b);
   });
 
   test("non-ASCII single codepoint → character-only, VK = 0", () => {

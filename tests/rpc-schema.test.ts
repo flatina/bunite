@@ -1,18 +1,31 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
-  call, stream, cap, defineCap,
+  CapRef,
+  CapTable,
+  type ClientOf,
+  call,
+  cap,
+  createCodec,
+  defineCap,
+  FIRST_USER_CAP_ID,
+  type ImplOf,
+  IpcError,
+  isFrame,
+  MAX_CAPS_PER_CONNECTION,
   returnsKindOf,
-  createCodec, CapRef, isFrame, IpcError,
-  CapTable, FIRST_USER_CAP_ID, MAX_CAPS_PER_CONNECTION,
-  type ClientOf, type ImplOf,
+  stream,
 } from "../package/src/rpc/index";
 
-const PlotCap = defineCap("test.Plot", {
-  setData: call<{ data: Float32Array }, void>(),
-  render: call<void, { svg: string }>(),
-  watch: stream<void, { tick: number }>(),
-  dispose: call<void, void>(),
-}, { disposal: { method: "dispose" } });
+const PlotCap = defineCap(
+  "test.Plot",
+  {
+    setData: call<{ data: Float32Array }, void>(),
+    render: call<void, { svg: string }>(),
+    watch: stream<void, { tick: number }>(),
+    dispose: call<void, void>(),
+  },
+  { disposal: { method: "dispose" } },
+);
 
 const counterCap = defineCap("test.counter", {
   getCount: call<void, { count: number }>(),
@@ -65,8 +78,12 @@ describe("wire codec", () => {
   });
 
   test("isFrame validates op tag and method-as-string", () => {
-    expect(isFrame({ op: "call", id: 1, target: { kind: "cap", id: 0 }, method: "ping", args: null })).toBe(true);
-    expect(isFrame({ op: "call", id: 1, target: { kind: "cap", id: 0 }, method: 7, args: null })).toBe(false);
+    expect(
+      isFrame({ op: "call", id: 1, target: { kind: "cap", id: 0 }, method: "ping", args: null }),
+    ).toBe(true);
+    expect(
+      isFrame({ op: "call", id: 1, target: { kind: "cap", id: 0 }, method: 7, args: null }),
+    ).toBe(false);
     expect(isFrame({ op: "cap_revoked", capIds: [1, 2] })).toBe(true);
     expect(isFrame({ op: "bogus" })).toBe(false);
     expect(isFrame(null)).toBe(false);
@@ -102,7 +119,9 @@ describe("cap-table", () => {
     const t = new CapTable();
     const e = t.allocate({ typeId: 128, cap: null, impl: null, refCount: 1 });
     expect(e.capId).toBe(FIRST_USER_CAP_ID);
-    expect(t.allocate({ typeId: 128, cap: null, impl: null, refCount: 1 }).capId).toBe(FIRST_USER_CAP_ID + 1);
+    expect(t.allocate({ typeId: 128, cap: null, impl: null, refCount: 1 }).capId).toBe(
+      FIRST_USER_CAP_ID + 1,
+    );
   });
 
   test("release drops user caps but not well-known", () => {

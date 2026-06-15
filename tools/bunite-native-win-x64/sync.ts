@@ -7,11 +7,7 @@ import { join } from "node:path";
 const pkgDir = import.meta.dirname;
 const nativeBuild = join(pkgDir, "..", "..", "package", "native-build", "win-x64");
 
-const files = [
-  "libBuniteNative.dll",
-  "process_helper.exe",
-  "libBuniteNativeWebView2.dll",
-];
+const files = ["libBuniteNative.dll", "process_helper.exe", "libBuniteNativeWebView2.dll"];
 
 for (const f of files) {
   const src = join(nativeBuild, f);

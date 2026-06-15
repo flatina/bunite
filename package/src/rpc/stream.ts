@@ -4,7 +4,10 @@ type Setup<T> = (emit: (chunk: T) => void, signal: AbortSignal) => void | (() =>
 
 class ServerStream<T> implements AsyncIterable<T>, Disposable {
   private readonly buffer: T[] = [];
-  private readonly waiters: Array<{ resolve: (r: IteratorResult<T>) => void; reject: (e: unknown) => void }> = [];
+  private readonly waiters: Array<{
+    resolve: (r: IteratorResult<T>) => void;
+    reject: (e: unknown) => void;
+  }> = [];
   private readonly ctrl = new AbortController();
   private cleanup?: () => void;
   private ended = false;
@@ -36,7 +39,9 @@ class ServerStream<T> implements AsyncIterable<T>, Disposable {
         }
         if (this.failure) throw this.failure;
         if (this.ended) return { value: undefined as unknown as T, done: true };
-        return new Promise<IteratorResult<T>>((resolve, reject) => this.waiters.push({ resolve, reject }));
+        return new Promise<IteratorResult<T>>((resolve, reject) =>
+          this.waiters.push({ resolve, reject }),
+        );
       },
       return: async (): Promise<IteratorResult<T>> => {
         this.dispose();
@@ -57,7 +62,11 @@ class ServerStream<T> implements AsyncIterable<T>, Disposable {
     if (this.ended) return;
     this.ended = true;
     this.ctrl.abort();
-    try { this.cleanup?.(); } catch { /* swallow */ }
+    try {
+      this.cleanup?.();
+    } catch {
+      /* swallow */
+    }
     while (this.waiters.length > 0) {
       const w = this.waiters.shift()!;
       w.resolve({ value: undefined as unknown as T, done: true });

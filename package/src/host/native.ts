@@ -1,10 +1,14 @@
-import { CString, dlopen, FFIType, JSCallback, ptr, type Pointer } from "bun:ffi";
+import { CString, dlopen, FFIType, JSCallback, type Pointer, ptr } from "bun:ffi";
 import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { buniteEventEmitter } from "./events/eventEmitter";
-import { resolveNativeArtifacts, type ResolvedNativeArtifacts, type WindowsEngine } from "./paths";
-import { resolvePackageRoot } from "./paths";
 import { log } from "./log";
+import {
+  type ResolvedNativeArtifacts,
+  resolveNativeArtifacts,
+  resolvePackageRoot,
+  type WindowsEngine,
+} from "./paths";
 
 export type NativeBootstrapOptions = {
   hideConsole?: boolean;
@@ -36,7 +40,7 @@ type NativeSymbols = {
     cefDir: CStringPointer,
     hideConsole: boolean,
     popupBlocking: boolean,
-    engineConfigJson: CStringPointer
+    engineConfigJson: CStringPointer,
   ) => boolean;
   bunite_run_loop: () => void;
   bunite_pump_once: () => void;
@@ -53,7 +57,7 @@ type NativeSymbols = {
     transparent: boolean,
     hidden: boolean,
     minimized: boolean,
-    maximized: boolean
+    maximized: boolean,
   ) => boolean;
   bunite_window_destroy: (windowId: number) => void;
   bunite_window_reset_close_pending: (windowId: number) => void;
@@ -71,7 +75,7 @@ type NativeSymbols = {
     x: number,
     y: number,
     width: number,
-    height: number
+    height: number,
   ) => void;
   bunite_window_begin_move_drag: (windowId: number) => void;
   bunite_view_create: (
@@ -88,7 +92,7 @@ type NativeSymbols = {
     height: number,
     autoResize: boolean,
     sandbox: boolean,
-    preloadOriginsJson: CStringPointer
+    preloadOriginsJson: CStringPointer,
   ) => boolean;
   bunite_register_appres_route: (path: CStringPointer) => void;
   bunite_unregister_appres_route: (path: CStringPointer) => void;
@@ -97,54 +101,106 @@ type NativeSymbols = {
   bunite_view_set_input_passthrough: (viewId: number, passthrough: boolean) => void;
   bunite_view_set_mask_region: (viewId: number, rects: Pointer, count: number) => void;
   bunite_view_bring_to_front: (viewId: number) => void;
-  bunite_view_set_bounds: (viewId: number, x: number, y: number, width: number, height: number) => void;
-  bunite_view_set_bounds_async: (viewId: number, x: number, y: number, width: number, height: number) => void;
+  bunite_view_set_bounds: (
+    viewId: number,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ) => void;
+  bunite_view_set_bounds_async: (
+    viewId: number,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  ) => void;
   bunite_view_go_back: (viewId: number) => void;
   bunite_view_reload: (viewId: number) => void;
   bunite_view_execute_javascript: (viewId: number, script: CStringPointer) => void;
   bunite_view_evaluate: (viewId: number, requestId: number, script: CStringPointer) => void;
   bunite_view_click: (
-    viewId: number, x: number, y: number,
-    button: number, clickCount: number, modifiers: number
+    viewId: number,
+    x: number,
+    y: number,
+    button: number,
+    clickCount: number,
+    modifiers: number,
   ) => void;
   bunite_view_type: (viewId: number, text: CStringPointer) => void;
   bunite_view_press: (
-    viewId: number, windowsVkCode: number, macKeyCode: number,
-    key: CStringPointer, code: CStringPointer, character: CStringPointer,
-    modifiers: number, action: number, extended: boolean, location: number
+    viewId: number,
+    windowsVkCode: number,
+    macKeyCode: number,
+    key: CStringPointer,
+    code: CStringPointer,
+    character: CStringPointer,
+    modifiers: number,
+    action: number,
+    extended: boolean,
+    location: number,
   ) => void;
   bunite_view_scroll: (
-    viewId: number, dx: number, dy: number,
-    x: number, y: number, modifiers: number
+    viewId: number,
+    dx: number,
+    dy: number,
+    x: number,
+    y: number,
+    modifiers: number,
   ) => void;
   bunite_view_mouse: (
-    viewId: number, action: number, x: number, y: number,
-    button: number, modifiers: number
+    viewId: number,
+    action: number,
+    x: number,
+    y: number,
+    button: number,
+    modifiers: number,
   ) => void;
   bunite_view_respond_dialog: (
-    viewId: number, requestId: number, accept: boolean, text: CStringPointer
+    viewId: number,
+    requestId: number,
+    accept: boolean,
+    text: CStringPointer,
   ) => void;
   bunite_view_screenshot: (
-    viewId: number, requestId: number, format: CStringPointer, quality: number
+    viewId: number,
+    requestId: number,
+    format: CStringPointer,
+    quality: number,
   ) => void;
   bunite_view_accessibility_snapshot: (
-    viewId: number, requestId: number, interestingOnly: number
+    viewId: number,
+    requestId: number,
+    interestingOnly: number,
   ) => void;
   bunite_view_list_frames: (viewId: number, requestId: number) => void;
   bunite_view_evaluate_in_frame: (
-    viewId: number, requestId: number, script: CStringPointer, frameId: CStringPointer
+    viewId: number,
+    requestId: number,
+    script: CStringPointer,
+    frameId: CStringPointer,
   ) => void;
   bunite_view_resolve_and_click: (
-    viewId: number, requestId: number,
-    selector: CStringPointer, frameId: CStringPointer,
-    button: number, clickCount: number, modifiers: number
+    viewId: number,
+    requestId: number,
+    selector: CStringPointer,
+    frameId: CStringPointer,
+    button: number,
+    clickCount: number,
+    modifiers: number,
   ) => void;
   bunite_view_set_download_policy: (
-    viewId: number, policy: number, downloadDir: CStringPointer
+    viewId: number,
+    policy: number,
+    downloadDir: CStringPointer,
   ) => void;
   bunite_view_popup_accept: (
-    newViewId: number, hostWindowId: number,
-    x: number, y: number, w: number, h: number,
+    newViewId: number,
+    hostWindowId: number,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
   ) => void;
   bunite_view_popup_dismiss: (newViewId: number) => void;
   bunite_view_capabilities: (viewId: number) => number;
@@ -166,39 +222,39 @@ type LoadedNativeLibrary = {
 const nativeSymbolDefinitions = {
   bunite_abi_version: {
     args: [],
-    returns: FFIType.i32
+    returns: FFIType.i32,
   },
   bunite_engine_name: {
     args: [],
-    returns: FFIType.cstring
+    returns: FFIType.cstring,
   },
   bunite_engine_version: {
     args: [],
-    returns: FFIType.cstring
+    returns: FFIType.cstring,
   },
   bunite_set_log_level: {
     args: [FFIType.i32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_init: {
     args: [FFIType.cstring, FFIType.bool, FFIType.bool, FFIType.cstring],
-    returns: FFIType.bool
+    returns: FFIType.bool,
   },
   bunite_run_loop: {
     args: [],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_pump_once: {
     args: [],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_quit: {
     args: [],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_free_cstring: {
     args: [FFIType.ptr],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_window_create: {
     args: [
@@ -212,61 +268,61 @@ const nativeSymbolDefinitions = {
       FFIType.bool,
       FFIType.bool,
       FFIType.bool,
-      FFIType.bool
+      FFIType.bool,
     ],
-    returns: FFIType.bool
+    returns: FFIType.bool,
   },
   bunite_window_destroy: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_window_reset_close_pending: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_window_show: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_window_close: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_window_set_title: {
     args: [FFIType.u32, FFIType.cstring],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_window_minimize: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_window_unminimize: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_window_is_minimized: {
     args: [FFIType.u32],
-    returns: FFIType.bool
+    returns: FFIType.bool,
   },
   bunite_window_maximize: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_window_unmaximize: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_window_is_maximized: {
     args: [FFIType.u32],
-    returns: FFIType.bool
+    returns: FFIType.bool,
   },
   bunite_window_set_frame: {
     args: [FFIType.u32, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_window_begin_move_drag: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_create: {
     args: [
@@ -283,158 +339,177 @@ const nativeSymbolDefinitions = {
       FFIType.f64,
       FFIType.bool,
       FFIType.bool,
-      FFIType.cstring
+      FFIType.cstring,
     ],
-    returns: FFIType.bool
+    returns: FFIType.bool,
   },
   bunite_register_appres_route: {
     args: [FFIType.cstring],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_unregister_appres_route: {
     args: [FFIType.cstring],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_complete_route_request: {
     args: [FFIType.u32, FFIType.cstring],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_set_visible: {
     args: [FFIType.u32, FFIType.bool],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_set_input_passthrough: {
     args: [FFIType.u32, FFIType.bool],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_set_mask_region: {
     args: [FFIType.u32, FFIType.pointer, FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_bring_to_front: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_set_bounds: {
     args: [FFIType.u32, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_set_bounds_async: {
     args: [FFIType.u32, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_go_back: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_reload: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_execute_javascript: {
     args: [FFIType.u32, FFIType.cstring],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_evaluate: {
     args: [FFIType.u32, FFIType.u32, FFIType.cstring],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_click: {
     args: [FFIType.u32, FFIType.f64, FFIType.f64, FFIType.i32, FFIType.i32, FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_type: {
     args: [FFIType.u32, FFIType.cstring],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_press: {
-    args: [FFIType.u32, FFIType.i32, FFIType.i32, FFIType.cstring, FFIType.cstring, FFIType.cstring, FFIType.u32, FFIType.i32, FFIType.bool, FFIType.i32],
-    returns: FFIType.void
+    args: [
+      FFIType.u32,
+      FFIType.i32,
+      FFIType.i32,
+      FFIType.cstring,
+      FFIType.cstring,
+      FFIType.cstring,
+      FFIType.u32,
+      FFIType.i32,
+      FFIType.bool,
+      FFIType.i32,
+    ],
+    returns: FFIType.void,
   },
   bunite_view_scroll: {
     args: [FFIType.u32, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_mouse: {
     args: [FFIType.u32, FFIType.i32, FFIType.f64, FFIType.f64, FFIType.i32, FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_respond_dialog: {
     args: [FFIType.u32, FFIType.u32, FFIType.bool, FFIType.cstring],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_screenshot: {
     args: [FFIType.u32, FFIType.u32, FFIType.cstring, FFIType.i32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_accessibility_snapshot: {
     args: [FFIType.u32, FFIType.u32, FFIType.i32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_list_frames: {
     args: [FFIType.u32, FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_evaluate_in_frame: {
     args: [FFIType.u32, FFIType.u32, FFIType.cstring, FFIType.cstring],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_resolve_and_click: {
-    args: [FFIType.u32, FFIType.u32, FFIType.cstring, FFIType.cstring, FFIType.i32, FFIType.i32, FFIType.u32],
-    returns: FFIType.void
+    args: [
+      FFIType.u32,
+      FFIType.u32,
+      FFIType.cstring,
+      FFIType.cstring,
+      FFIType.i32,
+      FFIType.i32,
+      FFIType.u32,
+    ],
+    returns: FFIType.void,
   },
   bunite_view_set_download_policy: {
     args: [FFIType.u32, FFIType.i32, FFIType.cstring],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_popup_accept: {
     args: [FFIType.u32, FFIType.u32, FFIType.f64, FFIType.f64, FFIType.f64, FFIType.f64],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_popup_dismiss: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_capabilities: {
     args: [FFIType.u32],
-    returns: FFIType.u32
+    returns: FFIType.u32,
   },
   bunite_view_load_url: {
     args: [FFIType.u32, FFIType.cstring],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_load_html: {
     args: [FFIType.u32, FFIType.cstring],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_remove: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_open_devtools: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_close_devtools: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_view_toggle_devtools: {
     args: [FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_complete_permission_request: {
     args: [FFIType.u32, FFIType.u32],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_set_webview_event_handler: {
     args: [FFIType.function],
-    returns: FFIType.void
+    returns: FFIType.void,
   },
   bunite_set_window_event_handler: {
     args: [FFIType.function],
-    returns: FFIType.void
-  }
+    returns: FFIType.void,
+  },
 } as const;
 
 let state: NativeRuntimeState | null = null;
@@ -451,12 +526,14 @@ export function setRouteRequestHandler(handler: (requestId: number, path: string
 export type NativeEvaluateResult = {
   requestId: number;
   ok: boolean;
-  value?: string;        // raw JSON string when ok
+  value?: string; // raw JSON string when ok
   code?: string;
   message?: string;
 };
 let evaluateResultHandler: ((viewId: number, result: NativeEvaluateResult) => void) | null = null;
-export function setEvaluateResultHandler(handler: (viewId: number, result: NativeEvaluateResult) => void) {
+export function setEvaluateResultHandler(
+  handler: (viewId: number, result: NativeEvaluateResult) => void,
+) {
   evaluateResultHandler = handler;
 }
 
@@ -469,20 +546,27 @@ export type NativeScreenshotResult = {
   code?: string;
   message?: string;
 };
-let screenshotResultHandler: ((viewId: number, result: NativeScreenshotResult) => void) | null = null;
-export function setScreenshotResultHandler(handler: (viewId: number, result: NativeScreenshotResult) => void) {
+let screenshotResultHandler: ((viewId: number, result: NativeScreenshotResult) => void) | null =
+  null;
+export function setScreenshotResultHandler(
+  handler: (viewId: number, result: NativeScreenshotResult) => void,
+) {
   screenshotResultHandler = handler;
 }
 
 export type NativeAccessibilityResult = {
   requestId: number;
   ok: boolean;
-  tree?: unknown;       // CDP Accessibility.AXNode tree as JSON value
+  tree?: unknown; // CDP Accessibility.AXNode tree as JSON value
   code?: string;
   message?: string;
 };
-let accessibilityResultHandler: ((viewId: number, result: NativeAccessibilityResult) => void) | null = null;
-export function setAccessibilityResultHandler(handler: (viewId: number, result: NativeAccessibilityResult) => void) {
+let accessibilityResultHandler:
+  | ((viewId: number, result: NativeAccessibilityResult) => void)
+  | null = null;
+export function setAccessibilityResultHandler(
+  handler: (viewId: number, result: NativeAccessibilityResult) => void,
+) {
   accessibilityResultHandler = handler;
 }
 
@@ -494,8 +578,11 @@ export type NativeListFramesResult = {
   code?: string;
   message?: string;
 };
-let listFramesResultHandler: ((viewId: number, result: NativeListFramesResult) => void) | null = null;
-export function setListFramesResultHandler(handler: (viewId: number, result: NativeListFramesResult) => void) {
+let listFramesResultHandler: ((viewId: number, result: NativeListFramesResult) => void) | null =
+  null;
+export function setListFramesResultHandler(
+  handler: (viewId: number, result: NativeListFramesResult) => void,
+) {
   listFramesResultHandler = handler;
 }
 
@@ -507,8 +594,12 @@ export type NativeResolveAndClickResult = {
   code?: string;
   message?: string;
 };
-let resolveAndClickResultHandler: ((viewId: number, result: NativeResolveAndClickResult) => void) | null = null;
-export function setResolveAndClickResultHandler(handler: (viewId: number, result: NativeResolveAndClickResult) => void) {
+let resolveAndClickResultHandler:
+  | ((viewId: number, result: NativeResolveAndClickResult) => void)
+  | null = null;
+export function setResolveAndClickResultHandler(
+  handler: (viewId: number, result: NativeResolveAndClickResult) => void,
+) {
   resolveAndClickResultHandler = handler;
 }
 
@@ -525,7 +616,9 @@ export type NativeDownloadEvent = {
   reason?: string;
 };
 let downloadEventHandler: ((viewId: number, event: NativeDownloadEvent) => void) | null = null;
-export function setDownloadEventHandler(handler: (viewId: number, event: NativeDownloadEvent) => void) {
+export function setDownloadEventHandler(
+  handler: (viewId: number, event: NativeDownloadEvent) => void,
+) {
   downloadEventHandler = handler;
 }
 
@@ -558,12 +651,14 @@ export function toCString(value: string): CStringPointer {
 function applyEnvironment(artifacts: ResolvedNativeArtifacts) {
   // CEF needs engine dir on PATH (libcef.dll) and ICU_DATA pointing at resources.
   // WebView2 needs the directory containing WebView2Loader.dll on PATH.
-  const engineBinaryDir = artifacts.cefDir && existsSync(join(artifacts.cefDir, "Release", "libcef.dll"))
-    ? join(artifacts.cefDir, "Release")
-    : artifacts.cefDir;
-  const engineResourceDir = artifacts.cefDir && existsSync(join(artifacts.cefDir, "Resources", "resources.pak"))
-    ? join(artifacts.cefDir, "Resources")
-    : artifacts.cefDir;
+  const engineBinaryDir =
+    artifacts.cefDir && existsSync(join(artifacts.cefDir, "Release", "libcef.dll"))
+      ? join(artifacts.cefDir, "Release")
+      : artifacts.cefDir;
+  const engineResourceDir =
+    artifacts.cefDir && existsSync(join(artifacts.cefDir, "Resources", "resources.pak"))
+      ? join(artifacts.cefDir, "Resources")
+      : artifacts.cefDir;
 
   if (engineResourceDir && !process.env.ICU_DATA) {
     process.env.ICU_DATA = engineResourceDir;
@@ -592,7 +687,7 @@ function tryLoadNativeLibrary(artifacts: ResolvedNativeArtifacts) {
   try {
     const library = dlopen(artifacts.nativeLibPath, nativeSymbolDefinitions as any);
     return {
-      symbols: library.symbols as unknown as NativeSymbols
+      symbols: library.symbols as unknown as NativeSymbols,
     } satisfies LoadedNativeLibrary;
   } catch (error) {
     log.warn("Failed to load native library via FFI.", error);
@@ -626,35 +721,35 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
           case "will-navigate":
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.webview.willNavigate({ detail: payload }),
-              viewId
+              viewId,
             );
             break;
           case "did-navigate":
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.webview.didNavigate({ detail: payload }),
-              viewId
+              viewId,
             );
             break;
           case "dom-ready":
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.webview.domReady({ detail: payload }),
-              viewId
+              viewId,
             );
             break;
           case "new-window-open":
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.webview.newWindowOpen({
-                detail: maybeParsePayload(payload) as string | { url: string }
+                detail: maybeParsePayload(payload) as string | { url: string },
               }),
-              viewId
+              viewId,
             );
             break;
           case "permission-requested":
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.webview.permissionRequested(
-                maybeParsePayload(payload) as { requestId: number; kind: number; url?: string }
+                maybeParsePayload(payload) as { requestId: number; kind: number; url?: string },
               ),
-              viewId
+              viewId,
             );
             break;
           case "route-request": {
@@ -672,8 +767,11 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
           }
           case "evaluate-result": {
             const parsed = maybeParsePayload(payload) as {
-              requestId: number; ok: boolean;
-              value?: string; code?: string; message?: string;
+              requestId: number;
+              ok: boolean;
+              value?: string;
+              code?: string;
+              message?: string;
             };
             evaluateResultHandler?.(viewId, parsed);
             break;
@@ -703,7 +801,7 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
             downloadEventHandler?.(viewId, parsed);
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.webview.downloadEvent(parsed),
-              viewId
+              viewId,
             );
             break;
           }
@@ -715,7 +813,7 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
             };
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.webview.popupRequested(parsed),
-              viewId
+              viewId,
             );
             break;
           }
@@ -723,29 +821,30 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
             const parsed = maybeParsePayload(payload) as { title: string };
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.webview.titleChanged({ detail: parsed.title }),
-              viewId
+              viewId,
             );
             break;
           }
           case "load-start":
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.webview.loadStart({ detail: payload }),
-              viewId
+              viewId,
             );
             break;
           case "load-finish":
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.webview.loadFinish({ detail: payload }),
-              viewId
+              viewId,
             );
             break;
           case "load-fail": {
             const parsed = maybeParsePayload(payload) as { url?: string; reason?: string };
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.webview.loadFail({
-                url: parsed.url ?? "", reason: parsed.reason,
+                url: parsed.url ?? "",
+                reason: parsed.reason,
               }),
-              viewId
+              viewId,
             );
             break;
           }
@@ -756,10 +855,7 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
               message: string;
               defaultPrompt?: string;
             };
-            buniteEventEmitter.emitEvent(
-              buniteEventEmitter.events.webview.dialog(parsed),
-              viewId
-            );
+            buniteEventEmitter.emitEvent(buniteEventEmitter.events.webview.dialog(parsed), viewId);
             break;
           }
           case "console-message": {
@@ -770,7 +866,7 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
             };
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.webview.consoleMessage(parsed),
-              viewId
+              viewId,
             );
             break;
           }
@@ -779,8 +875,8 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
       {
         args: [FFIType.u32, FFIType.cstring, FFIType.cstring],
         returns: FFIType.void,
-        threadsafe: true
-      }
+        threadsafe: true,
+      },
     );
   }
 
@@ -795,9 +891,7 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
 
         switch (eventName) {
           case "all-windows-closed":
-            buniteEventEmitter.emitEvent(
-              buniteEventEmitter.events.app.allWindowsClosed()
-            );
+            buniteEventEmitter.emitEvent(buniteEventEmitter.events.app.allWindowsClosed());
             break;
           case "close-requested": {
             const crEvent = buniteEventEmitter.events.window.closeRequested({ id: windowId });
@@ -814,24 +908,29 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
           case "close":
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.window.close({ id: windowId }),
-              windowId
+              windowId,
             );
             break;
           case "focus":
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.window.focus({ id: windowId }),
-              windowId
+              windowId,
             );
             break;
           case "blur":
             buniteEventEmitter.emitEvent(
               buniteEventEmitter.events.window.blur({ id: windowId }),
-              windowId
+              windowId,
             );
             break;
           case "move":
             if (parsedPayload && typeof parsedPayload === "object") {
-              const { x = 0, y = 0, maximized = false, minimized = false } = parsedPayload as {
+              const {
+                x = 0,
+                y = 0,
+                maximized = false,
+                minimized = false,
+              } = parsedPayload as {
                 x?: number;
                 y?: number;
                 maximized?: boolean;
@@ -839,13 +938,20 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
               };
               buniteEventEmitter.emitEvent(
                 buniteEventEmitter.events.window.move({ id: windowId, x, y, maximized, minimized }),
-                windowId
+                windowId,
               );
             }
             break;
           case "resize":
             if (parsedPayload && typeof parsedPayload === "object") {
-              const { x = 0, y = 0, width = 0, height = 0, maximized = false, minimized = false } = parsedPayload as {
+              const {
+                x = 0,
+                y = 0,
+                width = 0,
+                height = 0,
+                maximized = false,
+                minimized = false,
+              } = parsedPayload as {
                 x?: number;
                 y?: number;
                 width?: number;
@@ -861,9 +967,9 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
                   width,
                   height,
                   maximized,
-                  minimized
+                  minimized,
                 }),
-                windowId
+                windowId,
               );
             }
             break;
@@ -872,8 +978,8 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
       {
         args: [FFIType.u32, FFIType.cstring, FFIType.cstring],
         returns: FFIType.void,
-        threadsafe: true
-      }
+        threadsafe: true,
+      },
     );
   }
 
@@ -882,7 +988,7 @@ function registerNativeCallbacks(library: LoadedNativeLibrary) {
 }
 
 export async function initNativeRuntime(
-  options: NativeBootstrapOptions = {}
+  options: NativeBootstrapOptions = {},
 ): Promise<NativeRuntimeState> {
   if (state) {
     return state;
@@ -890,7 +996,7 @@ export async function initNativeRuntime(
 
   const artifacts = resolveNativeArtifacts(options.engine);
   const hasNativeArtifacts = Boolean(
-    artifacts.nativeLibPath && existsSync(artifacts.nativeLibPath)
+    artifacts.nativeLibPath && existsSync(artifacts.nativeLibPath),
   );
 
   applyEnvironment(artifacts);
@@ -902,19 +1008,21 @@ export async function initNativeRuntime(
     resolvePackageRoot("bunite-cef-win-x64") != null
   ) {
     log.warn(
-      "[bunite] Detected bunite-cef-win-x64. Windows default engine is now \"webview2\" — " +
-      "this app is currently running on WebView2. " +
-      "To stay on CEF: pass engine: \"cef\" to AppRuntime. " +
-      "To accept the new default: drop bunite-cef-win-x64 from dependencies."
+      '[bunite] Detected bunite-cef-win-x64. Windows default engine is now "webview2" — ' +
+        "this app is currently running on WebView2. " +
+        'To stay on CEF: pass engine: "cef" to AppRuntime. ' +
+        "To accept the new default: drop bunite-cef-win-x64 from dependencies.",
     );
   }
 
   if (!hasNativeArtifacts) {
-    const engineSuffix = artifacts.engine === "cef" ? " (engine=cef requires bunite-cef-win-x64)" : "";
+    const engineSuffix =
+      artifacts.engine === "cef" ? " (engine=cef requires bunite-cef-win-x64)" : "";
     throw new Error(
       "bunite: native runtime not found. Install the platform package " +
-      `(bunite-native-${process.platform === "win32" ? "win" : process.platform === "darwin" ? "mac" : "linux"}-<arch>)` +
-      engineSuffix + "."
+        `(bunite-native-${process.platform === "win32" ? "win" : process.platform === "darwin" ? "mac" : "linux"}-<arch>)` +
+        engineSuffix +
+        ".",
     );
   }
 
@@ -928,7 +1036,7 @@ export async function initNativeRuntime(
   if (nativeAbi !== EXPECTED_ABI) {
     throw new Error(
       `bunite native ABI mismatch: JS expects ${EXPECTED_ABI}, native reports ${nativeAbi}. ` +
-      `Rebuild native binaries with 'bun run build:native:win'.`
+        `Rebuild native binaries with 'bun run build:native:win'.`,
     );
   }
   registerNativeCallbacks(nativeLibrary);
@@ -937,19 +1045,19 @@ export async function initNativeRuntime(
     toCString(artifacts.cefDir ?? ""),
     options.hideConsole ?? false,
     options.popupBlocking ?? false,
-    toCString(engineConfigJson)
+    toCString(engineConfigJson),
   );
   if (!initOk) {
     throw new Error(
       "bunite: native runtime failed to initialize " +
-      `(engine dir: ${artifacts.cefDir || "<unset>"}). ` +
-      "Verify CEF binaries are available, or set BUNITE_CEF_DIR."
+        `(engine dir: ${artifacts.cefDir || "<unset>"}). ` +
+        "Verify CEF binaries are available, or set BUNITE_CEF_DIR.",
     );
   }
 
   state = {
     initialized: true,
-    artifacts
+    artifacts,
   };
   return state;
 }

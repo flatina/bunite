@@ -5,12 +5,14 @@ const levels: Record<LogLevel, number> = {
   info: 1,
   warn: 2,
   error: 3,
-  silent: 4
+  silent: 4,
 };
 
 function initialLevel(): LogLevel {
-  const v = (typeof process !== "undefined" ? process.env?.BUNITE_LOG_LEVEL : undefined);
-  return v === "debug" || v === "info" || v === "warn" || v === "error" || v === "silent" ? v : "warn";
+  const v = typeof process !== "undefined" ? process.env?.BUNITE_LOG_LEVEL : undefined;
+  return v === "debug" || v === "info" || v === "warn" || v === "error" || v === "silent"
+    ? v
+    : "warn";
 }
 
 let currentLevel: LogLevel = initialLevel();
@@ -41,5 +43,5 @@ export const log = {
   },
   error(...args: unknown[]) {
     if (shouldLog("error")) console.error("[bunite]", ...args);
-  }
+  },
 };

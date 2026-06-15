@@ -1,4 +1,4 @@
-import { Packr, Unpackr, addExtension } from "msgpackr";
+import { addExtension, Packr, Unpackr } from "msgpackr";
 import type { IpcStatus } from "./error";
 
 export type u32 = number;
@@ -75,28 +75,41 @@ export function isFrame(value: unknown): value is Frame {
   if (typeof op !== "string" || !OPS.has(op as Frame["op"])) return false;
   switch (op as Frame["op"]) {
     case "hello":
-      return f.v === 1 && (f.mode === "native" || f.mode === "web")
-        && Array.isArray(f.features) && typeof f.maxBytes === "number" && typeof f.origin === "string";
+      return (
+        f.v === 1 &&
+        (f.mode === "native" || f.mode === "web") &&
+        Array.isArray(f.features) &&
+        typeof f.maxBytes === "number" &&
+        typeof f.origin === "string"
+      );
     case "goaway":
       return f.reason === undefined || typeof f.reason === "string";
     case "call":
-      return typeof f.id === "number" && typeof f.method === "string"
-        && typeof f.target === "object" && f.target !== null
-        && (f.target as { kind?: unknown }).kind === "cap"
-        && typeof (f.target as { id?: unknown }).id === "number";
+      return (
+        typeof f.id === "number" &&
+        typeof f.method === "string" &&
+        typeof f.target === "object" &&
+        f.target !== null &&
+        (f.target as { kind?: unknown }).kind === "cap" &&
+        typeof (f.target as { id?: unknown }).id === "number"
+      );
     case "result":
       return typeof f.id === "number" && (f.ok === true || f.ok === false);
     case "cancel":
       return typeof f.id === "number";
     case "stream":
-      return typeof f.id === "number" && typeof f.ev === "string"
-        && (f.ev === "next" || f.ev === "credit" || f.ev === "end" || f.ev === "error");
+      return (
+        typeof f.id === "number" &&
+        typeof f.ev === "string" &&
+        (f.ev === "next" || f.ev === "credit" || f.ev === "end" || f.ev === "error")
+      );
     case "drop":
       return Array.isArray(f.caps);
     case "cap_revoked":
       if (!Array.isArray(f.capIds)) return false;
       for (const id of f.capIds) {
-        if (typeof id !== "number" || !Number.isInteger(id) || id < 0 || id > 0xFFFFFFFF) return false;
+        if (typeof id !== "number" || !Number.isInteger(id) || id < 0 || id > 0xffffffff)
+          return false;
       }
       return true;
   }

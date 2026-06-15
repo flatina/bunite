@@ -7,7 +7,7 @@
  *   bun run setup:webview2 -- --force
  */
 
-import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync, cpSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { findBuniteCoreRoot } from "./resolve";
 
@@ -83,8 +83,12 @@ async function main() {
     mkdirSync(SDK_DIR, { recursive: true });
 
     // Copy what the build needs: headers + import libs + redistributable loader DLL.
-    cpSync(join(tmpExtract, "build", "native", "include"), join(SDK_DIR, "include"), { recursive: true });
-    cpSync(join(tmpExtract, "build", "native", "x64"), join(SDK_DIR, "lib-x64"), { recursive: true });
+    cpSync(join(tmpExtract, "build", "native", "include"), join(SDK_DIR, "include"), {
+      recursive: true,
+    });
+    cpSync(join(tmpExtract, "build", "native", "x64"), join(SDK_DIR, "lib-x64"), {
+      recursive: true,
+    });
     cpSync(
       join(tmpExtract, "runtimes", "win-x64", "native", "WebView2Loader.dll"),
       join(SDK_DIR, "WebView2Loader.dll"),

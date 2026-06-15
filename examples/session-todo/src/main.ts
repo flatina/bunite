@@ -1,6 +1,6 @@
-import { serveWeb } from "bunite-core";
-import { IpcError, Stream, type ImplOf } from "bunite-core/rpc";
 import type { WsData } from "bunite-core";
+import { serveWeb } from "bunite-core";
+import { type ImplOf, IpcError, Stream } from "bunite-core/rpc";
 import { BridgeCap, SessionCap, type Task, type TaskEvent } from "./schema";
 
 type UserState = {
@@ -19,7 +19,9 @@ function userState(userId: string): UserState {
 
 function makeSessionImpl(userId: string): ImplOf<typeof SessionCap> {
   const state = userState(userId);
-  const broadcast = (e: TaskEvent) => { for (const fn of state.subs) fn(e); };
+  const broadcast = (e: TaskEvent) => {
+    for (const fn of state.subs) fn(e);
+  };
 
   return {
     whoami: () => ({ userId }),
@@ -50,19 +52,26 @@ function makeSessionImpl(userId: string): ImplOf<typeof SessionCap> {
       if (!state.tasks.delete(id)) throw new IpcError({ code: "not_found", message: id });
       broadcast({ type: "removed", id });
     },
-    events: () => Stream.from((emit, signal) => {
-      state.subs.add(emit);
-      signal.addEventListener("abort", () => state.subs.delete(emit));
-    }),
+    events: () =>
+      Stream.from((emit, signal) => {
+        state.subs.add(emit);
+        signal.addEventListener("abort", () => state.subs.delete(emit));
+      }),
   };
 }
 
-interface AuthData extends WsData { userId: string | null }
+interface AuthData extends WsData {
+  userId: string | null;
+}
 
 function parseUserCookie(cookie: string): string | null {
   const m = cookie.match(/(?:^|;\s*)user=([^;]+)/);
   if (!m) return null;
-  try { return decodeURIComponent(m[1]); } catch { return null; }
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return null;
+  }
 }
 
 // Bundle renderer once at startup.
@@ -78,24 +87,27 @@ const indexHtml = await Bun.file("src/renderer/index.html").text();
 const stylesCss = await Bun.file("src/renderer/styles.css").text();
 const html = indexHtml.replace("/*STYLES*/", stylesCss).replace("/*BUNDLE*/", rendererJs);
 
-const mount = serveWeb<AuthData>((conn, data) => {
-  conn.serve(BridgeCap, {
-    openSession: (_, ctx) => {
-      if (!data.userId) {
-        throw new IpcError({
-          code: "failed_precondition",
-          message: "not signed in",
-          details: { reason: "unauthorized" },
-        });
-      }
-      return ctx.exportCap(SessionCap, makeSessionImpl(data.userId));
-    },
-  });
-}, {
-  onUpgrade: (req) => ({
-    userId: parseUserCookie(req.headers.get("cookie") ?? ""),
-  }),
-});
+const mount = serveWeb<AuthData>(
+  (conn, data) => {
+    conn.serve(BridgeCap, {
+      openSession: (_, ctx) => {
+        if (!data.userId) {
+          throw new IpcError({
+            code: "failed_precondition",
+            message: "not signed in",
+            details: { reason: "unauthorized" },
+          });
+        }
+        return ctx.exportCap(SessionCap, makeSessionImpl(data.userId));
+      },
+    });
+  },
+  {
+    onUpgrade: (req) => ({
+      userId: parseUserCookie(req.headers.get("cookie") ?? ""),
+    }),
+  },
+);
 
 const port = Number(process.env.PORT ?? 3000);
 Bun.serve({
@@ -116,10 +128,11 @@ Bun.serve({
         });
       },
     },
-    "/logout": () => new Response(null, {
-      status: 302,
-      headers: { "set-cookie": "user=; Path=/; Max-Age=0", location: "/" },
-    }),
+    "/logout": () =>
+      new Response(null, {
+        status: 302,
+        headers: { "set-cookie": "user=; Path=/; Max-Age=0", location: "/" },
+      }),
   },
   fetch(req, srv) {
     const rpc = mount.fetch(req, srv);

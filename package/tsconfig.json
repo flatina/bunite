@@ -4,12 +4,6 @@
     "composite": true,
     "rootDir": "src"
   },
-  "include": [
-    "src/**/*.ts",
-    "src/**/*.d.ts"
-  ],
-  "exclude": [
-    "src/preload/runtime.ts",
-    "src/preload/runtime.built.js"
-  ]
+  "include": ["src/**/*.ts", "src/**/*.d.ts"],
+  "exclude": ["src/preload/runtime.ts", "src/preload/runtime.built.js"]
 }

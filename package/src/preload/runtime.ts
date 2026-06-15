@@ -1,13 +1,13 @@
 import {
+  type AnyCapDef,
+  type ClientOf,
+  type Connection,
   createConnection,
+  createEncryptedPipe,
   createFrameTransport,
   createWebSocketPipe,
-  createEncryptedPipe,
-  type Connection,
-  type CapDef,
   type Schema,
   type SchemaRoots,
-  type ClientOf,
   type WebSocketLike,
 } from "../rpc/index";
 
@@ -23,15 +23,20 @@ function ensureConnection(): Promise<Connection> {
   if (_connPromise) return _connPromise;
   const attempt = (async () => {
     const ws = new WebSocket(
-      `ws://localhost:${__buniteRpcSocketPort}/rpc?webviewId=${__buniteWebviewId}`
+      `ws://localhost:${__buniteRpcSocketPort}/rpc?webviewId=${__buniteWebviewId}`,
     );
     ws.binaryType = "arraybuffer";
     await new Promise<void>((resolve, reject) => {
       ws.addEventListener("open", () => resolve(), { once: true });
-      ws.addEventListener("error", () => reject(new Error("bunite preload ws connect failed")), { once: true });
+      ws.addEventListener("error", () => reject(new Error("bunite preload ws connect failed")), {
+        once: true,
+      });
     });
     const rawKey = Uint8Array.from(atob(__buniteSecretKeyBase64), (c) => c.charCodeAt(0));
-    const pipe = await createEncryptedPipe(createWebSocketPipe(ws as unknown as WebSocketLike), rawKey);
+    const pipe = await createEncryptedPipe(
+      createWebSocketPipe(ws as unknown as WebSocketLike),
+      rawKey,
+    );
     const conn = createConnection({
       transport: createFrameTransport(pipe),
       mode: "native",
@@ -53,12 +58,13 @@ w.__buniteWebviewId = __buniteWebviewId;
 w.__buniteRpcSocketPort = __buniteRpcSocketPort;
 w.host ??= {};
 
-w.host.bootstrap = async (target: CapDef<any, any> | Schema<SchemaRoots>): Promise<unknown> => {
+w.host.bootstrap = async (target: AnyCapDef | Schema<SchemaRoots>): Promise<unknown> => {
   const conn = await ensureConnection();
   return (conn.bootstrap as (t: unknown) => Promise<unknown>)(target);
 };
 
-w.host.runtime = async () => (await ensureConnection()).runtime() as ClientOf<typeof import("../rpc/framework").RuntimeCap>;
+w.host.runtime = async () =>
+  (await ensureConnection()).runtime() as ClientOf<typeof import("../rpc/framework").RuntimeCap>;
 
 w.host.releaseRef = async (proxy: unknown): Promise<void> => {
   (await ensureConnection()).releaseRef(proxy);
@@ -89,10 +95,16 @@ const pageBuffer = (w as any)[CONSOLE_BUFFER_KEY] as ConsoleEntry[];
 function serializeArg(a: unknown): string {
   if (typeof a === "string") return a;
   if (a instanceof Error) return a.stack ?? a.message;
-  try { return JSON.stringify(a); } catch { return String(a); }
+  try {
+    return JSON.stringify(a);
+  } catch {
+    return String(a);
+  }
 }
 
-let reportingCap: Promise<{ reportConsoleBatch(args: { entries: ConsoleEntry[] }): Promise<void> | void }> | null = null;
+let reportingCap: Promise<{
+  reportConsoleBatch(args: { entries: ConsoleEntry[] }): Promise<void> | void;
+}> | null = null;
 // Circuit breaker: after a failed cap fetch, hold off for a cooldown so a
 // permanently-disconnected host doesn't burn a retry per batch (16ms cadence).
 let nextRetryMs = 0;
@@ -115,7 +127,10 @@ let batch: ConsoleEntry[] = [];
 let batchTimer: ReturnType<typeof setTimeout> | null = null;
 
 function flushBatch() {
-  if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
+  if (batchTimer) {
+    clearTimeout(batchTimer);
+    batchTimer = null;
+  }
   if (batch.length === 0) return;
   const entries = batch;
   batch = [];
@@ -139,11 +154,17 @@ function scheduleFlush() {
 
 function installConsoleProxy() {
   for (const level of ["log", "warn", "error", "info", "debug"] as const) {
-    const original = (console as Record<ConsoleLevel, (...a: unknown[]) => void>)[level].bind(console);
+    const original = (console as Record<ConsoleLevel, (...a: unknown[]) => void>)[level].bind(
+      console,
+    );
     (console as Record<ConsoleLevel, (...a: unknown[]) => void>)[level] = (...args: unknown[]) => {
       // Original console first — preserve page-author dev experience even if
       // the bunite plumbing throws further down (shouldn't, but defensive).
-      try { original(...args); } catch { /* extreme: original throws */ }
+      try {
+        original(...args);
+      } catch {
+        /* extreme: original throws */
+      }
       try {
         const entry: ConsoleEntry = {
           level,
@@ -156,7 +177,9 @@ function installConsoleProxy() {
         }
         batch.push(entry);
         scheduleFlush();
-      } catch { /* never propagate to page */ }
+      } catch {
+        /* never propagate to page */
+      }
     };
   }
 }
@@ -176,7 +199,9 @@ function windowCap() {
       const wc = await rt.window();
       return await wc.current();
     })();
-    _windowCap.catch(() => { _windowCap = null; });
+    _windowCap.catch(() => {
+      _windowCap = null;
+    });
   }
   return _windowCap;
 }
@@ -193,13 +218,25 @@ function isDragHit(target: EventTarget | null): boolean {
 // call — lazy resolution (bootstrap + window + current) would otherwise miss
 // the drag's first frames while the cursor has already moved.
 void windowCap();
-document.addEventListener("mousedown", (e) => {
-  if (e.button !== 0 || window.self !== window.top || !isDragHit(e.target)) return;
-  windowCap().then((c) => c.beginMoveDrag()).catch(() => {});
-}, true);
-document.addEventListener("dblclick", (e) => {
-  if (e.button !== 0 || window.self !== window.top || !isDragHit(e.target)) return;
-  windowCap().then((c) => c.toggleMaximize()).catch(() => {});
-}, true);
+document.addEventListener(
+  "mousedown",
+  (e) => {
+    if (e.button !== 0 || window.self !== window.top || !isDragHit(e.target)) return;
+    windowCap()
+      .then((c) => c.beginMoveDrag())
+      .catch(() => {});
+  },
+  true,
+);
+document.addEventListener(
+  "dblclick",
+  (e) => {
+    if (e.button !== 0 || window.self !== window.top || !isDragHit(e.target)) return;
+    windowCap()
+      .then((c) => c.toggleMaximize())
+      .catch(() => {});
+  },
+  true,
+);
 
 import "../webview/native";

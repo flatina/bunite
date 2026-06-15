@@ -15,16 +15,25 @@ let activeId: string | null = null;
 const api = await bootstrap(apiCap);
 
 newTabBtn.addEventListener("click", () => createTab());
-document.querySelector('[data-action="back"]')!.addEventListener("click", () => activeWebview()?.goBack());
-document.querySelector('[data-action="reload"]')!.addEventListener("click", () => activeWebview()?.reload());
-urlInput.addEventListener("keydown", e => { if (e.key === "Enter") navigate(); });
+document
+  .querySelector('[data-action="back"]')!
+  .addEventListener("click", () => activeWebview()?.goBack());
+document
+  .querySelector('[data-action="reload"]')!
+  .addEventListener("click", () => activeWebview()?.reload());
+urlInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") navigate();
+});
 
 createTab();
 
 async function createTab(url?: string) {
   const tab: TabInfo = await api.createTab({ url });
 
-  const webview = document.createElement("bunite-webview") as HTMLElement & { goBack(): void; reload(): void };
+  const webview = document.createElement("bunite-webview") as HTMLElement & {
+    goBack(): void;
+    reload(): void;
+  };
   webview.setAttribute("src", tab.url);
   webview.hidden = true;
   content.appendChild(webview);
@@ -59,7 +68,10 @@ async function closeTab(id: string) {
   if (activeId === id) {
     const remaining = [...tabs.keys()];
     if (remaining.length > 0) switchTo(remaining[remaining.length - 1]);
-    else { activeId = null; renderTabs(); }
+    else {
+      activeId = null;
+      renderTabs();
+    }
   } else {
     renderTabs();
   }
@@ -88,12 +100,18 @@ function activeWebview(): any {
 
 function shortUrl(url: string): string {
   if (!url || url.endsWith("/newtab.html")) return "New Tab";
-  try { const u = new URL(url); return u.hostname + (u.pathname !== "/" ? u.pathname : ""); }
-  catch { return url; }
+  try {
+    const u = new URL(url);
+    return u.hostname + (u.pathname !== "/" ? u.pathname : "");
+  } catch {
+    return url;
+  }
 }
 
 function renderTabs() {
-  tabBar.querySelectorAll(".tab").forEach(el => el.remove());
+  tabBar.querySelectorAll(".tab").forEach((el) => {
+    el.remove();
+  });
   for (const [id, tab] of tabs) {
     const el = document.createElement("div");
     el.className = "tab" + (id === activeId ? " active" : "");
@@ -109,7 +127,7 @@ function renderTabs() {
     el.append(label, close);
     tabBar.insertBefore(el, newTabBtn);
 
-    el.addEventListener("click", e => {
+    el.addEventListener("click", (e) => {
       if ((e.target as HTMLElement).closest(".tab-close")) closeTab(id);
       else switchTo(id);
     });

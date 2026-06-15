@@ -1,20 +1,20 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 // Side-effect import first — SurfaceManager direct import trips TDZ via the
 // App ↔ SurfaceBrowserIPC ↔ SurfaceManager cycle.
 import "../package/src/host/core/SurfaceBrowserIPC";
-import type { SurfaceEvent } from "../package/src/rpc/framework";
+import type { BrowserView } from "../package/src/host/core/BrowserView";
 import {
+  createSurfaceCapImpl,
+  disposeSurfaceState,
   emitSurfaceEvent,
   seedNavigationState,
-  disposeSurfaceState,
-  createSurfaceCapImpl,
 } from "../package/src/host/core/SurfaceManager";
 import {
+  removeSurfacesForHostView,
   trackSurface,
   untrackSurface,
-  removeSurfacesForHostView,
 } from "../package/src/host/core/SurfaceRegistry";
-import type { BrowserView } from "../package/src/host/core/BrowserView";
+import type { SurfaceEvent } from "../package/src/rpc/framework";
 
 const stubView = { remove() {} } as unknown as BrowserView;
 
@@ -35,7 +35,9 @@ function captureEvents(): { events: SurfaceEvent[]; abort: AbortController } {
 function readState() {
   const cap = createSurfaceCapImpl(HOST);
   return cap.getNavigationState({ surfaceId: SID }, {} as any) as {
-    lastLoadEpoch: number; isLoading: boolean; currentUrl: string;
+    lastLoadEpoch: number;
+    isLoading: boolean;
+    currentUrl: string;
   };
 }
 
@@ -81,7 +83,7 @@ describe("SurfaceManager — navigation epoch", () => {
 
   test("emitted events carry the current epoch", async () => {
     const { events, abort } = captureEvents();
-    await new Promise((r) => setTimeout(r, 0));  // let subscribe register
+    await new Promise((r) => setTimeout(r, 0)); // let subscribe register
     emitSurfaceEvent(HOST, SID, { type: "load-start", url: "https://x/" });
     emitSurfaceEvent(HOST, SID, { type: "navigate", url: "https://x/" });
     emitSurfaceEvent(HOST, SID, { type: "load-finish", url: "https://x/" });

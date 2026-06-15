@@ -12,10 +12,17 @@ export default {
   loadStart: (data: { detail: string }) => new BuniteEvent("load-start", data),
   loadFinish: (data: { detail: string }) => new BuniteEvent("load-finish", data),
   loadFail: (data: { url: string; reason?: string }) => new BuniteEvent("load-fail", data),
-  dialog: (data: { requestId: number; kind: "alert" | "confirm" | "prompt" | "beforeunload"; message: string; defaultPrompt?: string }) =>
-    new BuniteEvent("dialog", data),
-  consoleMessage: (data: { level: "log" | "warn" | "error" | "info" | "debug"; args: string[]; ts: number }) =>
-    new BuniteEvent("console-message", data),
+  dialog: (data: {
+    requestId: number;
+    kind: "alert" | "confirm" | "prompt" | "beforeunload";
+    message: string;
+    defaultPrompt?: string;
+  }) => new BuniteEvent("dialog", data),
+  consoleMessage: (data: {
+    level: "log" | "warn" | "error" | "info" | "debug";
+    args: string[];
+    ts: number;
+  }) => new BuniteEvent("console-message", data),
   downloadEvent: (data: {
     kind: "started" | "progress" | "completed" | "failed" | "blocked";
     id: string;

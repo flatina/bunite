@@ -54,7 +54,7 @@ function readCustomPreload(preload: string | null, appresRoot: string | null) {
 }
 
 // Bundled at build time so bun --compile works without filesystem access.
-// @ts-ignore — text import attribute
+// @ts-expect-error — text import attribute
 import embeddedPreloadRuntime from "../preload/runtime.built.js" with { type: "text" };
 
 function getPreloadRuntime(): string {

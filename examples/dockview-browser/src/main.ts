@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { BrowserWindow, AppRuntime } from "bunite-core";
+import { AppRuntime, BrowserWindow } from "bunite-core";
 
 const flagIdx = process.argv.indexOf("--web-port");
 const webPort = flagIdx >= 0 ? Number(process.argv[flagIdx + 1]) : NaN;
@@ -18,7 +18,7 @@ if (flagIdx >= 0) {
       const file = Bun.file(join(rendererDir, pathname === "/" ? "index.html" : pathname.slice(1)));
       if (!(await file.exists())) return new Response("Not Found", { status: 404 });
       return new Response(file);
-    }
+    },
   });
   console.log(`dockview-browser renderer serving on http://0.0.0.0:${server.port}`);
 } else {
@@ -30,7 +30,7 @@ if (flagIdx >= 0) {
   new BrowserWindow({
     title: `bunite dockview browser v${app.version} — ${app.engineName ?? "?"} ${app.engineVersion ?? "unknown"}`,
     frame: { x: 80, y: 80, width: 1024, height: 600 },
-    url: "../dist/renderer/index.html"
+    url: "../dist/renderer/index.html",
   });
 
   app.run();

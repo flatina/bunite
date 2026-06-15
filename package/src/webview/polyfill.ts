@@ -12,6 +12,7 @@ const BLOCKED_SCHEME_RE = /^(javascript|data|vbscript|file|about):/i;
 // before scheme detection. Mirror that so embedded controls (e.g. `java\nscript:`)
 // can't bypass the scheme guard.
 function normalizeForSchemeCheck(src: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional, see above.
   return src.replace(/[\t\n\r]/g, "").replace(/^[\x00-\x20]+/, "");
 }
 
@@ -42,17 +43,22 @@ function definePolyfillClass(): CustomElementConstructor {
       if (!this._iframe) return false;
       try {
         return this._iframe.contentDocument != null;
-      } catch { return false; }
+      } catch {
+        return false;
+      }
     }
 
     private modifierBag(mods?: string[]): {
-      shiftKey: boolean; ctrlKey: boolean; altKey: boolean; metaKey: boolean;
+      shiftKey: boolean;
+      ctrlKey: boolean;
+      altKey: boolean;
+      metaKey: boolean;
     } {
       return {
         shiftKey: !!mods?.includes("shift"),
-        ctrlKey:  !!mods?.includes("ctrl"),
-        altKey:   !!mods?.includes("alt"),
-        metaKey:  !!mods?.includes("meta"),
+        ctrlKey: !!mods?.includes("ctrl"),
+        altKey: !!mods?.includes("alt"),
+        metaKey: !!mods?.includes("meta"),
       };
     }
 
@@ -60,8 +66,11 @@ function definePolyfillClass(): CustomElementConstructor {
       if (event.type === "navigate") {
         this._epoch++;
         // Avoid pushing duplicate / same-as-top entries (reload doesn't grow history).
-        if (this._currentUrl && this._currentUrl !== event.url &&
-            this._history[this._history.length - 1] !== this._currentUrl) {
+        if (
+          this._currentUrl &&
+          this._currentUrl !== event.url &&
+          this._history[this._history.length - 1] !== this._currentUrl
+        ) {
           this._history.push(this._currentUrl);
         }
         this._currentUrl = event.url;
@@ -172,20 +181,28 @@ function definePolyfillClass(): CustomElementConstructor {
     goBack() {
       // Same-origin path uses native history. Cross-origin throws → fall back
       // to our tracked stack (push on every navigate; pop here).
-      try { this._iframe?.contentWindow?.history.back(); return; } catch {}
+      try {
+        this._iframe?.contentWindow?.history.back();
+        return;
+      } catch {}
       const prev = this._history.pop();
       if (prev && this._iframe) this._iframe.src = prev;
     }
 
     reload() {
-      try { this._iframe?.contentWindow?.location.reload(); return; } catch {}
+      try {
+        this._iframe?.contentWindow?.location.reload();
+        return;
+      } catch {}
       // Cross-origin fallback: reassigning the same src is a no-op in WHATWG;
       // cycle via about:blank to force a fresh navigation.
       const iframe = this._iframe;
       if (!iframe) return;
       const url = this._currentUrl || iframe.src;
       iframe.src = "about:blank";
-      requestAnimationFrame(() => { if (this._iframe) this._iframe.src = url; });
+      requestAnimationFrame(() => {
+        if (this._iframe) this._iframe.src = url;
+      });
     }
 
     setHidden(hidden: boolean) {
@@ -200,7 +217,11 @@ function definePolyfillClass(): CustomElementConstructor {
     // synthesised DOM events is always false → `nativeInputTrusted` stays false.
     async evaluate(script: string) {
       if (!this.isReachable()) {
-        return { ok: false as const, code: "cross_origin" as const, message: "iframe content not same-origin" };
+        return {
+          ok: false as const,
+          code: "cross_origin" as const,
+          message: "iframe content not same-origin",
+        };
       }
       try {
         const win = this._iframe!.contentWindow as Window & { eval(s: string): unknown };
@@ -208,33 +229,55 @@ function definePolyfillClass(): CustomElementConstructor {
       } catch (e: unknown) {
         const err = e as { name?: string; message?: string };
         if (err?.name === "SecurityError") {
-          return { ok: false as const, code: "cross_origin" as const, message: err.message ?? "SecurityError" };
+          return {
+            ok: false as const,
+            code: "cross_origin" as const,
+            message: err.message ?? "SecurityError",
+          };
         }
-        return { ok: false as const, code: "runtime_error" as const, message: err?.message ?? String(e) };
+        return {
+          ok: false as const,
+          code: "runtime_error" as const,
+          message: err?.message ?? String(e),
+        };
       }
     }
 
     async capabilities() {
       const reachable = this.isReachable();
       return {
-        evaluate: reachable, crossOriginEval: false, surfaceEvents: true,
+        evaluate: reachable,
+        crossOriginEval: false,
+        surfaceEvents: true,
         nativeInputTrusted: false,
-        click: reachable, type: reachable, press: reachable, scroll: reachable,
-        mouse: reachable, dialogs: false, console: false,
+        click: reachable,
+        type: reachable,
+        press: reachable,
+        scroll: reachable,
+        mouse: reachable,
+        dialogs: false,
+        console: false,
         screenshot: false,
       };
     }
 
     async sendClick(args: {
-      x: number; y: number; button?: string; clickCount?: number; modifiers?: string[];
+      x: number;
+      y: number;
+      button?: string;
+      clickCount?: number;
+      modifiers?: string[];
     }) {
       if (!this.isReachable()) return;
       const doc = this._iframe!.contentDocument!;
       const target = doc.elementFromPoint(args.x, args.y) ?? doc.body;
       if (!target) return;
       const init: MouseEventInit = {
-        bubbles: true, cancelable: true, view: this._iframe!.contentWindow,
-        clientX: args.x, clientY: args.y,
+        bubbles: true,
+        cancelable: true,
+        view: this._iframe!.contentWindow,
+        clientX: args.x,
+        clientY: args.y,
         button: args.button === "right" ? 2 : args.button === "middle" ? 1 : 0,
         detail: args.clickCount ?? 1,
         ...this.modifierBag(args.modifiers),
@@ -245,31 +288,63 @@ function definePolyfillClass(): CustomElementConstructor {
     }
 
     async resolveAndClick(_selector: string, _opts?: unknown) {
-      return { ok: false as const, code: "not_supported" as const, message: "polyfill iframe: atomic resolveAndClick not supported" };
+      return {
+        ok: false as const,
+        code: "not_supported" as const,
+        message: "polyfill iframe: atomic resolveAndClick not supported",
+      };
     }
 
     async getBoundingRect(selector: string, _opts?: unknown) {
-      if (!this.isReachable()) return { ok: false as const, code: "not_supported" as const, message: "iframe not reachable" };
+      if (!this.isReachable())
+        return {
+          ok: false as const,
+          code: "not_supported" as const,
+          message: "iframe not reachable",
+        };
       try {
         const el = this._iframe!.contentDocument!.querySelector(selector) as Element | null;
-        if (!el) return { ok: false as const, code: "not_found" as const, message: `selector ${selector} not found` };
+        if (!el)
+          return {
+            ok: false as const,
+            code: "not_found" as const,
+            message: `selector ${selector} not found`,
+          };
         const r = el.getBoundingClientRect();
         const win = this._iframe!.contentWindow!;
-        const visible = r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0
-                       && r.top < win.innerHeight && r.left < win.innerWidth;
-        return { ok: true as const, rect: { x: r.x, y: r.y, width: r.width, height: r.height }, visible };
+        const visible =
+          r.width > 0 &&
+          r.height > 0 &&
+          r.bottom > 0 &&
+          r.right > 0 &&
+          r.top < win.innerHeight &&
+          r.left < win.innerWidth;
+        return {
+          ok: true as const,
+          rect: { x: r.x, y: r.y, width: r.width, height: r.height },
+          visible,
+        };
       } catch (e: any) {
-        const code = e?.name === "SecurityError" ? "cross_origin" as const : "runtime_error" as const;
+        const code =
+          e?.name === "SecurityError" ? ("cross_origin" as const) : ("runtime_error" as const);
         return { ok: false as const, code, message: e?.message ?? String(e) };
       }
     }
 
     async listFrames() {
-      return { ok: false as const, code: "not_supported" as const, message: "polyfill: not implemented" };
+      return {
+        ok: false as const,
+        code: "not_supported" as const,
+        message: "polyfill: not implemented",
+      };
     }
 
     async accessibilitySnapshot(_opts?: unknown) {
-      return { ok: false as const, code: "not_supported" as const, message: "polyfill: not implemented" };
+      return {
+        ok: false as const,
+        code: "not_supported" as const,
+        message: "polyfill: not implemented",
+      };
     }
 
     async setDownloadPolicy(_policy: unknown, _dir?: unknown) {
@@ -277,11 +352,19 @@ function definePolyfillClass(): CustomElementConstructor {
     }
 
     async waitForDownload(_opts?: unknown) {
-      return { ok: false as const, code: "not_supported" as const, message: "polyfill: not implemented" };
+      return {
+        ok: false as const,
+        code: "not_supported" as const,
+        message: "polyfill: not implemented",
+      };
     }
 
     async acceptPopup(_opts?: unknown) {
-      return { ok: false as const, code: "not_found" as const, message: "polyfill: no popup orchestration" };
+      return {
+        ok: false as const,
+        code: "not_found" as const,
+        message: "polyfill: no popup orchestration",
+      };
     }
 
     async dismissPopup(_id?: unknown) {
@@ -289,20 +372,26 @@ function definePolyfillClass(): CustomElementConstructor {
     }
 
     async extendAdoptionTimeout(_id?: unknown, _ms?: unknown) {
-      return { ok: false as const, code: "not_found" as const, message: "polyfill: no popup orchestration" };
+      return {
+        ok: false as const,
+        code: "not_found" as const,
+        message: "polyfill: no popup orchestration",
+      };
     }
 
     async sendType(text: string) {
       if (!this.isReachable()) return;
       const doc = this._iframe!.contentDocument!;
-      const target = doc.activeElement as (HTMLInputElement | HTMLTextAreaElement | null);
+      const target = doc.activeElement as HTMLInputElement | HTMLTextAreaElement | null;
       if (!target || !("setRangeText" in target)) return;
       // setRangeText preserves selection + caret; the `data` field on an
       // InputEvent + bubbling lets React-style controllers detect the change.
       const start = target.selectionStart ?? target.value.length;
       const end = target.selectionEnd ?? target.value.length;
       target.setRangeText(text, start, end, "end");
-      target.dispatchEvent(new InputEvent("input", { bubbles: true, data: text, inputType: "insertText" }));
+      target.dispatchEvent(
+        new InputEvent("input", { bubbles: true, data: text, inputType: "insertText" }),
+      );
     }
 
     async sendPress(key: string, modifiers?: string[], action?: "down" | "up" | "both") {
@@ -311,7 +400,10 @@ function definePolyfillClass(): CustomElementConstructor {
       const target = (doc.activeElement ?? doc.body) as Element | null;
       if (!target) return;
       const init: KeyboardEventInit = {
-        bubbles: true, cancelable: true, key, ...this.modifierBag(modifiers),
+        bubbles: true,
+        cancelable: true,
+        key,
+        ...this.modifierBag(modifiers),
       };
       const a = action ?? "both";
       if (a !== "up") target.dispatchEvent(new KeyboardEvent("keydown", init));
@@ -319,14 +411,21 @@ function definePolyfillClass(): CustomElementConstructor {
       if (a !== "down") target.dispatchEvent(new KeyboardEvent("keyup", init));
     }
 
-    async sendScroll(args: { dx: number; dy: number; x?: number; y?: number; modifiers?: string[] }) {
+    async sendScroll(args: {
+      dx: number;
+      dy: number;
+      x?: number;
+      y?: number;
+      modifiers?: string[];
+    }) {
       if (!this.isReachable()) return;
       this._iframe!.contentWindow!.scrollBy(args.dx, args.dy);
     }
 
     async sendMouse(args: {
       action: "move" | "down" | "up";
-      x: number; y: number;
+      x: number;
+      y: number;
       button?: string;
       modifiers?: string[];
     }) {
@@ -334,10 +433,14 @@ function definePolyfillClass(): CustomElementConstructor {
       const doc = this._iframe!.contentDocument!;
       const target = doc.elementFromPoint(args.x, args.y) ?? doc.body;
       if (!target) return;
-      const type = args.action === "move" ? "mousemove" : args.action === "down" ? "mousedown" : "mouseup";
+      const type =
+        args.action === "move" ? "mousemove" : args.action === "down" ? "mousedown" : "mouseup";
       const init: MouseEventInit = {
-        bubbles: true, cancelable: true, view: this._iframe!.contentWindow,
-        clientX: args.x, clientY: args.y,
+        bubbles: true,
+        cancelable: true,
+        view: this._iframe!.contentWindow,
+        clientX: args.x,
+        clientY: args.y,
         button: args.button === "right" ? 2 : args.button === "middle" ? 1 : 0,
         ...this.modifierBag(args.modifiers),
       };
@@ -348,11 +451,17 @@ function definePolyfillClass(): CustomElementConstructor {
       // iframe sandbox forbids cross-frame dialog interception; nothing to do.
     }
 
-    async setDialogTimeout(_ms: number | null) { /* no-op */ }
+    async setDialogTimeout(_ms: number | null) {
+      /* no-op */
+    }
 
     async waitForSelector(selector: string, timeoutMs = 5000) {
       if (!this.isReachable()) {
-        return { ok: false as const, code: "runtime_error" as const, message: "iframe content not same-origin" };
+        return {
+          ok: false as const,
+          code: "runtime_error" as const,
+          message: "iframe content not same-origin",
+        };
       }
       const doc = this._iframe!.contentDocument!;
       const deadline = Date.now() + timeoutMs;
@@ -360,12 +469,23 @@ function definePolyfillClass(): CustomElementConstructor {
         if (doc.querySelector(selector)) return { ok: true as const };
         await new Promise((r) => setTimeout(r, 50));
       }
-      return { ok: false as const, code: "timeout" as const, message: `selector ${JSON.stringify(selector)} not found within ${timeoutMs}ms` };
+      return {
+        ok: false as const,
+        code: "timeout" as const,
+        message: `selector ${JSON.stringify(selector)} not found within ${timeoutMs}ms`,
+      };
     }
 
-    async waitForFunction(expression: string, opts?: { timeoutMs?: number; pollIntervalMs?: number }) {
+    async waitForFunction(
+      expression: string,
+      opts?: { timeoutMs?: number; pollIntervalMs?: number },
+    ) {
       if (!this.isReachable()) {
-        return { ok: false as const, code: "runtime_error" as const, message: "iframe content not same-origin" };
+        return {
+          ok: false as const,
+          code: "runtime_error" as const,
+          message: "iframe content not same-origin",
+        };
       }
       const win = this._iframe!.contentWindow as Window & { eval(s: string): unknown };
       const deadline = Date.now() + (opts?.timeoutMs ?? 5000);
@@ -374,11 +494,19 @@ function definePolyfillClass(): CustomElementConstructor {
         try {
           if (win.eval(expression)) return { ok: true as const };
         } catch (e) {
-          return { ok: false as const, code: "runtime_error" as const, message: (e as Error).message };
+          return {
+            ok: false as const,
+            code: "runtime_error" as const,
+            message: (e as Error).message,
+          };
         }
         await new Promise((r) => setTimeout(r, interval));
       }
-      return { ok: false as const, code: "timeout" as const, message: `function did not satisfy within ${opts?.timeoutMs ?? 5000}ms` };
+      return {
+        ok: false as const,
+        code: "timeout" as const,
+        message: `function did not satisfy within ${opts?.timeoutMs ?? 5000}ms`,
+      };
     }
 
     async getConsoleBuffer(_opts?: { clear?: boolean }) {
@@ -387,11 +515,19 @@ function definePolyfillClass(): CustomElementConstructor {
     }
 
     async getNavigationState() {
-      return { lastLoadEpoch: this._epoch, isLoading: this._isLoading, currentUrl: this._currentUrl };
+      return {
+        lastLoadEpoch: this._epoch,
+        isLoading: this._isLoading,
+        currentUrl: this._currentUrl,
+      };
     }
 
     async screenshot(_args?: { format?: "png" | "jpeg"; quality?: number }) {
-      return { ok: false as const, code: "not_supported" as const, message: "iframe polyfill does not support screenshot" };
+      return {
+        ok: false as const,
+        code: "not_supported" as const,
+        message: "iframe polyfill does not support screenshot",
+      };
     }
   }
 

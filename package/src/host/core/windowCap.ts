@@ -1,9 +1,12 @@
-import { BrowserWindow } from "./BrowserWindow";
 import {
-  BrowserWindowCap, WindowCap, IpcError,
-  type ImplOf, type WindowState,
+  BrowserWindowCap,
+  type ImplOf,
+  IpcError,
+  type WindowCap,
+  type WindowState,
 } from "../../rpc/index";
 import { Stream } from "../../rpc/stream";
+import { BrowserWindow } from "./BrowserWindow";
 
 function browserWindowImpl(win: BrowserWindow): ImplOf<typeof BrowserWindowCap> {
   return {
@@ -20,22 +23,27 @@ function browserWindowImpl(win: BrowserWindow): ImplOf<typeof BrowserWindowCap> 
     toggleMaximize: () => win.toggleMaximize(),
     beginMoveDrag: () => win.beginMoveDrag(),
     getState: () => win.getState(),
-    stateWatch: () => Stream.from<WindowState>((emit, signal) => {
-      let last = "";
-      const push = () => {
-        const s = win.getState();
-        const key = `${s.maximized}|${s.minimized}|${s.focused}`;
-        if (key === last) return;
-        last = key;
-        emit(s);
-      };
-      push();  // initial snapshot
-      const offs = [
-        win.on("focus", push), win.on("blur", push),
-        win.on("move", push), win.on("resize", push),
-      ];
-      signal.addEventListener("abort", () => { for (const off of offs) off(); });
-    }),
+    stateWatch: () =>
+      Stream.from<WindowState>((emit, signal) => {
+        let last = "";
+        const push = () => {
+          const s = win.getState();
+          const key = `${s.maximized}|${s.minimized}|${s.focused}`;
+          if (key === last) return;
+          last = key;
+          emit(s);
+        };
+        push(); // initial snapshot
+        const offs = [
+          win.on("focus", push),
+          win.on("blur", push),
+          win.on("move", push),
+          win.on("resize", push),
+        ];
+        signal.addEventListener("abort", () => {
+          for (const off of offs) off();
+        });
+      }),
   };
 }
 
@@ -51,8 +59,15 @@ export function createWindowCapImpl(viewId: number): ImplOf<typeof WindowCap> {
   return {
     create: ({ url, title, bounds, label }, ctx) => {
       const win = new BrowserWindow({
-        url, title, label,
-        frame: { x: bounds?.x ?? 80, y: bounds?.y ?? 80, width: bounds?.w ?? 1280, height: bounds?.h ?? 900 },
+        url,
+        title,
+        label,
+        frame: {
+          x: bounds?.x ?? 80,
+          y: bounds?.y ?? 80,
+          width: bounds?.w ?? 1280,
+          height: bounds?.h ?? 900,
+        },
       });
       return ctx.exportCap(BrowserWindowCap, browserWindowImpl(win));
     },
@@ -63,7 +78,11 @@ export function createWindowCapImpl(viewId: number): ImplOf<typeof WindowCap> {
       if (!win) throw new IpcError({ code: "not_found", message: "no window for this view" });
       return ctx.exportCap(BrowserWindowCap, browserWindowImpl(win));
     },
-    focus: (args) => { resolve(args)?.focus(); },
-    close: (args) => { resolve(args)?.close(); },
+    focus: (args) => {
+      resolve(args)?.focus();
+    },
+    close: (args) => {
+      resolve(args)?.close();
+    },
   };
 }

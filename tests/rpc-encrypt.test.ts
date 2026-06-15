@@ -1,19 +1,33 @@
-import { describe, test, expect } from "bun:test";
-import {
-  call, defineCap,
-  createConnection, createFrameTransport,
-  type ImplOf,
-  type BytesPipe,
-} from "../package/src/rpc/index";
+import { describe, expect, test } from "bun:test";
 import { createEncryptedPipe } from "../package/src/host/encryptedPipe";
 import { createEncryptedPipe as createEncryptedPipeWebCrypto } from "../package/src/rpc/encrypt";
+import {
+  type BytesPipe,
+  call,
+  createConnection,
+  createFrameTransport,
+  defineCap,
+  type ImplOf,
+} from "../package/src/rpc/index";
 
 function pipePair(): [BytesPipe, BytesPipe] {
   let aRecv: ((b: Uint8Array) => void) | undefined;
   let bRecv: ((b: Uint8Array) => void) | undefined;
   return [
-    { send: (b) => queueMicrotask(() => bRecv?.(b)), setReceive: (h) => { aRecv = h; }, close: () => {} },
-    { send: (b) => queueMicrotask(() => aRecv?.(b)), setReceive: (h) => { bRecv = h; }, close: () => {} },
+    {
+      send: (b) => queueMicrotask(() => bRecv?.(b)),
+      setReceive: (h) => {
+        aRecv = h;
+      },
+      close: () => {},
+    },
+    {
+      send: (b) => queueMicrotask(() => aRecv?.(b)),
+      setReceive: (h) => {
+        bRecv = h;
+      },
+      close: () => {},
+    },
   ];
 }
 
@@ -63,11 +77,15 @@ describe("encrypted pipe", () => {
 
     const payload = new Uint8Array([1, 2, 3, 4, 5, 0xff, 0x00, 0xaa]);
 
-    const nodeToWeb = new Promise<Uint8Array>((resolve) => { webSide.setReceive(resolve); });
+    const nodeToWeb = new Promise<Uint8Array>((resolve) => {
+      webSide.setReceive(resolve);
+    });
     nodeSide.send(payload);
     expect(await nodeToWeb).toEqual(payload);
 
-    const webToNode = new Promise<Uint8Array>((resolve) => { nodeSide.setReceive(resolve); });
+    const webToNode = new Promise<Uint8Array>((resolve) => {
+      nodeSide.setReceive(resolve);
+    });
     webSide.send(payload);
     expect(await webToNode).toEqual(payload);
   });
@@ -78,10 +96,14 @@ describe("encrypted pipe", () => {
     const base: BytesPipe = {
       send: () => {},
       setReceive: () => {},
-      close: () => { closed = true; },
+      close: () => {
+        closed = true;
+      },
     };
     let recv: ((b: Uint8Array) => void) | undefined;
-    base.setReceive = (h) => { recv = h; };
+    base.setReceive = (h) => {
+      recv = h;
+    };
     const enc = await createEncryptedPipe(base, rawKey);
     enc.setReceive(() => {});
     recv!(new Uint8Array([99, 0, 0]));

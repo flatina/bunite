@@ -1,8 +1,8 @@
-import { dirname, join } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
-import { ARCH, NATIVE_LIB_EXT, PLATFORM_TAG } from "./platform";
+import { dirname, join } from "node:path";
 import { CEF_VERSION } from "./cefVersion";
+import { ARCH, NATIVE_LIB_EXT, PLATFORM_TAG } from "./platform";
 
 const require = createRequire(import.meta.url);
 
@@ -137,7 +137,7 @@ export function resolveNativeArtifacts(engine?: WindowsEngine): ResolvedNativeAr
       enginePackageName: null,
       nativeLibPath: exeNativeLib,
       cefDir: resolvedEngine === "cef" ? resolveCefDir([exeDir]) : null,
-      engine: resolvedEngine
+      engine: resolvedEngine,
     };
   }
 
@@ -145,9 +145,10 @@ export function resolveNativeArtifacts(engine?: WindowsEngine): ResolvedNativeAr
 
   // 2. Optional npm packages.
   const nativePackageName = `bunite-native-${PLATFORM_TAG}-${ARCH}`;
-  const enginePackageName = PLATFORM_TAG === "win" && resolvedEngine === "cef"
-    ? `bunite-cef-${PLATFORM_TAG}-${ARCH}`
-    : null;
+  const enginePackageName =
+    PLATFORM_TAG === "win" && resolvedEngine === "cef"
+      ? `bunite-cef-${PLATFORM_TAG}-${ARCH}`
+      : null;
   const nativePackageRoot = resolvePackageRoot(nativePackageName);
   const enginePackageRoot = enginePackageName ? resolvePackageRoot(enginePackageName) : null;
 
@@ -159,14 +160,16 @@ export function resolveNativeArtifacts(engine?: WindowsEngine): ResolvedNativeAr
       packageRoot: packageRoot ?? exeDir,
       source: "optional-package",
       nativePackageName,
-      enginePackageName: packagedEngineDir && existsSync(packagedEngineDir) ? enginePackageName : null,
+      enginePackageName:
+        packagedEngineDir && existsSync(packagedEngineDir) ? enginePackageName : null,
       nativeLibPath: packagedNativeLibPath,
-      cefDir: resolvedEngine === "cef"
-        ? ((packagedEngineDir && existsSync(packagedEngineDir))
+      cefDir:
+        resolvedEngine === "cef"
+          ? packagedEngineDir && existsSync(packagedEngineDir)
             ? packagedEngineDir
-            : resolveCefDir([nativePackageRoot, packageRoot].filter(Boolean) as string[]))
-        : null,
-      engine: resolvedEngine
+            : resolveCefDir([nativePackageRoot, packageRoot].filter(Boolean) as string[])
+          : null,
+      engine: resolvedEngine,
     };
   }
 
@@ -183,7 +186,7 @@ export function resolveNativeArtifacts(engine?: WindowsEngine): ResolvedNativeAr
         enginePackageName: null,
         nativeLibPath: directLib,
         cefDir: resolvedEngine === "cef" ? resolveCefDir([localBuildRoot]) : null,
-        engine: resolvedEngine
+        engine: resolvedEngine,
       };
     }
 
@@ -196,7 +199,7 @@ export function resolveNativeArtifacts(engine?: WindowsEngine): ResolvedNativeAr
         enginePackageName: null,
         nativeLibPath: releaseLib,
         cefDir: resolvedEngine === "cef" ? resolveCefDir([localBuildRoot]) : null,
-        engine: resolvedEngine
+        engine: resolvedEngine,
       };
     }
   }
@@ -208,6 +211,6 @@ export function resolveNativeArtifacts(engine?: WindowsEngine): ResolvedNativeAr
     enginePackageName: enginePackageRoot ? enginePackageName : null,
     nativeLibPath: null,
     cefDir: null,
-    engine: resolvedEngine
+    engine: resolvedEngine,
   };
 }

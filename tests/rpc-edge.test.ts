@@ -1,11 +1,15 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import {
-  call, stream, defineCap,
+  type Connection,
+  call,
   createConnection,
-  RuntimeCap,
-  RUNTIME_CAP_ID,
-  type Transport, type Frame, type Connection,
+  defineCap,
+  type Frame,
   type ImplOf,
+  RUNTIME_CAP_ID,
+  type RuntimeCap,
+  stream,
+  type Transport,
 } from "../package/src/rpc/index";
 import { Stream } from "../package/src/rpc/stream";
 
@@ -13,11 +17,26 @@ function loopback(): [Transport, Transport] {
   let a: ((f: Frame) => void) | undefined;
   let b: ((f: Frame) => void) | undefined;
   const enqueue = (getH: () => ((f: Frame) => void) | undefined, f: Frame) => {
-    queueMicrotask(() => { const h = getH(); if (h) h(f); });
+    queueMicrotask(() => {
+      const h = getH();
+      if (h) h(f);
+    });
   };
   return [
-    { send: (f) => enqueue(() => b, f), setReceive: (h) => { a = h; }, close: () => {} },
-    { send: (f) => enqueue(() => a, f), setReceive: (h) => { b = h; }, close: () => {} },
+    {
+      send: (f) => enqueue(() => b, f),
+      setReceive: (h) => {
+        a = h;
+      },
+      close: () => {},
+    },
+    {
+      send: (f) => enqueue(() => a, f),
+      setReceive: (h) => {
+        b = h;
+      },
+      close: () => {},
+    },
   ];
 }
 
@@ -38,12 +57,18 @@ describe("stream lifecycle", () => {
     const { client, server } = pair();
     let cleanupCalled = false;
     server.serve(tickerCap, {
-      watch: () => Stream.from<{ n: number }>((emit, signal) => {
-        let i = 0;
-        const id = setInterval(() => emit({ n: ++i }), 1);
-        signal.addEventListener("abort", () => { cleanupCalled = true; clearInterval(id); });
-        return () => { clearInterval(id); };
-      }),
+      watch: () =>
+        Stream.from<{ n: number }>((emit, signal) => {
+          let i = 0;
+          const id = setInterval(() => emit({ n: ++i }), 1);
+          signal.addEventListener("abort", () => {
+            cleanupCalled = true;
+            clearInterval(id);
+          });
+          return () => {
+            clearInterval(id);
+          };
+        }),
     });
     const t = await client.bootstrap(tickerCap);
 
@@ -60,15 +85,20 @@ describe("stream lifecycle", () => {
   test("stream-throwing handler delivers error frame (not result hang)", async () => {
     const { client, server } = pair();
     server.serve(tickerCap, {
-      watch: () => Stream.from<{ n: number }>(() => {
-        throw new Error("boom");
-      }),
+      watch: () =>
+        Stream.from<{ n: number }>(() => {
+          throw new Error("boom");
+        }),
     });
     const t = await client.bootstrap(tickerCap);
     const iter = t.watch();
-    await expect((async () => {
-      for await (const _ of iter) { /* */ }
-    })()).rejects.toBeDefined();
+    await expect(
+      (async () => {
+        for await (const _ of iter) {
+          /* */
+        }
+      })(),
+    ).rejects.toBeDefined();
   });
 
   test("server-side iterator throw becomes stream error frame", async () => {
@@ -93,7 +123,9 @@ describe("stream lifecycle", () => {
     let caught: unknown = null;
     try {
       for await (const n of t.flow()) seen.push(n);
-    } catch (e) { caught = e; }
+    } catch (e) {
+      caught = e;
+    }
     expect(seen).toEqual([1, 2]);
     expect(caught).toBeDefined();
     expect((caught as { code?: string }).code).toBe("internal");
@@ -128,12 +160,16 @@ describe("malformed frame", () => {
     let receive: ((f: Frame) => void) | undefined;
     const transport: Transport = {
       send: () => {},
-      setReceive: (h) => { receive = h; },
+      setReceive: (h) => {
+        receive = h;
+      },
       close: () => {},
     };
     const conn = createConnection({ transport, mode: "native", origin: "c" });
     let closed = false;
-    conn.onClose(() => { closed = true; });
+    conn.onClose(() => {
+      closed = true;
+    });
     receive!({ op: "result", id: 99999, ok: false, error: { code: "internal" } });
     expect(closed).toBe(false);
   });
@@ -155,15 +191,27 @@ describe("framework typeId", () => {
   test("exportCap(RuntimeCap-family caps) gets framework typeIds", async () => {
     const [t1, t2] = loopback();
     const runtimeImpl: ImplOf<typeof RuntimeCap> = {
-      window: () => { throw new Error("not used"); },
-      dialogs: () => { throw new Error("not used"); },
-      clipboard: () => { throw new Error("not used"); },
-      shell: () => { throw new Error("not used"); },
+      window: () => {
+        throw new Error("not used");
+      },
+      dialogs: () => {
+        throw new Error("not used");
+      },
+      clipboard: () => {
+        throw new Error("not used");
+      },
+      shell: () => {
+        throw new Error("not used");
+      },
       appName: () => "app",
       appVersion: () => "0",
       theme: () => "light",
-      themeWatch: () => { throw new Error("not used"); },
-      surface: () => { throw new Error("not used"); },
+      themeWatch: () => {
+        throw new Error("not used");
+      },
+      surface: () => {
+        throw new Error("not used");
+      },
     };
     createConnection({ transport: t2, mode: "native", origin: "s", runtime: runtimeImpl });
     const client = createConnection({ transport: t1, mode: "native", origin: "c" });

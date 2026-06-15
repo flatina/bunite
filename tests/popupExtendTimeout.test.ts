@@ -1,14 +1,8 @@
-import { describe, test, expect, beforeEach } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import "../package/src/host/core/SurfaceBrowserIPC";
-import {
-  emitPopupRequested,
-  createSurfaceCapImpl,
-} from "../package/src/host/core/SurfaceManager";
-import {
-  trackSurface,
-  removeSurfacesForHostView,
-} from "../package/src/host/core/SurfaceRegistry";
 import type { BrowserView } from "../package/src/host/core/BrowserView";
+import { createSurfaceCapImpl, emitPopupRequested } from "../package/src/host/core/SurfaceManager";
+import { removeSurfacesForHostView, trackSurface } from "../package/src/host/core/SurfaceRegistry";
 
 const stubView = { remove() {} } as unknown as BrowserView;
 const HOST = 1;
@@ -17,7 +11,8 @@ const OPENER = 100;
 function extend(newSurfaceId: number, gracePeriodMs: number) {
   const cap = createSurfaceCapImpl(HOST);
   return cap.extendPopupTimeout({ newSurfaceId, gracePeriodMs }, {} as any) as
-    { ok: true; deadlineMs: number } | { ok: false; code: string; message: string };
+    | { ok: true; deadlineMs: number }
+    | { ok: false; code: string; message: string };
 }
 
 function dismiss(newSurfaceId: number) {
