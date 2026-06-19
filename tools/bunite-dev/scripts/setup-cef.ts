@@ -8,7 +8,7 @@
  */
 
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 import { CryptoHasher } from "bun";
 
 const CEF_INDEX_URL = "https://cef-builds.spotifycdn.com/index.json";
@@ -148,15 +148,23 @@ async function download(url: string, dest: string) {
   console.log(`Saved: ${dest} (${(received / 1024 / 1024).toFixed(1)} MB)`);
 }
 
+// Prefer Windows' native bsdtar (System32) over a PATH `tar`, which may be GNU
+// tar — that mishandles native Windows paths (reads a `C:` colon as a remote
+// `host:path`, and can't chdir to a backslash `-C` path). bsdtar groks native
+// paths and reads .tar.bz2. POSIX: the system `tar` is fine as-is.
+function tarBin(): string {
+  if (process.platform === "win32") {
+    const sys = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
+    if (existsSync(sys)) return sys;
+  }
+  return "tar";
+}
+
 async function extract(archive: string, dest: string) {
   console.log(`Extracting to ${dest} ...`);
   mkdirSync(dest, { recursive: true });
 
-  // tar is available natively on Windows 10+, macOS, and Linux.
-  // Pass the archive by basename + cwd: GNU tar reads a colon in the `-f` path
-  // (e.g. `C:\...`) as a remote `host:path` spec and fails ("resolve failed").
-  const proc = Bun.spawn(["tar", "-xjf", basename(archive), "--strip-components=1", "-C", dest], {
-    cwd: dirname(archive),
+  const proc = Bun.spawn([tarBin(), "-xjf", archive, "--strip-components=1", "-C", dest], {
     stdout: "inherit",
     stderr: "inherit",
   });
