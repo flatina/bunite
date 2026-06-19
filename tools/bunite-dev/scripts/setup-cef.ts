@@ -2,9 +2,9 @@
  * Download CEF binary distribution into package/vendors/cef/
  *
  * Usage:
- *   bun run setup:cef                       # latest stable, auto-detect arch
+ *   bun run setup:cef                       # pinned CEF_VERSION (matches the native build), auto-detect arch
  *   bun run setup:cef -- --arch arm64       # specific arch
- *   bun run setup:cef -- --version 145.0.23 # specific version (resolves chromium ver from index)
+ *   bun run setup:cef -- --version 145.0.23 # override (e.g. to bump CEF before a native rebuild)
  */
 
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -25,8 +25,19 @@ const PLATFORM_MAP: Record<string, string> = {
 
 import { findBuniteCoreRoot, resolveCefDownloadDir } from "./resolve";
 
-const CEF_DIR = resolveCefDownloadDir(findBuniteCoreRoot());
+const CORE_ROOT = findBuniteCoreRoot();
+const CEF_DIR = resolveCefDownloadDir(CORE_ROOT);
 const VERSION_STAMP = join(CEF_DIR, ".cef-version");
+
+// The CEF runtime must match the version the native binary's libcef_dll_wrapper
+// was compiled against — a mismatch is a fatal API-hash check at init. So the
+// auto-download defaults to bunite-core's pinned CEF_VERSION, never newest stable.
+function pinnedCefVersion(): string {
+  const ts = readFileSync(join(CORE_ROOT, "src", "host", "cefVersion.ts"), "utf-8");
+  const m = ts.match(/CEF_VERSION\s*=\s*"([^"]+)"/);
+  if (!m) throw new Error("CEF_VERSION not found in bunite-core src/host/cefVersion.ts");
+  return m[1];
+}
 
 // --- args ---
 
@@ -177,7 +188,7 @@ async function extract(archive: string, dest: string) {
 async function main() {
   const { version, cefPlatform, force } = parseArgs();
   const index = await fetchIndex(cefPlatform);
-  const resolved = resolveVersion(index, version);
+  const resolved = resolveVersion(index, version ?? pinnedCefVersion());
 
   // cef_version may already contain "+chromium-..." suffix
   const fullVersion = resolved.cef_version.includes("+chromium-")
