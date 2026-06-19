@@ -8,7 +8,7 @@
  */
 
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { CryptoHasher } from "bun";
 
 const CEF_INDEX_URL = "https://cef-builds.spotifycdn.com/index.json";
@@ -152,8 +152,11 @@ async function extract(archive: string, dest: string) {
   console.log(`Extracting to ${dest} ...`);
   mkdirSync(dest, { recursive: true });
 
-  // tar is available natively on Windows 10+, macOS, and Linux
-  const proc = Bun.spawn(["tar", "-xjf", archive, "--strip-components=1", "-C", dest], {
+  // tar is available natively on Windows 10+, macOS, and Linux.
+  // Pass the archive by basename + cwd: GNU tar reads a colon in the `-f` path
+  // (e.g. `C:\...`) as a remote `host:path` spec and fails ("resolve failed").
+  const proc = Bun.spawn(["tar", "-xjf", basename(archive), "--strip-components=1", "-C", dest], {
+    cwd: dirname(archive),
     stdout: "inherit",
     stderr: "inherit",
   });

@@ -43,13 +43,10 @@ async function download(url: string, dest: string) {
 async function extract(zipPath: string, dest: string) {
   console.log(`Extracting to ${dest} ...`);
   mkdirSync(dest, { recursive: true });
-  // Windows 10+ tar supports zip via the libarchive backend.
-  const proc = Bun.spawn(["tar", "-xf", zipPath, "-C", dest], {
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  const code = await proc.exited;
-  if (code !== 0) throw new Error(`tar zip extraction failed with exit code ${code}`);
+  // Bun.Archive (libarchive) reads zip natively — avoids a PATH `tar` (GNU tar
+  // can't read zip and misparses `C:` as a remote host:path). Untyped in @types/bun yet.
+  const Archive = (Bun as any).Archive;
+  await new Archive(await Bun.file(zipPath).bytes()).extract(dest);
 }
 
 async function main() {
