@@ -1,7 +1,7 @@
 {
   "name": "bunite-core",
   "description": "Uniting UI and Bun",
-  "version": "0.17.2",
+  "version": "0.17.3",
   "type": "module",
   "scripts": {
     "setup:cef": "bun ../tools/bunite-dev/scripts/setup-cef.ts",
