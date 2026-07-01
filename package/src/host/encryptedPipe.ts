@@ -1,4 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import type { CloseInfo } from "../rpc/peer";
 import type { BytesPipe } from "../rpc/transport";
 
 const VERSION = 1;
@@ -10,12 +11,16 @@ const HEADER_LENGTH = 1 + IV_LENGTH;
 export async function createEncryptedPipe(base: BytesPipe, rawKey: Uint8Array): Promise<BytesPipe> {
   let downstream: ((bytes: Uint8Array) => void) | undefined;
   let closed = false;
-  const closeOnce = () => {
-    if (!closed) {
-      closed = true;
-      base.close();
-    }
+  let onCloseHandler: ((info?: CloseInfo) => void) | undefined;
+  // Report close (so the Connection tears down) for both a base disconnect and a
+  // local crypto/frame failure, then close the base transport.
+  const closeOnce = (info?: CloseInfo) => {
+    if (closed) return;
+    closed = true;
+    onCloseHandler?.(info);
+    base.close();
   };
+  base.onClose?.((info) => closeOnce(info));
 
   base.setReceive((frame) => {
     if (closed) return;
@@ -63,6 +68,9 @@ export async function createEncryptedPipe(base: BytesPipe, rawKey: Uint8Array): 
     },
     setReceive(handler) {
       downstream = handler;
+    },
+    onClose(h) {
+      onCloseHandler = h;
     },
     close() {
       closeOnce();

@@ -150,4 +150,72 @@ describe("rpc over Bun.serve websocket", () => {
     expect(seen.length).toBe(2);
     ws.close();
   });
+
+  test("client conn.onClose fires when the server goes away", async () => {
+    const srv = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req, s) {
+        if (new URL(req.url).pathname !== "/rpc") return new Response("nf", { status: 404 });
+        return s.upgrade(req, { data: {} }) ? undefined : new Response("x", { status: 500 });
+      },
+      websocket: createBunWebSocketServerHandler((_ws, pipe) => {
+        const c = createConnection({
+          transport: createFrameTransport(pipe),
+          mode: "native",
+          origin: "ws://server",
+        });
+        c.serve(counterCap, counterImpl);
+      }),
+    });
+    const port = srv.port ?? 0;
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/rpc`);
+    ws.binaryType = "arraybuffer";
+    await new Promise<void>((res, rej) => {
+      ws.addEventListener("open", () => res(), { once: true });
+      ws.addEventListener("error", () => rej(new Error("ws error")), { once: true });
+    });
+    const conn = createConnection({
+      transport: createFrameTransport(createWebSocketPipe(ws as never)),
+      mode: "native",
+      origin: "ws://client",
+    });
+    await conn.bootstrap(counterCap);
+    const closed = new Promise<void>((res) => conn.onClose(() => res()));
+    srv.stop(true); // server dies → client WS close event → conn.onClose
+    await closed;
+    expect(conn.closed).toBe(true);
+  });
+
+  test("serveWeb server conn tears down when the client disconnects", async () => {
+    const { serveWeb } = await import("../package/src/host/serveWeb");
+    let resolveClosed: () => void = () => {};
+    const serverClosed = new Promise<void>((r) => {
+      resolveClosed = r;
+    });
+    const srv = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      ...serveWeb((c) => {
+        c.serve(counterCap, counterImpl);
+        c.onClose(() => resolveClosed());
+      }),
+    });
+    const port = srv.port ?? 0;
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/rpc`);
+    ws.binaryType = "arraybuffer";
+    await new Promise<void>((res, rej) => {
+      ws.addEventListener("open", () => res(), { once: true });
+      ws.addEventListener("error", () => rej(new Error("ws error")), { once: true });
+    });
+    const conn = createConnection({
+      transport: createFrameTransport(createWebSocketPipe(ws as never)),
+      mode: "web",
+      origin: "ws://client",
+    });
+    await conn.bootstrap(counterCap);
+    ws.close(); // client disconnects → server close(ws) → server conn.shutdown
+    await serverClosed;
+    srv.stop(true);
+  });
 });

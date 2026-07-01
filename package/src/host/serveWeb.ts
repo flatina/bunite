@@ -23,7 +23,7 @@ function asBytes(message: unknown): Uint8Array {
 
 export function createBunWebSocketServerHandler<TData extends object>(
   onConnection: (ws: ServerWebSocket<TData>, pipe: BytesPipe) => void,
-  onClose?: (ws: ServerWebSocket<TData>) => void,
+  onClose?: (ws: ServerWebSocket<TData>, code?: number, reason?: string) => void,
 ): WebSocketHandler<TData> {
   return {
     open(ws) {
@@ -47,10 +47,10 @@ export function createBunWebSocketServerHandler<TData extends object>(
       const slot = ws.data as TData & PipeSlot;
       slot._bunitePipe?.handler?.(asBytes(message));
     },
-    close(ws) {
+    close(ws, code, reason) {
       const slot = ws.data as TData & PipeSlot;
       slot._bunitePipe = undefined;
-      onClose?.(ws);
+      onClose?.(ws, code, reason);
     },
   };
 }
@@ -78,6 +78,7 @@ export function serveWeb<TData extends WsData = WsData>(
   opts: ServeWebOptions<TData> = {},
 ): WebRpcMount {
   const path = opts.path ?? DEFAULT_RPC_PATH;
+  const conns = new WeakMap<ServerWebSocket<TData>, Connection>();
   return {
     fetch(req, srv) {
       if (new URL(req.url).pathname !== path) return undefined;
@@ -87,25 +88,32 @@ export function serveWeb<TData extends WsData = WsData>(
       return upgraded ? undefined : new Response("WebSocket upgrade failed", { status: 400 });
     },
     websocket: {
-      ...(createBunWebSocketServerHandler<TData>((ws, pipe) => {
-        const wsData = ws.data;
-        const origin = wsData?.origin ?? "";
-        const conn = createConnection({
-          transport: createFrameTransport(pipe),
-          mode: "web",
-          origin: origin || "web-client",
-          attestation: {
-            origin,
-            topOrigin: origin,
-            partition: "default",
-            isAppRes: false,
-            isMainFrame: true,
-            userGesture: false,
-            level: "untrusted",
-          },
-        });
-        setup(conn, wsData);
-      }) as unknown as WebRpcMount["websocket"]),
+      ...(createBunWebSocketServerHandler<TData>(
+        (ws, pipe) => {
+          const wsData = ws.data;
+          const origin = wsData?.origin ?? "";
+          const conn = createConnection({
+            transport: createFrameTransport(pipe),
+            mode: "web",
+            origin: origin || "web-client",
+            attestation: {
+              origin,
+              topOrigin: origin,
+              partition: "default",
+              isAppRes: false,
+              isMainFrame: true,
+              userGesture: false,
+              level: "untrusted",
+            },
+          });
+          conns.set(ws, conn);
+          setup(conn, wsData);
+        },
+        (ws, code, reason) => {
+          conns.get(ws)?.shutdown("ws_closed", { code, reason });
+          conns.delete(ws);
+        },
+      ) as unknown as WebRpcMount["websocket"]),
       maxPayloadLength: DEFAULT_MAX_BYTES,
     },
   };

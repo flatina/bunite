@@ -19,7 +19,11 @@ let _conn: Connection | null = null;
 let _connPromise: Promise<Connection> | null = null;
 
 function ensureConnection(): Promise<Connection> {
-  if (_conn) return Promise.resolve(_conn);
+  if (_conn) {
+    if (!_conn.closed) return Promise.resolve(_conn);
+    _conn = null;
+    _connPromise = null;
+  }
   if (_connPromise) return _connPromise;
   const attempt = (async () => {
     const ws = new WebSocket(

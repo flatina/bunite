@@ -158,10 +158,16 @@ export class CapTable {
   }
 }
 
+export interface CloseInfo {
+  code?: number;
+  reason?: string;
+}
+
 export interface Transport {
   send(frame: Frame): void;
   setReceive(handler: (frame: Frame) => void): void;
   close(): void;
+  onClose?(handler: (info?: CloseInfo) => void): void;
 }
 
 export type Policy = (name: string, attestation: Attestation) => boolean | Promise<boolean>;
@@ -224,9 +230,9 @@ export interface Connection {
     event: K,
     handler: (e: ConnectionEvents[K]) => void,
   ): () => void;
-  onClose(handler: () => void): () => void;
+  onClose(handler: (info?: CloseInfo) => void): () => void;
   /** Tear down the connection — rejects pending, fires onClose, closes transport. Reliable signal for application lifecycle. */
-  shutdown(reason?: string): void;
+  shutdown(reason?: string, info?: CloseInfo): void;
   readonly closed: boolean;
 }
 
@@ -335,7 +341,7 @@ class ConnectionImpl implements Connection {
   private readonly rootInstances = new Map<string, number>();
   /** Client-side: cap-ids that the server revoked via cap_revoked. */
   private readonly revokedCapIds = new Set<number>();
-  private readonly closeHandlers = new Set<() => void>();
+  private readonly closeHandlers = new Set<(info?: CloseInfo) => void>();
   private readonly observers: {
     [K in keyof ConnectionEvents]?: Set<(e: ConnectionEvents[K]) => void>;
   } = {};
@@ -388,6 +394,7 @@ class ConnectionImpl implements Connection {
     this.remoteReady.catch(() => {});
 
     this.transport.setReceive((frame) => this.handleFrame(frame));
+    this.transport.onClose?.((info) => this.shutdown(info?.reason || "transport_closed", info));
     this.transport.send({
       op: "hello",
       v: PROTOCOL_VERSION,
@@ -402,7 +409,7 @@ class ConnectionImpl implements Connection {
     return this.closed_;
   }
 
-  onClose(handler: () => void): () => void {
+  onClose(handler: (info?: CloseInfo) => void): () => void {
     this.closeHandlers.add(handler);
     return () => this.closeHandlers.delete(handler);
   }
@@ -1446,7 +1453,7 @@ class ConnectionImpl implements Connection {
     }
   }
 
-  shutdown(reason: string = "shutdown"): void {
+  shutdown(reason: string = "shutdown", info?: CloseInfo): void {
     if (this.closed_) return;
     this.closed_ = true;
     for (const pending of this.pending.values()) {
@@ -1477,7 +1484,7 @@ class ConnectionImpl implements Connection {
     }
     for (const fn of this.closeHandlers) {
       try {
-        fn();
+        fn(info);
       } catch {
         /* swallow */
       }

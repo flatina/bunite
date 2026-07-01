@@ -98,3 +98,96 @@ describe("frame transport over bytes pipe", () => {
     expect(received).toBe(0);
   });
 });
+
+function pipeWithClose(): BytesPipe & {
+  fireClose(info?: { code?: number; reason?: string }): void;
+} {
+  let onClose: ((info?: { code?: number; reason?: string }) => void) | undefined;
+  return {
+    send: () => {},
+    setReceive: () => {},
+    close: () => {},
+    onClose: (h) => {
+      onClose = h;
+    },
+    fireClose: (info) => onClose?.(info),
+  };
+}
+
+describe("onClose surfaces transport disconnect", () => {
+  test("pipe disconnect → conn.onClose fires with info + conn.closed", () => {
+    const pipe = pipeWithClose();
+    const conn = createConnection({
+      transport: createFrameTransport(pipe),
+      mode: "web",
+      origin: "c",
+    });
+    let got: unknown = "unset";
+    conn.onClose((info) => {
+      got = info;
+    });
+    expect(conn.closed).toBe(false);
+    pipe.fireClose({ code: 1006, reason: "gone" });
+    expect(conn.closed).toBe(true);
+    expect(got).toEqual({ code: 1006, reason: "gone" });
+  });
+
+  test("explicit shutdown → onClose fires once with undefined info", () => {
+    const pipe = pipeWithClose();
+    const conn = createConnection({
+      transport: createFrameTransport(pipe),
+      mode: "web",
+      origin: "c",
+    });
+    let calls = 0;
+    let info: unknown = "unset";
+    conn.onClose((i) => {
+      calls++;
+      info = i;
+    });
+    conn.shutdown("bye");
+    expect(conn.closed).toBe(true);
+    expect(calls).toBe(1);
+    expect(info).toBeUndefined();
+  });
+
+  test("repeated pipe close (error then close) fires onClose once", () => {
+    const pipe = pipeWithClose();
+    const conn = createConnection({
+      transport: createFrameTransport(pipe),
+      mode: "web",
+      origin: "c",
+    });
+    let calls = 0;
+    conn.onClose(() => {
+      calls++;
+    });
+    pipe.fireClose();
+    pipe.fireClose({ code: 1006 });
+    expect(calls).toBe(1);
+  });
+
+  test("protocol error tears down the connection via onClose", () => {
+    // capture the frame transport's internal receive handler via setReceive
+    let receive: ((b: Uint8Array) => void) | undefined;
+    const pipe: BytesPipe = {
+      send: () => {},
+      setReceive: (h) => {
+        receive = h;
+      },
+      close: () => {},
+      onClose: () => {},
+    };
+    const conn = createConnection({
+      transport: createFrameTransport(pipe),
+      mode: "web",
+      origin: "c",
+    });
+    let closed = false;
+    conn.onClose(() => {
+      closed = true;
+    });
+    receive?.(new Uint8Array([0xff, 0xff, 0xff])); // unpack failure → fireClose
+    expect(closed).toBe(true);
+  });
+});

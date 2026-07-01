@@ -626,7 +626,7 @@ export class BrowserView {
     const myGen = this.connectionGeneration;
     if (this.connection) {
       try {
-        (this.connection as { transport?: { close?(): void } }).transport?.close?.();
+        this.connection.shutdown("view_reattached");
       } catch {
         /* swallow */
       }
@@ -664,7 +664,7 @@ export class BrowserView {
     this.connectionGeneration += 1;
     if (this.connection) {
       try {
-        (this.connection as { transport?: { close?(): void } }).transport?.close?.();
+        this.connection.shutdown("view_detached");
       } catch {
         /* swallow */
       }

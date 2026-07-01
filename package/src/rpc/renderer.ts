@@ -46,7 +46,13 @@ function isNative(): boolean {
 }
 
 function ensureWebConnection(path = "/rpc"): Promise<Connection> {
-  if (_webConn) return Promise.resolve(_webConn);
+  // Drop a closed cached conn so a disconnect (WS close/error → onClose) leads to
+  // a fresh reconnect on the next call, instead of handing back a dead connection.
+  if (_webConn) {
+    if (!_webConn.closed) return Promise.resolve(_webConn);
+    _webConn = null;
+    _webConnPromise = null;
+  }
   // Host-provided shared Connection — cross-bundle reachability for renderer
   // ecosystems (e.g. extension hosts) that bundle bunite-core 0-externals per
   // plugin. Page-author trust applies; bunite policy/attestation still gates.
@@ -63,10 +69,16 @@ function ensureWebConnection(path = "/rpc"): Promise<Connection> {
     const ws = new WebSocket(`${proto}//${location.host}${path}`);
     ws.binaryType = "arraybuffer";
     await new Promise<void>((resolve, reject) => {
-      ws.addEventListener("open", () => resolve(), { once: true });
-      ws.addEventListener("error", () => reject(new Error("web RPC ws connect failed")), {
-        once: true,
-      });
+      const onOpen = () => {
+        ws.removeEventListener("error", onError);
+        resolve();
+      };
+      const onError = () => {
+        ws.removeEventListener("open", onOpen);
+        reject(new Error("web RPC ws connect failed"));
+      };
+      ws.addEventListener("open", onOpen, { once: true });
+      ws.addEventListener("error", onError, { once: true });
     });
     const conn = createConnection({
       transport: createFrameTransport(createWebSocketPipe(ws as unknown as WebSocketLike)),

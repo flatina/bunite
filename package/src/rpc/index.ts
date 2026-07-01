@@ -61,6 +61,7 @@ export {
 } from "./framework";
 export type {
   CapTableEntry,
+  CloseInfo,
   Connection,
   ConnectionEvents,
   ConnectionOptions,
